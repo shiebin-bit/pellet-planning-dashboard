@@ -1,0 +1,1051 @@
+import {
+  LINE_IDS,
+  type AppState,
+  type Board,
+  type Downtime,
+  type HistoryEvent,
+  type Job,
+  type JobInput,
+  type LineId,
+  type LineSchedule,
+  type ScheduleSegment,
+  type ScheduledJob,
+  type Settings,
+} from "./types";
+
+const MINUTE_MS = 60_000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
+const MALAYSIA_OFFSET_MINUTES = 8 * 60;
+const MAX_SEARCH_DAYS = 3_700;
+const MAX_NOTE_LENGTH = 1_000;
+
+interface Interval {
+  start: number;
+  end: number;
+}
+
+interface ScheduleResult {
+  byLine: Record<LineId, ScheduledJob[]>;
+  byId: Map<string, ScheduledJob>;
+}
+
+export function getRate(
+  settings: Settings,
+  lineId: LineId,
+  productCode: string,
+): number {
+  if (
+    lineId === "PM2" &&
+    settings.slowProductPrefixes.some((prefix) => {
+      const normalizedPrefix = prefix.trim();
+      return normalizedPrefix.length > 0 && productCode.trim().startsWith(normalizedPrefix);
+    })
+  ) {
+    return settings.slowRatePM2;
+  }
+  return settings.rates[lineId];
+}
+
+export function getBoard(state: AppState, date: string): Board {
+  assertDate(date, "Board date");
+  validateSettings(state.settings);
+
+  const start = businessDayStart(date, state.settings.dayStart);
+  const end = start + DAY_MS;
+  const scheduled = scheduleState(state);
+
+  const lines = LINE_IDS.map((lineId): LineSchedule => {
+    const allLineJobs = scheduled.byLine[lineId];
+    const jobs = allLineJobs.filter(
+      (job) =>
+        job.date === date ||
+        (job.date < date &&
+          job.segments.some(
+            (segment) => segment.start < end && segment.end > start,
+          )),
+    );
+    const boardSegments = jobs
+      .flatMap((job) => job.segments)
+      .filter((segment) => segment.start < end && segment.end > start)
+      .map((segment) => ({
+        ...segment,
+        start: Math.max(start, segment.start),
+        end: Math.min(end, segment.end),
+      }))
+      .sort(compareSegments);
+
+    const productionMinutes = minutesForKind(boardSegments, "production");
+    const changeoverMinutes = minutesForKind(boardSegments, "changeover");
+    const availableMinutes = getAvailableIntervals(
+      state.settings,
+      lineId,
+      date,
+    ).reduce(
+      (total, interval) =>
+        total +
+        overlapMinutes(interval.start, interval.end, start, end),
+      0,
+    );
+    const datedJobs = allLineJobs.filter((job) => job.date === date);
+    const finishAt = maxOrNull(
+      datedJobs
+        .map((job) => job.plannedEnd)
+        .filter((value): value is number => value !== null),
+    );
+
+    return {
+      lineId,
+      jobs,
+      segments: boardSegments,
+      availableMinutes,
+      productionMinutes,
+      changeoverMinutes,
+      utilisation:
+        availableMinutes > 0
+          ? productionMinutes / availableMinutes
+          : null,
+      plannedMt: datedJobs.reduce((sum, job) => sum + job.quantityMt, 0),
+      totalProductionMinutes: datedJobs.reduce(
+        (sum, job) => sum + job.durationMinutes,
+        0,
+      ),
+      overflowMinutes: datedJobs.reduce(
+        (sum, job) =>
+          sum +
+          job.segments.reduce(
+            (jobSum, segment) =>
+              jobSum + Math.max(0, segment.end - Math.max(end, segment.start)) / MINUTE_MS,
+            0,
+          ),
+        0,
+      ),
+      finishAt,
+    };
+  });
+
+  const backlog = state.jobs
+    .filter(
+      (job) =>
+        job.date === date && job.status !== "cancelled" && job.quantityMt <= 0,
+    )
+    .sort(compareJobs)
+    .map(cloneJob);
+
+  return { date, start, end, lines, backlog };
+}
+
+/** Computes every schedulable production record once without clipping it to a board date. */
+export function getScheduledJobs(state: AppState): ScheduledJob[] {
+  validateSettings(state.settings);
+  const scheduled = scheduleState(state);
+  return LINE_IDS.flatMap((lineId) => scheduled.byLine[lineId]);
+}
+
+export function createJob(state: AppState, input: JobInput): AppState {
+  validateSettings(state.settings);
+  const normalized = normalizeInput(input, state.settings);
+  const now = new Date().toISOString();
+  const sequence =
+    Math.max(
+      0,
+      ...state.jobs
+        .filter(
+          (job) => job.date === normalized.date && job.lineId === normalized.lineId,
+        )
+        .map((job) => job.sequence),
+    ) + 1;
+  const job: Job = {
+    ...normalized,
+    id: makeId("job"),
+    sequence,
+    status: "pending",
+    actualStart: null,
+    actualEnd: null,
+    binNeedsReview: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+  return finalizeMutation(
+    state,
+    [...state.jobs, job],
+    event("job.created", `Created order ${job.orderNo}.`, job.id, now),
+  );
+}
+
+export function updateJob(
+  state: AppState,
+  id: string,
+  patch: Partial<JobInput>,
+): AppState {
+  const current = requireJob(state, id);
+  requirePending(current, "edit");
+  const normalized = normalizeInput({ ...toInput(current), ...patch }, state.settings);
+  const now = new Date().toISOString();
+  let jobs = state.jobs.map((job) =>
+    job.id === id
+      ? {
+          ...job,
+          ...normalized,
+          binNeedsReview:
+            normalized.lineId !== current.lineId ? true : job.binNeedsReview,
+          updatedAt: now,
+        }
+      : job,
+  );
+  if (normalized.lineId !== current.lineId || normalized.date !== current.date) {
+    jobs = resequence(jobs, current.lineId, current.date);
+    jobs = resequence(jobs, normalized.lineId, normalized.date);
+  }
+  return finalizeMutation(
+    state,
+    jobs,
+    event("job.updated", `Updated order ${current.orderNo}.`, id, now),
+  );
+}
+
+export function moveJob(
+  state: AppState,
+  id: string,
+  toLineId: LineId,
+  beforeJobId?: string,
+): AppState {
+  assertLineId(toLineId);
+  const current = requireJob(state, id);
+  requirePending(current, "move");
+  if (beforeJobId === id) {
+    throw new Error("A job cannot be moved before itself.");
+  }
+
+  const before = beforeJobId ? requireJob(state, beforeJobId) : undefined;
+  if (
+    before &&
+    (before.lineId !== toLineId || before.date !== current.date)
+  ) {
+    throw new Error("The target job must be on the destination line and date.");
+  }
+
+  const now = new Date().toISOString();
+  const moved: Job = {
+    ...current,
+    lineId: toLineId,
+    binNeedsReview:
+      current.lineId === toLineId ? current.binNeedsReview : true,
+    updatedAt: now,
+  };
+  const remaining = state.jobs.filter((job) => job.id !== id);
+  const destination = remaining
+    .filter((job) => job.lineId === toLineId && job.date === current.date)
+    .sort(compareJobs);
+  const insertionIndex = before
+    ? destination.findIndex((job) => job.id === before.id)
+    : destination.length;
+  destination.splice(insertionIndex, 0, moved);
+  const destinationIds = new Set(destination.map((job) => job.id));
+  let jobs = remaining
+    .filter((job) => !destinationIds.has(job.id))
+    .concat(destination.map((job, index) => ({ ...job, sequence: index + 1 })));
+  jobs = resequence(jobs, current.lineId, current.date);
+
+  return finalizeMutation(
+    state,
+    jobs,
+    event(
+      "job.moved",
+      `Moved order ${current.orderNo} to ${toLineId}.`,
+      id,
+      now,
+    ),
+  );
+}
+
+export function startJob(
+  state: AppState,
+  id: string,
+  actualStartIso: string,
+): AppState {
+  const current = requireJob(state, id);
+  requirePending(current, "start");
+  assertIsoDateTime(actualStartIso, "Actual start");
+  const alreadyRunning = state.jobs.find(
+    (job) => job.lineId === current.lineId && job.status === "running",
+  );
+  if (alreadyRunning) {
+    throw new Error(
+      `Finish the current running job on ${current.lineId} before starting another.`,
+    );
+  }
+  if (current.quantityMt <= 0) {
+    throw new Error("A job must have a positive quantity before it can start.");
+  }
+  const scheduled = scheduleState(state).byId.get(id);
+  if (!scheduled || scheduled.segments.length === 0) {
+    throw new Error("The job cannot start because no production capacity is available.");
+  }
+  const now = new Date().toISOString();
+  const jobs = state.jobs.map((job) =>
+    job.id === id
+      ? {
+          ...job,
+          status: "running" as const,
+          actualStart: new Date(actualStartIso).toISOString(),
+          actualEnd: null,
+          lockedSegments: scheduled.segments.map((segment) => ({ ...segment })),
+          updatedAt: now,
+        }
+      : job,
+  );
+  return withEvent(
+    state,
+    jobs,
+    event("job.started", `Started order ${current.orderNo}.`, id, now),
+  );
+}
+
+export function completeJob(
+  state: AppState,
+  id: string,
+  actualQuantityMt: number,
+  completionNote?: string,
+  nowIso = new Date().toISOString(),
+): AppState {
+  const current = requireJob(state, id);
+  if (current.status !== "running") {
+    throw new Error("Only a running job can be completed.");
+  }
+  assertActualQuantity(actualQuantityMt);
+  const normalizedNote = optionalNote(completionNote, "Completion note");
+  assertIsoDateTime(nowIso, "Actual end");
+  const actualEnd = new Date(nowIso).toISOString();
+  if (
+    current.actualStart &&
+    new Date(actualEnd).getTime() < new Date(current.actualStart).getTime()
+  ) {
+    throw new Error("Actual end cannot be earlier than actual start.");
+  }
+  const frozenSegments = (
+    current.lockedSegments ?? scheduleState(state).byId.get(id)?.segments ?? []
+  ).map((segment) => ({ ...segment }));
+  const changedAt = actualEnd;
+  const priorIssueReason = current.issue?.reason;
+  const jobs = state.jobs.map((job) => {
+    if (job.id !== id) return job;
+    const { issue: _issue, completionNote: _completionNote, ...withoutIssue } = job;
+    return {
+      ...withoutIssue,
+      status: "completed" as const,
+      actualEnd,
+      actualQuantityMt,
+      ...(frozenSegments.length > 0 ? { lockedSegments: frozenSegments } : {}),
+      ...(normalizedNote ? { completionNote: normalizedNote } : {}),
+      updatedAt: changedAt,
+    };
+  });
+  const varianceMt = actualQuantityMt - current.quantityMt;
+  const details = [
+    `Completed order ${current.orderNo} at ${formatMt(actualQuantityMt)} actual output`,
+    `planned ${formatMt(current.quantityMt)}`,
+    `variance ${formatSignedMt(varianceMt)}`,
+  ];
+  if (normalizedNote) details.push(`note: ${normalizedNote}`);
+  if (priorIssueReason) details.push(`resolved issue: ${priorIssueReason}`);
+  return withEvent(
+    state,
+    jobs,
+    event(
+      "job.completed",
+      `${details.join("; ")}.`,
+      id,
+      changedAt,
+    ),
+  );
+}
+
+export function recordActualOutput(
+  state: AppState,
+  id: string,
+  actualQuantityMt: number,
+  completionNote?: string,
+): AppState {
+  const current = requireJob(state, id);
+  if (current.status !== "completed") {
+    throw new Error("Actual output can only be recorded for a completed job.");
+  }
+  assertActualQuantity(actualQuantityMt);
+  const normalizedNote =
+    completionNote === undefined
+      ? current.completionNote
+      : optionalNote(completionNote, "Completion note");
+  const now = new Date().toISOString();
+  const jobs = state.jobs.map((job) => {
+    if (job.id !== id) return job;
+    const { completionNote: _completionNote, ...withoutNote } = job;
+    return {
+      ...withoutNote,
+      actualQuantityMt,
+      ...(normalizedNote ? { completionNote: normalizedNote } : {}),
+      updatedAt: now,
+    };
+  });
+  const varianceMt = actualQuantityMt - current.quantityMt;
+  const priorActual =
+    typeof current.actualQuantityMt === "number" && Number.isFinite(current.actualQuantityMt)
+      ? current.actualQuantityMt
+      : null;
+  const action =
+    priorActual === null
+      ? `Recorded actual output for order ${current.orderNo}: ${formatMt(actualQuantityMt)}`
+      : `Corrected actual output for order ${current.orderNo} from ${formatMt(priorActual)} to ${formatMt(actualQuantityMt)}`;
+  const details = [`planned ${formatMt(current.quantityMt)}`, `variance ${formatSignedMt(varianceMt)}`];
+  if (normalizedNote) details.push(`note: ${normalizedNote}`);
+  else if (completionNote !== undefined && current.completionNote) details.push("completion note cleared");
+  return withEvent(
+    state,
+    jobs,
+    event(
+      "job.actual-output-recorded",
+      `${action}; ${details.join("; ")}.`,
+      id,
+      now,
+    ),
+  );
+}
+
+export function cancelJob(state: AppState, id: string): AppState {
+  const current = requireJob(state, id);
+  requirePending(current, "cancel");
+  const now = new Date().toISOString();
+  const jobs = state.jobs.map((job) => {
+    if (job.id !== id) return job;
+    const { issue: _issue, ...withoutIssue } = job;
+    return { ...withoutIssue, status: "cancelled" as const, updatedAt: now };
+  });
+  return withEvent(
+    state,
+    jobs,
+    event("job.cancelled", `Cancelled order ${current.orderNo}.`, id, now),
+  );
+}
+
+export function reportJobIssue(
+  state: AppState,
+  id: string,
+  reason: string,
+): AppState {
+  const current = requireJob(state, id);
+  if (current.status !== "pending" && current.status !== "running") {
+    throw new Error("Only a pending or running job can report an issue.");
+  }
+  const normalizedReason = requiredText(reason, "Issue reason");
+  const now = new Date().toISOString();
+  const jobs = state.jobs.map((job) =>
+    job.id === id
+      ? {
+          ...job,
+          issue: { reason: normalizedReason, reportedAt: now },
+          updatedAt: now,
+        }
+      : job,
+  );
+  return withEvent(
+    state,
+    jobs,
+    event(
+      "job.issue-reported",
+      `Reported issue for order ${current.orderNo}: ${normalizedReason}.`,
+      id,
+      now,
+    ),
+  );
+}
+
+export function resolveJobIssue(state: AppState, id: string): AppState {
+  const current = requireJob(state, id);
+  if (!current.issue) {
+    throw new Error("This job has no issue to resolve.");
+  }
+  const now = new Date().toISOString();
+  const jobs = state.jobs.map((job) => {
+    if (job.id !== id) return job;
+    const { issue: _issue, ...withoutIssue } = job;
+    return { ...withoutIssue, updatedAt: now };
+  });
+  return withEvent(
+    state,
+    jobs,
+    event(
+      "job.issue-resolved",
+      `Resolved issue for order ${current.orderNo}: ${current.issue.reason}.`,
+      id,
+      now,
+    ),
+  );
+}
+
+export function confirmBin(state: AppState, id: string): AppState {
+  const current = requireJob(state, id);
+  if (current.status === "cancelled") {
+    throw new Error("A cancelled job cannot have its bin confirmed.");
+  }
+  if (!current.binNeedsReview) return state;
+  const now = new Date().toISOString();
+  const jobs = state.jobs.map((job) =>
+    job.id === id ? { ...job, binNeedsReview: false, updatedAt: now } : job,
+  );
+  return withEvent(
+    state,
+    jobs,
+    event("job.bin-confirmed", `Confirmed bin for order ${current.orderNo}.`, id, now),
+  );
+}
+
+export function updateSettings(state: AppState, settings: Settings): AppState {
+  validateSettings(settings);
+  const now = new Date().toISOString();
+  const copiedSettings = cloneSettings(settings);
+  const jobs = state.jobs.map((job) => {
+    if (job.mode !== "bags" || job.status !== "pending") return job;
+    return {
+      ...job,
+      quantityMt: quantityFromBags(job.bagCount ?? 0, copiedSettings.bagWeightKg),
+      updatedAt: now,
+    };
+  });
+  return finalizeMutation(
+    { ...state, settings: copiedSettings },
+    jobs,
+    event("settings.updated", "Updated planning settings.", undefined, now),
+  );
+}
+
+function scheduleState(state: AppState): ScheduleResult {
+  const byLine: Record<LineId, ScheduledJob[]> = {
+    PM1: [],
+    PM2: [],
+    PM3: [],
+    PM4: [],
+  };
+  const byId = new Map<string, ScheduledJob>();
+
+  for (const lineId of LINE_IDS) {
+    const jobs = state.jobs
+      .filter(
+        (job) =>
+          job.lineId === lineId &&
+          job.status !== "cancelled" &&
+          job.quantityMt > 0,
+      )
+      .sort(compareJobs);
+    const fixed = jobs
+      .flatMap((job) => job.lockedSegments ?? [])
+      .filter((segment) => segment.lineId === lineId)
+      .map((segment) => ({ start: segment.start, end: segment.end }))
+      .sort(compareIntervals);
+    let cursor: number | null = null;
+    let previousProduct: string | null = null;
+
+    for (const job of jobs) {
+      const rate = getRate(state.settings, lineId, job.productCode);
+      const durationMinutes = (job.quantityMt / rate) * 60;
+      const needsChangeover =
+        previousProduct !== null && productFamily(previousProduct) !== productFamily(job.productCode);
+      let segments: ScheduleSegment[] = [];
+      let changeoverMinutes = needsChangeover
+        ? state.settings.changeoverMinutes
+        : 0;
+
+      if (job.lockedSegments && job.lockedSegments.length > 0) {
+        segments = job.lockedSegments
+          .filter((segment) => segment.lineId === lineId)
+          .map((segment) => ({ ...segment, jobId: job.id }))
+          .sort(compareSegments);
+        changeoverMinutes = minutesForKind(segments, "changeover");
+      } else if (state.settings.availableHours > 0) {
+        let phaseCursor = Math.max(
+          cursor ?? Number.NEGATIVE_INFINITY,
+          businessDayStart(job.date, state.settings.dayStart),
+        );
+        if (changeoverMinutes > 0) {
+          const changeover = allocateWork(
+            state.settings,
+            lineId,
+            job.id,
+            "changeover",
+            phaseCursor,
+            changeoverMinutes,
+            fixed,
+          );
+          if (changeover) {
+            segments.push(...changeover);
+            phaseCursor = changeover.at(-1)!.end;
+          } else {
+            changeoverMinutes = 0;
+          }
+        }
+        const production = allocateWork(
+          state.settings,
+          lineId,
+          job.id,
+          "production",
+          phaseCursor,
+          durationMinutes,
+          fixed,
+        );
+        if (production) segments.push(...production);
+      }
+
+      const plannedStart = minOrNull(segments.map((segment) => segment.start));
+      const plannedEnd = maxOrNull(segments.map((segment) => segment.end));
+      if (plannedEnd !== null) cursor = Math.max(cursor ?? plannedEnd, plannedEnd);
+      const businessEnd = businessDayStart(job.date, state.settings.dayStart) + DAY_MS;
+      const scheduledJob: ScheduledJob = {
+        ...cloneJob(job),
+        plannedStart,
+        plannedEnd,
+        durationMinutes,
+        rate,
+        changeoverMinutes,
+        segments,
+        overflow: plannedEnd !== null && plannedEnd > businessEnd,
+      };
+      byLine[lineId].push(scheduledJob);
+      byId.set(job.id, scheduledJob);
+      previousProduct = job.productCode;
+    }
+  }
+
+  return { byLine, byId };
+}
+
+function allocateWork(
+  settings: Settings,
+  lineId: LineId,
+  jobId: string,
+  kind: ScheduleSegment["kind"],
+  earliest: number,
+  minutes: number,
+  fixed: Interval[],
+): ScheduleSegment[] | null {
+  if (minutes <= 0) return [];
+  let remainingMs = minutes * MINUTE_MS;
+  let cursor = earliest;
+  let date = businessDateAtOrBefore(cursor, settings.dayStart);
+  const segments: ScheduleSegment[] = [];
+
+  for (let searched = 0; searched < MAX_SEARCH_DAYS; searched += 1) {
+    const intervals = subtractIntervals(
+      getAvailableIntervals(settings, lineId, date),
+      fixed,
+    );
+    for (const interval of intervals) {
+      const start = Math.max(cursor, interval.start);
+      if (start >= interval.end) continue;
+      const usedMs = Math.min(remainingMs, interval.end - start);
+      segments.push({
+        jobId,
+        lineId,
+        kind,
+        start,
+        end: start + usedMs,
+      });
+      remainingMs -= usedMs;
+      cursor = start + usedMs;
+      if (remainingMs <= 0.001) return segments;
+    }
+    date = addDays(date, 1);
+    cursor = Math.max(cursor, businessDayStart(date, settings.dayStart));
+  }
+  return null;
+}
+
+function getAvailableIntervals(
+  settings: Settings,
+  lineId: LineId,
+  date: string,
+): Interval[] {
+  if (settings.availableHours <= 0) return [];
+  const start = businessDayStart(date, settings.dayStart);
+  const available: Interval[] = [
+    { start, end: start + settings.availableHours * 60 * MINUTE_MS },
+  ];
+  const downtime = settings.downtime
+    .filter(
+      (item) => item.date === date && (item.lineId === "all" || item.lineId === lineId),
+    )
+    .map((item) => downtimeInterval(item, settings.dayStart));
+  return subtractIntervals(available, downtime);
+}
+
+function downtimeInterval(item: Downtime, dayStart: string): Interval {
+  const businessStart = businessDayStart(item.date, dayStart);
+  const dayStartMinutes = timeToMinutes(dayStart, "Day start");
+  const startClock = timeToMinutes(item.start, "Downtime start");
+  const endClock = timeToMinutes(item.end, "Downtime end");
+  let startOffset = startClock - dayStartMinutes;
+  let endOffset = endClock - dayStartMinutes;
+  if (startOffset < 0) startOffset += 24 * 60;
+  if (endOffset < 0) endOffset += 24 * 60;
+  if (endOffset <= startOffset) endOffset += 24 * 60;
+  return {
+    start: businessStart + startOffset * MINUTE_MS,
+    end: businessStart + endOffset * MINUTE_MS,
+  };
+}
+
+function subtractIntervals(source: Interval[], blocks: Interval[]): Interval[] {
+  let result = source.map((interval) => ({ ...interval }));
+  for (const block of blocks.filter(validInterval).sort(compareIntervals)) {
+    result = result.flatMap((interval) => {
+      if (block.end <= interval.start || block.start >= interval.end) return [interval];
+      const pieces: Interval[] = [];
+      if (block.start > interval.start) {
+        pieces.push({ start: interval.start, end: Math.min(block.start, interval.end) });
+      }
+      if (block.end < interval.end) {
+        pieces.push({ start: Math.max(block.end, interval.start), end: interval.end });
+      }
+      return pieces.filter(validInterval);
+    });
+  }
+  return result.sort(compareIntervals);
+}
+
+function finalizeMutation(
+  state: AppState,
+  jobs: Job[],
+  historyEvent: HistoryEvent,
+): AppState {
+  const next = withEvent(state, jobs, historyEvent);
+  validateFutureDayCollisions(next);
+  return next;
+}
+
+function validateFutureDayCollisions(state: AppState): void {
+  const scheduled = scheduleState(state);
+  for (const lineId of LINE_IDS) {
+    const jobs = scheduled.byLine[lineId];
+    const dates = [...new Set(jobs.map((job) => job.date))].sort();
+    for (let index = 1; index < dates.length; index += 1) {
+      const date = dates[index];
+      const dateStart = businessDayStart(date, state.settings.dayStart);
+      const earlierEnd = maxOrNull(
+        jobs
+          .filter((job) => job.date < date)
+          .map((job) => job.plannedEnd)
+          .filter((value): value is number => value !== null),
+      );
+      if (earlierEnd !== null && earlierEnd > dateStart) {
+        throw new Error(
+          `Schedule overflow on ${lineId} collides with an existing job on ${date}.`,
+        );
+      }
+    }
+  }
+}
+
+function normalizeInput(input: JobInput, settings: Settings): JobInput {
+  assertDate(input.date, "Job date");
+  assertLineId(input.lineId);
+  const orderNo = requiredText(input.orderNo, "Order number");
+  const productCode = requiredText(input.productCode, "Product code");
+  const description = input.description.trim();
+  const bin = input.bin.trim();
+  const remarks = optionalNote(input.remarks, "Remarks") ?? "";
+  if (input.mode !== "bags" && input.mode !== "bulk") {
+    throw new Error("Quantity mode must be bags or bulk.");
+  }
+  if (input.bagCount !== null && (!Number.isFinite(input.bagCount) || input.bagCount < 0)) {
+    throw new Error("Bag count must be zero or greater.");
+  }
+  if (!Number.isFinite(input.quantityMt) || input.quantityMt < 0) {
+    throw new Error("Quantity must be zero or greater.");
+  }
+  if (input.mode === "bags" && input.bagCount === null) {
+    throw new Error("Bag count is required for bag quantities.");
+  }
+  return {
+    date: input.date,
+    lineId: input.lineId,
+    orderNo,
+    productCode,
+    description,
+    bin,
+    mode: input.mode,
+    bagCount: input.mode === "bags" ? input.bagCount : null,
+    quantityMt:
+      input.mode === "bags"
+        ? quantityFromBags(input.bagCount ?? 0, settings.bagWeightKg)
+        : input.quantityMt,
+    remarks,
+  };
+}
+
+function validateSettings(settings: Settings): void {
+  requiredText(settings.siteName, "Site name");
+  requiredText(settings.timeZone, "Time zone");
+  timeToMinutes(settings.dayStart, "Day start");
+  if (!Number.isFinite(settings.availableHours) || settings.availableHours < 0 || settings.availableHours > 24) {
+    throw new Error("Available hours must be between 0 and 24.");
+  }
+  if (!Number.isFinite(settings.changeoverMinutes) || settings.changeoverMinutes < 0) {
+    throw new Error("Changeover minutes must be zero or greater.");
+  }
+  if (!Number.isFinite(settings.bagWeightKg) || settings.bagWeightKg <= 0) {
+    throw new Error("Bag weight must be greater than zero.");
+  }
+  for (const lineId of LINE_IDS) {
+    if (!Number.isFinite(settings.rates[lineId]) || settings.rates[lineId] <= 0) {
+      throw new Error(`Rate for ${lineId} must be greater than zero.`);
+    }
+  }
+  if (!Number.isFinite(settings.slowRatePM2) || settings.slowRatePM2 <= 0) {
+    throw new Error("PM2 slow rate must be greater than zero.");
+  }
+  for (const downtime of settings.downtime) {
+    requiredText(downtime.id, "Downtime id");
+    assertDate(downtime.date, "Downtime date");
+    if (downtime.lineId !== "all") assertLineId(downtime.lineId);
+    timeToMinutes(downtime.start, "Downtime start");
+    timeToMinutes(downtime.end, "Downtime end");
+  }
+}
+
+function withEvent(
+  state: AppState,
+  jobs: Job[],
+  historyEvent: HistoryEvent,
+): AppState {
+  return {
+    ...state,
+    jobs,
+    settings: cloneSettings(state.settings),
+    events: [...state.events, historyEvent],
+  };
+}
+
+function event(
+  type: string,
+  message: string,
+  jobId?: string,
+  at = new Date().toISOString(),
+): HistoryEvent {
+  return { id: makeId("event"), at, type, ...(jobId ? { jobId } : {}), message };
+}
+
+function resequence(jobs: Job[], lineId: LineId, date: string): Job[] {
+  const orderedIds = jobs
+    .filter((job) => job.lineId === lineId && job.date === date)
+    .sort(compareJobs)
+    .map((job) => job.id);
+  const sequenceById = new Map(orderedIds.map((id, index) => [id, index + 1]));
+  return jobs.map((job) =>
+    sequenceById.has(job.id)
+      ? { ...job, sequence: sequenceById.get(job.id)! }
+      : job,
+  );
+}
+
+function requireJob(state: AppState, id: string): Job {
+  const job = state.jobs.find((candidate) => candidate.id === id);
+  if (!job) throw new Error(`Job ${id} was not found.`);
+  return job;
+}
+
+function requirePending(job: Job, action: string): void {
+  if (job.status !== "pending") {
+    const wording: Record<string, string> = {
+      edit: "edited",
+      move: "moved",
+      start: "started",
+      cancel: "cancelled",
+    };
+    throw new Error(`Only a pending job can be ${wording[action] ?? action}.`);
+  }
+}
+
+function toInput(job: Job): JobInput {
+  return {
+    date: job.date,
+    lineId: job.lineId,
+    orderNo: job.orderNo,
+    productCode: job.productCode,
+    description: job.description,
+    bin: job.bin,
+    mode: job.mode,
+    bagCount: job.bagCount,
+    quantityMt: job.quantityMt,
+    remarks: job.remarks,
+  };
+}
+
+function cloneJob(job: Job): Job {
+  return {
+    ...job,
+    lockedSegments: job.lockedSegments?.map((segment) => ({ ...segment })),
+    ...(job.issue ? { issue: { ...job.issue } } : {}),
+  };
+}
+
+function cloneSettings(settings: Settings): Settings {
+  return {
+    ...settings,
+    rates: { ...settings.rates },
+    slowProductPrefixes: [...settings.slowProductPrefixes],
+    downtime: settings.downtime.map((item) => ({ ...item })),
+  };
+}
+
+function productFamily(productCode: string): string {
+  return productCode.trim().slice(0, 4);
+}
+
+function quantityFromBags(bags: number, bagWeightKg: number): number {
+  return (bags * bagWeightKg) / 1_000;
+}
+
+function businessDayStart(date: string, dayStart: string): number {
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = dayStart.split(":").map(Number);
+  return (
+    Date.UTC(year, month - 1, day, hour, minute, 0, 0) -
+    MALAYSIA_OFFSET_MINUTES * MINUTE_MS
+  );
+}
+
+function businessDateAtOrBefore(timestamp: number, dayStart: string): string {
+  const malaysiaPoint = new Date(timestamp + MALAYSIA_OFFSET_MINUTES * MINUTE_MS);
+  let date = formatUtcDate(malaysiaPoint);
+  if (timestamp < businessDayStart(date, dayStart)) date = addDays(date, -1);
+  return date;
+}
+
+function addDays(date: string, days: number): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const result = new Date(Date.UTC(year, month - 1, day + days, 12, 0, 0, 0));
+  return formatUtcDate(result);
+}
+
+function formatUtcDate(date: Date): string {
+  const year = date.getUTCFullYear();
+  const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(date.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function timeToMinutes(value: string, label: string): number {
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) {
+    throw new Error(`${label} must use HH:mm in 24-hour time.`);
+  }
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+function assertDate(value: string, label: string): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error(`${label} must use YYYY-MM-DD.`);
+  }
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0));
+  if (formatUtcDate(parsed) !== value) {
+    throw new Error(`${label} is not a valid calendar date.`);
+  }
+}
+
+function assertLineId(value: string): asserts value is LineId {
+  if (!LINE_IDS.includes(value as LineId)) {
+    throw new Error(`Unknown production line: ${value}.`);
+  }
+}
+
+function assertIsoDateTime(value: string, label: string): void {
+  if (!value || !Number.isFinite(new Date(value).getTime())) {
+    throw new Error(`${label} must be a valid date and time.`);
+  }
+}
+
+function requiredText(value: string, label: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error(`${label} is required.`);
+  return trimmed;
+}
+
+function optionalNote(value: string | undefined, label: string): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(`${label} must be text.`);
+  const trimmed = value.trim();
+  if (trimmed.length > MAX_NOTE_LENGTH) {
+    throw new Error(`${label} must be ${MAX_NOTE_LENGTH} characters or fewer.`);
+  }
+  return trimmed || undefined;
+}
+
+function assertActualQuantity(value: number): void {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("Actual quantity must be a finite number zero or greater.");
+  }
+}
+
+function formatMt(value: number): string {
+  const rounded = Math.round(value * 1_000) / 1_000;
+  return `${Object.is(rounded, -0) ? 0 : rounded} MT`;
+}
+
+function formatSignedMt(value: number): string {
+  const rounded = Math.round(value * 1_000) / 1_000;
+  const normalized = Object.is(rounded, -0) ? 0 : rounded;
+  return `${normalized > 0 ? "+" : ""}${normalized} MT`;
+}
+
+function makeId(prefix: string): string {
+  const random =
+    typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  return `${prefix}-${random}`;
+}
+
+function compareJobs(a: Job, b: Job): number {
+  return (
+    a.date.localeCompare(b.date) ||
+    a.sequence - b.sequence ||
+    a.createdAt.localeCompare(b.createdAt) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
+function compareIntervals(a: Interval, b: Interval): number {
+  return a.start - b.start || a.end - b.end;
+}
+
+function compareSegments(a: ScheduleSegment, b: ScheduleSegment): number {
+  return a.start - b.start || a.end - b.end;
+}
+
+function validInterval(interval: Interval): boolean {
+  return Number.isFinite(interval.start) && Number.isFinite(interval.end) && interval.end > interval.start;
+}
+
+function minutesForKind(
+  segments: ScheduleSegment[],
+  kind: ScheduleSegment["kind"],
+): number {
+  return segments
+    .filter((segment) => segment.kind === kind)
+    .reduce((sum, segment) => sum + (segment.end - segment.start) / MINUTE_MS, 0);
+}
+
+function overlapMinutes(
+  startA: number,
+  endA: number,
+  startB: number,
+  endB: number,
+): number {
+  return Math.max(0, Math.min(endA, endB) - Math.max(startA, startB)) / MINUTE_MS;
+}
+
+function minOrNull(values: number[]): number | null {
+  return values.length > 0 ? Math.min(...values) : null;
+}
+
+function maxOrNull(values: number[]): number | null {
+  return values.length > 0 ? Math.max(...values) : null;
+}

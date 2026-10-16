@@ -1,0 +1,5 @@
+# Optional host access for Node development or database tools. Normal startup does not expose PostgreSQL.
+services:
+  db:
+    ports:
+      - "127.0.0.1:5434:5432"

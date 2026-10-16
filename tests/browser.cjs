@@ -1,0 +1,278 @@
+// Run only against a disposable test workspace. This suite replaces its records.
+const {chromium}=require('playwright');
+const {existsSync}=require('node:fs');
+const fs=require('node:fs/promises');
+const path=require('node:path');
+const assert=require('node:assert/strict');
+const {randomUUID}=require('node:crypto');
+const base=process.env.BROWSER_BASE_URL;
+if(!base||process.env.BROWSER_ALLOW_REPLACE!=='1')throw new Error('Set BROWSER_BASE_URL to an isolated test server and BROWSER_ALLOW_REPLACE=1. This suite replaces its workspace.');
+if(!['127.0.0.1','localhost','[::1]'].includes(new URL(base).hostname))throw new Error('Use an isolated loopback test server.');
+const output=path.resolve('output/playwright/database');
+const checks=[];
+const pass=name=>{checks.push(name);console.log('PASS '+name);};
+const date=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kuala_Lumpur'}).format(new Date());
+const get=async()=>{
+  const response=await fetch(base+'/api/workspace');assert.equal(response.status,200);return response.json();
+};
+const command=async cmd=>{
+  const current=await get();
+  const response=await fetch(base+'/api/commands',{method:'POST',headers:{'Content-Type':'application/json',Origin:base},body:JSON.stringify({expectedRevision:current.revision,commandId:randomUUID(),command:cmd})});
+  const body=await response.json();assert.equal(response.status,200,JSON.stringify(body));return body;
+};
+const wait=async(fn)=>{
+  for(let n=0;n<50;n++){if(await fn())return;await new Promise(resolve=>setTimeout(resolve,100));}
+  assert.fail('Timed out waiting for persisted database state');
+};
+(async()=>{
+  await fs.mkdir(output,{recursive:true});
+  const baseline=await get();
+  const empty={...baseline.state,jobs:[],events:[],settings:{...baseline.state.settings,downtime:[]}};
+  await command({type:'workspace.restore',backup:empty});
+  const browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:!existsSync(chromium.executablePath())?{channel:'chrome'}:{})});
+  let page;
+  try{
+    const context=await browser.newContext({viewport:{width:1366,height:768},acceptDownloads:true,timezoneId:'UTC'});
+    page=await context.newPage();page.setDefaultTimeout(10_000);
+    const errors=[];page.on('pageerror',error=>errors.push(error.message));
+    const job=async order=>(await get()).state.jobs.find(item=>item.orderNo===order);
+    const open=id=>page.locator(`[data-job-id="${id}"] .hplan-card-open`);
+    const add=async(product,order,bags='200',line='PM1')=>{
+      await page.getByRole('button',{name:`Add production to ${line}`,exact:true}).click();
+      const modal=page.getByRole('dialog',{name:'Add production',exact:true});
+      await modal.getByLabel('Product code',{exact:false}).fill(product);
+      await modal.getByLabel('Order reference',{exact:false}).fill(order);
+      await modal.getByLabel('Destination bin',{exact:true}).fill('QA-BIN');
+      await modal.getByLabel('Number of bags',{exact:false}).fill(bags);
+      return modal;
+    };
+    await page.addInitScript(()=>localStorage.setItem('millplan.workspace.v1',JSON.stringify({schemaVersion:1,jobs:[{id:'browser-only-record'}]})));
+    await page.goto(base+'/#/planning');
+    await page.locator('.hplan-board').waitFor();
+    assert.equal(await page.locator('[data-job-id]').count(),0);
+    assert.equal(await page.getByText('PostgreSQL workspace',{exact:true}).count(),1);
+    assert.equal((await get()).state.jobs.length,0);
+    pass('HTTP uses PostgreSQL and ignores existing browser records; four empty lines load');
+
+    let modal=await add('QA-A100','QA-DB-A');
+    await modal.getByRole('button',{name:'Add to planning',exact:true}).click();
+    await wait(async()=>Boolean(await job('QA-DB-A')));
+    await modal.waitFor({state:'hidden'});
+    assert.equal(await page.getByRole('dialog').count(),0);
+    let a=await job('QA-DB-A');assert.equal(a.quantityMt,10);
+    await open(a.id).click();await page.getByRole('button',{name:'Edit details',exact:true}).click();
+    modal=page.getByRole('dialog',{name:'Edit production',exact:true});
+    await modal.getByLabel('Number of bags',{exact:false}).fill('240');
+    await modal.locator('summary').click();
+    await modal.getByLabel('Remarks',{exact:true}).fill('Database QA note');
+    await modal.getByRole('button',{name:'Save changes',exact:true}).click();
+    await wait(async()=>(await job('QA-DB-A')).quantityMt===12);
+    await page.reload();await open(a.id).waitFor();
+    assert.equal((await job('QA-DB-A')).remarks,'Database QA note');
+    pass('Add and edit wait for database confirmation and survive a browser reload');
+
+    const drag=async()=>{
+      const source=await open(a.id).boundingBox();const target=await page.locator('[data-line-id="PM4"]').boundingBox();
+      await page.mouse.move(source.x+source.width*.3,source.y+source.height*.35);await page.mouse.down();
+      await page.mouse.move(source.x+source.width*.3+12,source.y+source.height*.35,{steps:3});
+      await page.mouse.move(target.x+target.width*.5,target.y+target.height*.5,{steps:15});await page.mouse.up();
+      await wait(async()=>(await job('QA-DB-A')).lineId==='PM4');await page.waitForTimeout(85);
+    };
+    await drag();assert.equal((await job('QA-DB-A')).binNeedsReview,true);
+    await page.locator('.hplan-actions').getByRole('button',{name:'Undo',exact:true}).click();
+    await wait(async()=>(await job('QA-DB-A')).lineId==='PM1');
+    await drag();await open(a.id).click();
+    await page.getByRole('button',{name:'Confirm bin assignment',exact:true}).click();
+    await wait(async()=>(await job('QA-DB-A')).binNeedsReview===false);
+    pass('Whole-card line changes, bin confirmation and server-held Undo persist through the API');
+
+    const startValue=new Date(Date.now()-120_000+8*3_600_000).toISOString().slice(0,16);
+    await page.getByLabel('Actual start time',{exact:false}).fill(startValue);
+    await page.getByRole('button',{name:'Start production',exact:true}).click();
+    await wait(async()=>(await job('QA-DB-A')).status==='running');
+    await page.getByRole('button',{name:'Report a problem',exact:true}).click();
+    await page.getByLabel('Problem details',{exact:false}).fill('QA stopped material feed');
+    await page.getByRole('button',{name:'Mark as issue',exact:true}).click();
+    await wait(async()=>Boolean((await job('QA-DB-A')).issue));
+    await page.getByRole('button',{name:'Resolve issue',exact:true}).click();
+    await wait(async()=>!(await job('QA-DB-A')).issue);
+    await page.getByRole('button',{name:'Mark as done',exact:true}).click();
+    await page.getByLabel('Actual quantity (MT)',{exact:true}).fill('11.5');
+    await page.getByLabel('Completion note (optional)',{exact:false}).fill('QA verified output');
+    const before=Date.now();await page.getByRole('button',{name:'Confirm done',exact:true}).click();
+    await wait(async()=>(await job('QA-DB-A')).status==='completed');
+    a=await job('QA-DB-A');assert.equal(a.actualQuantityMt,11.5);assert.equal(a.quantityMt,12);
+    assert.ok(new Date(a.actualEnd).getTime()>=before-1000&&new Date(a.actualEnd).getTime()<=Date.now()+1000);
+    await page.locator('.actual-output-form').waitFor({state:'hidden'});
+    await page.keyboard.press('Escape');
+    pass('Manual start, issue/resolve and Done save actual output with the server end timestamp');
+
+    modal=await add('QA-B200','QA-DB-B','160','PM2');await modal.getByRole('button',{name:'Add to planning',exact:true}).click();
+    await wait(async()=>Boolean(await job('QA-DB-B')));
+    const b=await job('QA-DB-B');
+    const second=await context.newPage();second.setDefaultTimeout(10_000);second.on('pageerror',error=>errors.push(error.message));
+    await second.goto(base+'/#/planning');await second.locator(`[data-job-id="${b.id}"] .hplan-card-open`).click();
+    await second.getByRole('button',{name:'Edit details',exact:true}).click();
+    const staleModal=second.getByRole('dialog',{name:'Edit production',exact:true});
+    await staleModal.getByLabel('Number of bags',{exact:false}).fill('190');
+    await command({type:'job.update',jobId:b.id,patch:{remarks:'Changed from another client'}});
+    await staleModal.getByRole('button',{name:'Save changes',exact:true}).click();
+    await staleModal.getByRole('alert').filter({hasText:'Another planner'}).waitFor();
+    assert.equal(await staleModal.count(),1);assert.equal((await job('QA-DB-B')).bagCount,160);
+    assert.equal(await staleModal.getByLabel('Number of bags',{exact:false}).inputValue(),'190');
+    assert.equal(await staleModal.getByRole('button',{name:'Save changes',exact:true}).isDisabled(),true);
+    await staleModal.getByRole('button',{name:'Reload latest task',exact:true}).click();
+    assert.equal(await staleModal.getByLabel('Number of bags',{exact:false}).inputValue(),'160');
+    await staleModal.getByLabel('Number of bags',{exact:false}).fill('190');
+    await staleModal.getByRole('button',{name:'Save changes',exact:true}).click();
+    await wait(async()=>(await job('QA-DB-B')).bagCount===190);
+    assert.equal((await job('QA-DB-B')).remarks,'Changed from another client');
+    await second.locator(`[data-job-id="${b.id}"] .hplan-card-open`).click();
+    await second.getByRole('button',{name:'Edit details',exact:true}).click();
+    const beforeDelete=await get();
+    await command({type:'workspace.restore',backup:{...beforeDelete.state,jobs:beforeDelete.state.jobs.filter(j=>j.id!==b.id)}});
+    await staleModal.getByRole('button',{name:'Save changes',exact:true}).click();
+    await staleModal.getByRole('button',{name:'Close editor',exact:true}).waitFor();
+    assert.equal(await staleModal.getByRole('button',{name:'Save changes',exact:true}).isDisabled(),true);
+    assert.equal(await staleModal.getByRole('button',{name:'Add to planning',exact:true}).count(),0);
+    assert.equal(await job('QA-DB-B'),undefined);
+    await second.keyboard.press('Escape');await second.close();await page.reload();await page.locator('.hplan-board').waitFor();
+    pass('Stale edits require explicit reload, preserve collaborator fields and never recreate a remotely removed task');
+
+    await open(a.id).click();
+    await page.getByRole('button',{name:'Edit actual output',exact:true}).click();
+    const actualForm=page.getByRole('form',{name:'Record actual output',exact:true});
+    await actualForm.getByLabel('Actual quantity (MT)',{exact:true}).fill('1');
+    await command({type:'job.recordActual',jobId:a.id,actualQuantityMt:11.25,completionNote:'Changed output from another client'});
+    await actualForm.getByRole('button',{name:'Save actual output',exact:true}).click();
+    await actualForm.getByRole('button',{name:'Reload latest output',exact:true}).waitFor();
+    assert.equal(await actualForm.getByLabel('Actual quantity (MT)',{exact:true}).inputValue(),'1');
+    assert.equal(await actualForm.getByRole('button',{name:'Save actual output',exact:true}).isDisabled(),true);
+    await actualForm.getByRole('button',{name:'Reload latest output',exact:true}).click();
+    assert.equal(await actualForm.getByLabel('Actual quantity (MT)',{exact:true}).inputValue(),'11.25');
+    assert.equal(await actualForm.getByLabel('Completion note (optional)',{exact:false}).inputValue(),'Changed output from another client');
+    await actualForm.getByLabel('Actual quantity (MT)',{exact:true}).fill('11.5');
+    await actualForm.getByRole('button',{name:'Save actual output',exact:true}).click();
+    await wait(async()=>(await job('QA-DB-A')).actualQuantityMt===11.5);
+    await actualForm.waitFor({state:'hidden'});
+    assert.equal((await job('QA-DB-A')).actualEnd,a.actualEnd);
+    await page.keyboard.press('Escape');
+    pass('Actual-output conflicts preserve draft values until an explicit reload and never alter completed timestamps');
+
+    await page.route('**/api/workspace',route=>route.abort());
+    await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+    await page.getByText('PostgreSQL is unavailable. Reconnect before saving changes.',{exact:false}).waitFor();
+    await page.unroute('**/api/workspace');
+    modal=await add('QA-REFRESH','QA-REFRESH','10','PM1');
+    await command({type:'job.recordActual',jobId:a.id,actualQuantityMt:11.5,completionNote:'Revision changed before explicit refresh'});
+    await modal.getByRole('button',{name:'Retry connection',exact:true}).click();
+    await modal.getByRole('button',{name:'Reload latest plan',exact:true}).waitFor();
+    assert.equal(await modal.getByLabel('Order reference',{exact:false}).inputValue(),'QA-REFRESH');
+    assert.equal(await modal.getByRole('button',{name:'Add to planning',exact:true}).isDisabled(),true);
+    await modal.getByRole('button',{name:'Reload latest plan',exact:true}).click();
+    await modal.getByRole('button',{name:'Cancel',exact:true}).click();
+    assert.equal(await job('QA-REFRESH'),undefined);
+    pass('Explicit reconnection cannot advance the revision beneath an open draft without a reload gate');
+
+    const requests=[];let loseResponse=true;
+    const lostHandler=async route=>{
+      const body=route.request().postDataJSON();
+      if(body.command?.input?.orderNo==='QA-LOST'){
+        requests.push(body.commandId);
+        if(loseResponse){loseResponse=false;await route.fetch();await route.abort();return;}
+      }
+      await route.continue();
+    };
+    await page.route('**/api/commands',lostHandler);
+    modal=await add('QA-C300','QA-LOST','80','PM3');await modal.getByRole('button',{name:'Add to planning',exact:true}).click();
+    await wait(async()=>Boolean(await job('QA-LOST')));await page.getByRole('dialog').waitFor({state:'hidden'});
+    assert.equal(requests.length,2);assert.equal(requests[0],requests[1]);
+    assert.equal((await get()).state.jobs.filter(j=>j.orderNo==='QA-LOST').length,1);
+    await page.unroute('**/api/commands',lostHandler);
+    pass('A lost success response retries the same command ID and creates exactly one production task');
+
+    const blocked=[];
+    const failHandler=async route=>{blocked.push(route.request().postDataJSON().commandId);await route.abort();};
+    await page.route('**/api/commands',failHandler);
+    modal=await add('QA-D400','QA-OFFLINE','60','PM1');await modal.getByRole('button',{name:'Add to planning',exact:true}).click();
+    await modal.getByRole('alert').filter({hasText:'save could not be confirmed'}).waitFor();
+    assert.equal(await job('QA-OFFLINE'),undefined);
+    assert.equal(await modal.getByLabel('Order reference',{exact:false}).inputValue(),'QA-OFFLINE');
+    assert.ok(await page.getByText('Connection / storage issue',{exact:true}).count());
+    await page.keyboard.press('Escape');assert.equal(await modal.count(),1);
+    assert.equal(await modal.getByRole('button',{name:'Close production form',exact:true}).isDisabled(),true);
+    assert.equal(await modal.getByRole('button',{name:'Cancel',exact:true}).isDisabled(),true);
+    await page.evaluate(()=>{window.location.hash='/history';});await page.waitForTimeout(100);
+    assert.ok(page.url().endsWith('#/planning'));
+    assert.equal(await modal.getByLabel('Order reference',{exact:false}).inputValue(),'QA-OFFLINE');
+    await page.unroute('**/api/commands',failHandler);
+    const retryId=blocked[0];
+    const observe=async route=>{blocked.push(route.request().postDataJSON().commandId);await route.continue();};
+    await page.route('**/api/commands',observe);
+    await modal.getByRole('button',{name:'Retry connection',exact:true}).click();
+    await wait(async()=>Boolean(await job('QA-OFFLINE')));await page.getByRole('dialog').waitFor({state:'hidden'});
+    assert.ok(blocked.every(id=>id===retryId));await page.unroute('**/api/commands',observe);
+    pass('Network failure preserves the form, shows no saved success and resolves the same pending command on reconnect');
+
+    await page.getByRole('button',{name:'History',exact:true}).click();
+    await page.getByRole('combobox',{name:'Filter line',exact:true}).selectOption('PM4');
+    assert.ok((await page.locator('.history-page tbody').textContent()).includes('QA-DB-A'));
+    await page.getByRole('button',{name:'Export',exact:true}).click();
+    const downloadEvent=page.waitForEvent('download');
+    await page.getByRole('button',{name:'Excel report Four lines + actual timestamps',exact:true}).click();
+    const download=await downloadEvent;const xlsx=path.join(output,'database-report.xlsx');await download.saveAs(xlsx);
+    const ExcelJS=require('exceljs');const book=new ExcelJS.Workbook();await book.xlsx.readFile(xlsx);
+    const actualRows=book.getWorksheet('Actual production').getSheetValues();
+    assert.ok(actualRows.some(row=>Array.isArray(row)&&row.includes(11.5)&&row.includes('QA-DB-A')));
+    await page.pdf({path:path.join(output,'database-report.pdf'),preferCSSPageSize:true,printBackground:true});
+    await page.getByRole('button',{name:'Settings',exact:true}).click();
+    const previousSite=(await get()).state.settings.siteName;
+    await page.getByLabel('Site name',{exact:true}).fill('QA unsaved settings draft');
+    const otherJob=await job('QA-LOST');
+    await command({type:'job.update',jobId:otherJob.id,patch:{remarks:'Remote change during settings draft'}});
+    await page.getByRole('button',{name:'Save settings',exact:true}).click();
+    await page.getByRole('button',{name:'Reload latest settings',exact:true}).waitFor();
+    assert.equal(await page.getByLabel('Site name',{exact:true}).inputValue(),'QA unsaved settings draft');
+    assert.equal(await page.getByRole('button',{name:'Save settings',exact:true}).isDisabled(),true);
+    await page.getByRole('button',{name:'Reload latest settings',exact:true}).click();
+    assert.equal(await page.getByLabel('Site name',{exact:true}).inputValue(),previousSite);
+    await page.getByLabel('Site name',{exact:true}).fill('Millplan QA Plant');
+    await page.getByRole('button',{name:'Save settings',exact:true}).click();
+    await wait(async()=>(await get()).state.settings.siteName==='Millplan QA Plant');
+    pass('History line filtering, numeric Excel/PDF reports and settings use the database workspace; stale settings preserve drafts until reload');
+
+    const beforeRestore=(await get()).state;
+    const backupPath=path.join(output,'restore-fixture.json');
+    await fs.writeFile(backupPath,JSON.stringify({...beforeRestore,settings:{...beforeRestore.settings,siteName:'QA restored database'}}));
+    await page.getByLabel('Site name',{exact:true}).fill('Unsaved settings before intentional restore');
+    await page.getByLabel('Backup JSON file',{exact:true}).setInputFiles(backupPath);
+    await page.getByRole('button',{name:'Replace workspace with this backup',exact:true}).click();
+    await wait(async()=>(await get()).state.settings.siteName==='QA restored database');
+    assert.deepEqual((await get()).previousBackup,beforeRestore);
+    await wait(async()=>(await page.getByLabel('Site name',{exact:true}).inputValue())==='QA restored database');
+    await page.reload();await page.getByRole('button',{name:'Download previous workspace',exact:true}).waitFor();
+    const beforeDemo=(await get()).state;
+    await page.getByLabel('Site name',{exact:true}).fill('Unsaved settings before intentional demo reset');
+    await page.getByRole('button',{name:'Reset demo',exact:true}).click();
+    await page.getByRole('button',{name:'Replace with demo',exact:true}).click();
+    await wait(async()=>(await get()).isDemo===true);
+    assert.deepEqual((await get()).previousBackup,beforeDemo);
+    await wait(async()=>(await page.getByLabel('Site name',{exact:true}).inputValue())==='Demo Pellet Plant');
+    await page.getByRole('button',{name:'Planning board',exact:true}).click();
+    await page.screenshot({path:path.join(output,'database-board-desktop.png'),animations:'disabled'});
+    await page.setViewportSize({width:390,height:844});await page.waitForTimeout(350);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+    await page.screenshot({path:path.join(output,'database-board-mobile.png'),animations:'disabled'});
+    pass('Restore/demo reset retain recovery copies, reconcile intentional settings replacement and fit desktop/mobile layouts');
+
+    const unavailable=await context.newPage();await unavailable.route('**/api/workspace',route=>route.abort());
+    await unavailable.goto(base);await unavailable.getByRole('heading',{name:'Database connection needed',exact:true}).waitFor();
+    assert.equal(await unavailable.locator('.hplan-board').count(),0);
+    await unavailable.unroute('**/api/workspace');await unavailable.getByRole('button',{name:'Retry connection',exact:true}).click();
+    await unavailable.getByRole('heading',{name:'Production overview.'}).waitFor();await unavailable.close();
+    assert.deepEqual(errors,[]);
+    pass('Initial API failure requires reconnection and never falls back to browser/demo data; no page errors');
+    await fs.writeFile(path.join(output,'verification.json'),JSON.stringify({at:new Date().toISOString(),date:date(),checks,errors},null,2));
+  }catch(error){if(page)await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>{});throw error;}
+  finally{await browser.close();await command({type:'workspace.restore',backup:baseline.state});}
+})().catch(error=>{console.error(error);process.exitCode=1;});
