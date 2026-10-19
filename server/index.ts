@@ -5,7 +5,8 @@ import { createApp } from "./app";
 import { loadConfig } from "./config";
 import { createPool } from "./db";
 import { runMigrations } from "./migrate";
-import { defaultSettings, WorkspaceStore } from "./store";
+import { createDefaultSettings } from "../src/domain/defaults";
+import { WorkspaceStore } from "./store";
 
 export async function startServer(): Promise<{ close(): Promise<void> }> {
   const config = loadConfig();
@@ -15,7 +16,7 @@ export async function startServer(): Promise<{ close(): Promise<void> }> {
   try {
     await runMigrations(pool);
     const store = new WorkspaceStore(pool);
-    await store.initialize(defaultSettings());
+    await store.initialize(createDefaultSettings());
     server = createServer(createApp({
       store,
       hostPorts: config.hostPorts,

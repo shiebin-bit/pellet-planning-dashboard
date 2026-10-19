@@ -8,7 +8,7 @@ npm run build
 npm audit --omit=dev
 ```
 
-The current unit suite has **50 tests** for scheduling, quantities, frozen states, carry-over, conflicts, actual output, attention selection, report bounds, strict backup validation, recoverable local storage and shared commands.
+The current unit suite has **51 tests** for scheduling, quantities, frozen states, carry-over, conflicts, actual output, attention selection, report bounds, strict backup validation, recoverable local storage, shared commands and independent empty-workspace defaults.
 
 ## Real PostgreSQL API tests
 

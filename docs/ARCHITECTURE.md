@@ -13,13 +13,13 @@ flowchart LR
 
 Docker serves the built dashboard and `/api` on the same port. PostgreSQL is internal to the Compose network. The native development setup adds a loopback-only database port and a Vite API proxy.
 
-HTTP(S) always uses the API, even if browser records exist. Initial connection failure shows a reconnect screen. There is no fallback to a sample plan. The separate `file:` build preserves offline localStorage operation.
+HTTP(S) always uses the API, even if browser records exist. Its in-memory loading state and a newly initialized database both start with default settings and no jobs or activity; initial connection failure shows a reconnect screen. There is no fallback to a sample plan. The separate `OPEN-OFFLINE-DASHBOARD.cmd` `file:` build preserves offline localStorage operation.
 
 ## Code map
 
 | Location | Responsibility |
 | --- | --- |
-| `src/domain/engine.ts` | Scheduling, quantities, conflicts, state transitions and frozen tasks |
+| `src/domain/engine.ts`, `defaults.ts` | Scheduling, quantities, conflicts, state transitions, frozen tasks and empty-workspace defaults |
 | `src/domain/commands.ts` | Typed commands, strict API parsing and shared command execution |
 | `src/domain/backup.ts`, `reports.ts` | Workspace validation and report selection |
 | `src/lib/workspace.tsx`, `api.ts` | Frontend persistence provider, revisions, drafts and request retries |

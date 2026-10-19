@@ -4,7 +4,8 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import pg from "pg";
 import { createApp } from "../server/app";
 import { runMigrations } from "../server/migrate";
-import { defaultSettings, WorkspaceStore } from "../server/store";
+import { WorkspaceStore } from "../server/store";
+import { createDefaultSettings } from "../src/domain/defaults";
 import { createSampleState } from "../src/domain/sample";
 import type { Command, WorkspaceEnvelope } from "../src/domain/commands";
 import type { JobInput, LineId } from "../src/domain/types";
@@ -43,7 +44,7 @@ integration("PostgreSQL workspace API", () => {
 
   beforeEach(async () => {
     await pool.query("TRUNCATE command_receipts, history_events, jobs, workspace CASCADE");
-    await store.initialize(defaultSettings("2026-10-16"));
+    await store.initialize(createDefaultSettings());
   });
 
   after(async () => {

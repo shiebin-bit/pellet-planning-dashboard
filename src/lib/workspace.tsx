@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import type { AppState, Board, ScheduledJob, LineId } from '../domain/types';
 import type { Command, WorkspaceEnvelope } from '../domain/commands';
 import { executeCommand } from '../domain/commands';
+import { createEmptyState } from '../domain/defaults';
 import { getBoard } from '../domain/engine';
 import { createSampleState } from '../domain/sample';
 import { localDate } from './format';
@@ -21,7 +22,7 @@ function readPage(): Page {
   return PAGES.includes(candidate as Page) ? candidate as Page : 'overview';
 }
 function loadState() {
-  if (databaseMode) return { state: { ...createSampleState(localDate()), jobs: [], events: [] }, isDemo: false, warning: '' };
+  if (databaseMode) return { state: createEmptyState(), isDemo: false, warning: '' };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {

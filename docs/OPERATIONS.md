@@ -25,7 +25,7 @@ docker compose logs --tail 100 app
 docker compose stop
 ```
 
-`START-DASHBOARD.cmd` also opens the browser. `STOP-DASHBOARD.cmd` stops both services without removing data. Compose waits for PostgreSQL's health check before starting the app, consistent with [Docker's startup-order guidance](https://docs.docker.com/compose/how-tos/startup-order/). The app migrates and initializes the workspace before listening.
+`OPEN-DASHBOARD.cmd` and `START-DASHBOARD.cmd` both start the Docker services and open the PostgreSQL-backed application in the browser. `OPEN-OFFLINE-DASHBOARD.cmd` is the explicitly separate localStorage build. `STOP-DASHBOARD.cmd` stops both Docker services without removing data. Compose waits for PostgreSQL's health check before starting the app, consistent with [Docker's startup-order guidance](https://docs.docker.com/compose/how-tos/startup-order/). The app migrates and initializes a new workspace with empty jobs and activity before listening.
 
 Before updating, create a database backup. Then pull the reviewed source and run `docker compose up --build -d --wait`. Existing data is retained. Avoid running the native server and container app on the same port. Changing `APP_PORT` changes the browser URL; do not publish the port to all network interfaces to bypass the local boundary.
 

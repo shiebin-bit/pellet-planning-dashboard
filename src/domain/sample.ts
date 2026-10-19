@@ -1,11 +1,11 @@
 import { completeJob, getBoard, startJob } from "./engine";
+import { createDefaultSettings } from "./defaults";
 import {
   LINE_IDS,
   type AppState,
   type Job,
   type LineId,
   type QuantityMode,
-  type Settings,
 } from "./types";
 
 interface SampleJob {
@@ -53,18 +53,7 @@ export function createSampleState(date: string): AppState {
     throw new Error("Sample date must use YYYY-MM-DD.");
   }
 
-  const settings: Settings = {
-    siteName: "Demo Pellet Plant",
-    timeZone: "Asia/Kuala_Lumpur",
-    dayStart: "08:30",
-    availableHours: 23,
-    changeoverMinutes: 30,
-    bagWeightKg: 50,
-    rates: { PM1: 8.5, PM2: 7.5, PM3: 6.5, PM4: 7 },
-    slowProductPrefixes: ["6811", "6542"],
-    slowRatePM2: 6.5,
-    downtime: [],
-  };
+  const settings = { ...createDefaultSettings(), siteName: "Demo Pellet Plant" };
 
   const createdAt = new Date(`${date}T00:00:00.000Z`).toISOString();
   const sequenceByLine = Object.fromEntries(

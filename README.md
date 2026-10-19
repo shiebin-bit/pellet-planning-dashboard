@@ -8,7 +8,7 @@ Built with React, TypeScript, Express and PostgreSQL 16. Docker Compose runs the
 
 ## Start on Windows
 
-Install and open **Docker Desktop** with Linux containers enabled, then double-click **`START-DASHBOARD.cmd`**. The first launch builds the image and creates a private `.env` with a random database password. It may take a few minutes.
+Install and open **Docker Desktop** with Linux containers enabled, then double-click **`OPEN-DASHBOARD.cmd`** (or the equivalent **`START-DASHBOARD.cmd`**). Both launch the Docker application backed by PostgreSQL. The first launch builds the image and creates a private `.env` with a random database password. It may take a few minutes.
 
 Open **[http://127.0.0.1:8080](http://127.0.0.1:8080)**. A new database starts empty. Add your first production, or explicitly load sample records in Settings → Reset demo.
 
@@ -43,7 +43,7 @@ Database saves are confirmed before cards/forms show success. Concurrent stale c
 
 ## Existing browser records
 
-`OPEN-DASHBOARD.cmd` opens the optional standalone **offline** `dist/index.html` after a build. It uses browser localStorage and the device clock. The HTTP application uses PostgreSQL and the server clock; these are separate workspaces.
+`OPEN-OFFLINE-DASHBOARD.cmd` opens the optional standalone **offline** `dist/index.html` after a build. It uses browser localStorage and the device clock. `OPEN-DASHBOARD.cmd` and `START-DASHBOARD.cmd` always start the HTTP application, which uses PostgreSQL and the server clock; these are separate workspaces.
 
 To migrate: open the old offline dashboard in its original browser/path → Settings → Download backup. Open the database dashboard → Settings → Restore JSON backup → review → Replace workspace. This replaces rather than merges records, settings and activity. A copy of the preceding database workspace remains available for download after reload. Nothing is silently imported or seeded.
 
@@ -81,7 +81,7 @@ On other operating systems, copy `.env.example` to `.env`, set a long random hex
 ## Verification
 
 ```powershell
-npm test                  # 50 domain/command/backup/report/storage tests
+npm test                  # 51 domain/command/backup/report/storage tests
 npm run build             # frontend + server TypeScript and production HTML
 npm audit --omit=dev      # deployed npm dependency audit
 ```

@@ -174,10 +174,6 @@ export class WorkspaceStore {
   }
 }
 
-export function defaultSettings(date = malaysiaDate()): Settings {
-  return createSampleState(date).settings;
-}
-
 async function loadWorkspace(client: pg.PoolClient, lock: false | "update"): Promise<LoadedWorkspace> {
   const lockClause = lock === "update" ? " FOR UPDATE" : "";
   const workspace = await client.query<WorkspaceRow>(
@@ -274,10 +270,4 @@ function safeRevision(value: string): number {
   const revision = Number(value);
   if (!Number.isSafeInteger(revision) || revision < 0) throw new Error("Stored workspace revision is invalid.");
   return revision;
-}
-
-function malaysiaDate(now = new Date()): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kuala_Lumpur", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(now);
 }
