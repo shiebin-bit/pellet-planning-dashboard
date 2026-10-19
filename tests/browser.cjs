@@ -37,6 +37,12 @@ const wait=async(fn)=>{
     const errors=[];page.on('pageerror',error=>errors.push(error.message));
     const job=async order=>(await get()).state.jobs.find(item=>item.orderNo===order);
     const open=id=>page.locator(`[data-job-id="${id}"] .hplan-card-open`);
+    const readyToDrag=async(id,line)=>{
+      const card=page.locator(`[data-line-id="${line}"] [data-job-id="${id}"][data-draggable="true"] .hplan-card-open`);
+      await card.waitFor({state:'visible'});
+      await page.getByText('All changes saved',{exact:true}).waitFor();
+      return card;
+    };
     const add=async(product,order,bags='200',line='PM1')=>{
       await page.getByRole('button',{name:`Add production to ${line}`,exact:true}).click();
       const modal=page.getByRole('dialog',{name:'Add production',exact:true});
@@ -71,17 +77,18 @@ const wait=async(fn)=>{
     assert.equal((await job('QA-DB-A')).remarks,'Database QA note');
     pass('Add and edit wait for database confirmation and survive a browser reload');
 
-    const drag=async()=>{
-      const source=await open(a.id).boundingBox();const target=await page.locator('[data-line-id="PM4"]').boundingBox();
+    const drag=async sourceLine=>{
+      const source=await (await readyToDrag(a.id,sourceLine)).boundingBox();const target=await page.locator('[data-line-id="PM4"]').boundingBox();
+      assert.ok(source&&target,'Expected visible source card and PM4 target before dragging');
       await page.mouse.move(source.x+source.width*.3,source.y+source.height*.35);await page.mouse.down();
       await page.mouse.move(source.x+source.width*.3+12,source.y+source.height*.35,{steps:3});
       await page.mouse.move(target.x+target.width*.5,target.y+target.height*.5,{steps:15});await page.mouse.up();
-      await wait(async()=>(await job('QA-DB-A')).lineId==='PM4');await page.waitForTimeout(85);
+      await wait(async()=>(await job('QA-DB-A')).lineId==='PM4');await readyToDrag(a.id,'PM4');
     };
-    await drag();assert.equal((await job('QA-DB-A')).binNeedsReview,true);
+    await drag('PM1');assert.equal((await job('QA-DB-A')).binNeedsReview,true);
     await page.locator('.hplan-actions').getByRole('button',{name:'Undo',exact:true}).click();
     await wait(async()=>(await job('QA-DB-A')).lineId==='PM1');
-    await drag();await open(a.id).click();
+    await drag('PM1');await open(a.id).click();
     await page.getByRole('button',{name:'Confirm bin assignment',exact:true}).click();
     await wait(async()=>(await job('QA-DB-A')).binNeedsReview===false);
     pass('Whole-card line changes, bin confirmation and server-held Undo persist through the API');
