@@ -2,6 +2,7 @@ import {
   LINE_IDS,
   type AppState,
   type Board,
+  type CatalogProduct,
   type Downtime,
   type HistoryEvent,
   type Job,
@@ -12,6 +13,11 @@ import {
   type ScheduledJob,
   type Settings,
 } from "./types";
+import type {
+  CatalogCreateInput,
+  CatalogUpdatePatch,
+  CopyBatchItem,
+} from "./commands";
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -515,6 +521,221 @@ export function updateSettings(state: AppState, settings: Settings): AppState {
     jobs,
     event("settings.updated", "Updated planning settings.", undefined, now),
   );
+}
+
+export function createCatalogProduct(
+  state: AppState,
+  input: CatalogCreateInput,
+  nowIso = new Date().toISOString(),
+): AppState {
+  assertIsoDateTime(nowIso, "Catalog update time");
+  const normalized = normalizeCatalogInput(input);
+  assertUniqueCatalogCode(state.catalog, normalized.code);
+  const product: CatalogProduct = {
+    id: makeId("product"),
+    ...normalized,
+    active: true,
+  };
+  return {
+    ...state,
+    catalog: [...state.catalog.map(cloneCatalogProduct), product],
+    events: [
+      ...state.events,
+      event("catalog.created", `Created catalog product ${product.code}.`, undefined, nowIso),
+    ],
+  };
+}
+
+export function updateCatalogProduct(
+  state: AppState,
+  productId: string,
+  patch: CatalogUpdatePatch,
+  nowIso = new Date().toISOString(),
+): AppState {
+  assertIsoDateTime(nowIso, "Catalog update time");
+  const current = requireCatalogProduct(state, productId);
+  if (Object.keys(patch).length === 0) throw new Error("Catalog update must contain at least one change.");
+  const normalized = normalizeCatalogInput({
+    code: patch.code ?? current.code,
+    description: patch.description ?? current.description,
+    defaultMode: patch.defaultMode ?? current.defaultMode,
+  });
+  assertUniqueCatalogCode(state.catalog, normalized.code, current.id);
+  return {
+    ...state,
+    catalog: state.catalog.map((product) =>
+      product.id === current.id ? { ...product, ...normalized } : cloneCatalogProduct(product),
+    ),
+    events: [
+      ...state.events,
+      event("catalog.updated", `Updated catalog product ${normalized.code}.`, undefined, nowIso),
+    ],
+  };
+}
+
+export function setCatalogProductActive(
+  state: AppState,
+  productId: string,
+  active: boolean,
+  nowIso = new Date().toISOString(),
+): AppState {
+  assertIsoDateTime(nowIso, "Catalog update time");
+  if (typeof active !== "boolean") throw new Error("Catalog active state must be true or false.");
+  const current = requireCatalogProduct(state, productId);
+  return {
+    ...state,
+    catalog: state.catalog.map((product) =>
+      product.id === current.id ? { ...product, active } : cloneCatalogProduct(product),
+    ),
+    events: [
+      ...state.events,
+      event(
+        "catalog.activation-changed",
+        `${active ? "Activated" : "Deactivated"} catalog product ${current.code}.`,
+        undefined,
+        nowIso,
+      ),
+    ],
+  };
+}
+
+export function copyJobBatch(
+  state: AppState,
+  sourceDate: string,
+  targetDate: string,
+  items: CopyBatchItem[],
+  nowIso = new Date().toISOString(),
+): AppState {
+  assertDate(sourceDate, "Source date");
+  assertDate(targetDate, "Target date");
+  assertIsoDateTime(nowIso, "Copy time");
+  if (sourceDate === targetDate) throw new Error("Target date must differ from source date.");
+  if (!Array.isArray(items) || items.length === 0 || items.length > 500) {
+    throw new Error("Copy batch must contain between 1 and 500 items.");
+  }
+  if (state.jobs.length + items.length > 10_000) {
+    throw new Error("Copy batch would exceed the workspace limit of 10000 jobs.");
+  }
+
+  const seen = new Set<string>();
+  const validated = items.map((item, index) => {
+    const sourceJobId = boundedReference(item.sourceJobId, `Copy item ${index + 1} source job id`);
+    const orderNo = boundedReference(item.orderNo, `Copy item ${index + 1} order number`);
+    if (seen.has(sourceJobId)) throw new Error(`Source job ${sourceJobId} is duplicated in the copy batch.`);
+    seen.add(sourceJobId);
+    const source = requireJob(state, sourceJobId);
+    if (source.date !== sourceDate) throw new Error(`Source job ${sourceJobId} is not on ${sourceDate}.`);
+    if (source.status === "cancelled") throw new Error(`Cancelled source job ${sourceJobId} cannot be copied.`);
+    if (!item.quantity || item.quantity.mode !== source.mode) {
+      throw new Error(`Copy quantity mode for source job ${sourceJobId} must match ${source.mode}.`);
+    }
+    if (item.quantity.mode === "bags") {
+      assertFiniteNonnegative(item.quantity.bagCount, `Copy item ${index + 1} bag count`);
+    } else {
+      assertFiniteNonnegative(item.quantity.quantityMt, `Copy item ${index + 1} quantity`);
+    }
+    return { source, orderNo, quantity: item.quantity };
+  });
+
+  validated.sort((left, right) => compareJobs(left.source, right.source));
+  const nextSequence = new Map<LineId, number>(
+    LINE_IDS.map((lineId) => [
+      lineId,
+      Math.max(
+        0,
+        ...state.jobs
+          .filter((job) => job.date === targetDate && job.lineId === lineId)
+          .map((job) => job.sequence),
+      ),
+    ]),
+  );
+  const copied = validated.map(({ source, orderNo, quantity }): Job => {
+    const sequence = (nextSequence.get(source.lineId) ?? 0) + 1;
+    nextSequence.set(source.lineId, sequence);
+    const bags = quantity.mode === "bags" ? quantity.bagCount : null;
+    return {
+      id: makeId("job"),
+      date: targetDate,
+      lineId: source.lineId,
+      sequence,
+      orderNo,
+      productCode: source.productCode,
+      description: source.description,
+      bin: source.bin,
+      mode: quantity.mode,
+      bagCount: bags,
+      quantityMt: quantity.mode === "bags"
+        ? quantityFromBags(quantity.bagCount, state.settings.bagWeightKg)
+        : quantity.quantityMt,
+      status: "pending",
+      remarks: source.remarks,
+      actualStart: null,
+      actualEnd: null,
+      binNeedsReview: source.binNeedsReview,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+  });
+
+  return finalizeMutation(
+    state,
+    [...state.jobs, ...copied],
+    event(
+      "plan.copied",
+      `Copied ${copied.length} production ${copied.length === 1 ? "job" : "jobs"} from ${sourceDate} to ${targetDate}.`,
+      undefined,
+      nowIso,
+    ),
+  );
+}
+
+function normalizeCatalogInput(input: CatalogCreateInput): CatalogCreateInput {
+  const code = boundedCatalogText(input.code, "Catalog code", 80);
+  const description = boundedCatalogText(input.description, "Catalog description", 200);
+  if (input.defaultMode !== "bags" && input.defaultMode !== "bulk") {
+    throw new Error("Catalog default mode must be bags or bulk.");
+  }
+  return { code, description, defaultMode: input.defaultMode };
+}
+
+function assertUniqueCatalogCode(catalog: CatalogProduct[], code: string, exceptId?: string): void {
+  const key = code.toLowerCase();
+  if (catalog.some((product) => product.id !== exceptId && product.code.trim().toLowerCase() === key)) {
+    throw new Error(`Catalog code ${code} already exists.`);
+  }
+}
+
+function requireCatalogProduct(state: AppState, productId: string): CatalogProduct {
+  const normalizedId = boundedReference(productId, "Catalog product id");
+  const product = state.catalog.find((candidate) => candidate.id === normalizedId);
+  if (!product) throw new Error(`Catalog product ${normalizedId} was not found.`);
+  return product;
+}
+
+function cloneCatalogProduct(product: CatalogProduct): CatalogProduct {
+  return { ...product };
+}
+
+function boundedCatalogText(value: string, label: string, max: number): string {
+  if (typeof value !== "string") throw new Error(`${label} must be text.`);
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error(`${label} is required.`);
+  if (trimmed.length > max) throw new Error(`${label} must be ${max} characters or fewer.`);
+  return trimmed;
+}
+
+function boundedReference(value: string, label: string): string {
+  if (typeof value !== "string") throw new Error(`${label} must be text.`);
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error(`${label} is required.`);
+  if (trimmed.length > 120) throw new Error(`${label} must be 120 characters or fewer.`);
+  return trimmed;
+}
+
+function assertFiniteNonnegative(value: number, label: string): void {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`${label} must be a finite number zero or greater.`);
+  }
 }
 
 function scheduleState(state: AppState): ScheduleResult {

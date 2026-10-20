@@ -13,6 +13,7 @@ import { JobDrawer } from './components/JobDrawer';
 import { PrintReport } from './components/PrintReport';
 import { DatePicker } from './components/DatePicker';
 import { ReportDialog } from './components/ReportDialog';
+import { CopyPlanningDialog } from './components/CopyPlanningDialog';
 import type { ProductionReport } from './domain/reports';
 
 const navigation = [
@@ -24,14 +25,14 @@ const navigation = [
 export function App() { return <WorkspaceProvider><Dashboard /></WorkspaceProvider>; }
 
 function Dashboard() {
-  const { state, board, date, setDate, page, navigate, openInput, editor, selectedId, toast, savedAt, storageWarning, notify, canUndo, undo,isDemo,storageMode,busy,refresh,hasConflict,resolveConflict,mutationLocked } = useWorkspace();
+  const { state, board, date, setDate, page, navigate, openInput, editor, copyDialog, selectedId, toast, savedAt, storageWarning, notify, canUndo, undo,isDemo,storageMode,busy,refresh,hasConflict,resolveConflict,mutationLocked } = useWorkspace();
   const [mobileNav, setMobileNav] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [exportsOpen, setExportsOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [reportOpen,setReportOpen]=useState(false);
   const [printJob,setPrintJob]=useState<{report:ProductionReport|null}|null>(null);
-  const modalOpen=!!editor||reportOpen;
+  const modalOpen=!!editor||!!copyDialog||reportOpen;
   const [smallScreen, setSmallScreen] = useState(() => window.matchMedia('(max-width: 600px)').matches);
   useEffect(() => {
     const media = window.matchMedia('(max-width: 600px)');
@@ -92,6 +93,7 @@ function Dashboard() {
     </div>
     <JobDrawer />
     {editor && <ProductionEditor/>}
+    {copyDialog && <CopyPlanningDialog key={copyDialog.id}/>}
     {reportOpen&&<ReportDialog onClose={()=>setReportOpen(false)} onPrint={report=>{setReportOpen(false);setPrintJob({report});}}/>}
     {toast && !modalOpen && <div className={'toast ' + (toast.error ? 'error' : '')} role={toast.error ? 'alert' : 'status'}><span className="toast-symbol">{toast.error ? '!' : <Check size={16} />}</span><span>{toast.message}</span>{canUndo && <button onClick={undo}><Undo2 size={14} />Undo</button>}</div>}
     <PrintReport report={printJob?.report}/>

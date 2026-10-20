@@ -4,7 +4,7 @@ import {
   rectIntersection, useDndContext, useDraggable, useDroppable, useSensor, useSensors,
 } from '@dnd-kit/core';
 import type { Active, CollisionDetection, DragEndEvent, Over } from '@dnd-kit/core';
-import { AlertTriangle, ArrowUpRight, ChevronDown, GripVertical, LockKeyhole, Plus, Undo2 } from 'lucide-react';
+import { AlertTriangle, ArrowUpRight, ChevronDown, Copy, GripVertical, LockKeyhole, Plus, Undo2 } from 'lucide-react';
 import { StatusLegend } from '../components/Shared';
 import type { Downtime, LineId, LineSchedule, ScheduledJob, ScheduleSegment } from '../domain/types';
 import { downtimeRange, durationLabel, numberLabel, timeLabel } from '../lib/format';
@@ -23,7 +23,7 @@ const collision: CollisionDetection = args => {
 };
 
 export function Planning() {
-  const { board, state, openJob, openInput, selectedId, commit, canUndo, undo } = useWorkspace();
+  const { board, state, openJob, openInput, openCopy, selectedId, commit, canUndo, undo, mutationLocked, hasConflict } = useWorkspace();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [range, setRange] = useState<PlanRange>('day');
   const sensors = useSensors(
@@ -83,6 +83,7 @@ export function Planning() {
     <div className="page-heading hplan-heading">
       <div><h1>Planning board<span className="heading-dot">.</span></h1><p>Drag a not-started card to another line. Click for details.</p></div>
       <div className="hplan-actions">
+        <button type="button" className="button secondary" disabled={mutationLocked || hasConflict} onClick={openCopy}><Copy size={15}/>Copy planning</button>
         <button type="button" className="button secondary" disabled={!canUndo} onClick={undo}><Undo2 size={15}/>Undo</button>
         {fullHours > 24 && <div className="hplan-range" aria-label="Planning range">
           <button type="button" className={range === 'day' ? 'active' : ''} aria-pressed={range === 'day'} onClick={() => setRange('day')}>Day</button>

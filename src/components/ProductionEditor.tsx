@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Clock3, Layers3, Package, Save, X } from 'lucide-react';
 import { useWorkspace } from '../lib/workspace';
 import { getRate } from '../domain/engine';
 import { LINE_IDS } from '../domain/types';
-import type { Job, JobInput, LineId } from '../domain/types';
+import type { CatalogProduct, Job, JobInput, LineId } from '../domain/types';
 import { durationLabel, numberLabel } from '../lib/format';
+import { catalogSuggestions, shouldApplyCatalogMode } from './catalogSuggestions';
 import './ProductionEditor.css';
 
 function blank(date: string, lineId: LineId): JobInput {
@@ -20,9 +21,12 @@ export function ProductionEditor() {
   const [form,setForm]=useState<JobInput>(()=>existing?fromJob(existing):blank(date,editor!.lineId));
   const [another,setAnother]=useState(false);
   const [showFeedback,setShowFeedback]=useState(false);
+  const [suggestionsOpen,setSuggestionsOpen]=useState(false);
+  const [activeSuggestion,setActiveSuggestion]=useState(-1);
   const dialog=useRef<HTMLElement>(null);
   const product=useRef<HTMLInputElement>(null);
   const previousFocus=useRef(document.activeElement as HTMLElement | null);
+  const suggestions=useMemo(()=>catalogSuggestions(state.catalog,form.productCode),[state.catalog,form.productCode]);
   useEffect(()=>{
     product.current?.focus();
     const overflow=document.body.style.overflow;
@@ -37,6 +41,17 @@ export function ProductionEditor() {
   const set=<K extends keyof JobInput>(key:K,value:JobInput[K])=>setForm(previous=>({...previous,[key]:value}));
   const quantity=form.mode==='bags'?(form.bagCount||0)*state.settings.bagWeightKg/1000:form.quantityMt;
   const rate=getRate(state.settings,form.lineId,form.productCode);
+  function chooseProduct(selected:CatalogProduct) {
+    setForm(previous=>({
+      ...previous,
+      productCode:selected.code,
+      description:selected.description,
+      mode:shouldApplyCatalogMode(editing,previous)?selected.defaultMode:previous.mode,
+    }));
+    setSuggestionsOpen(false);
+    setActiveSuggestion(-1);
+    product.current?.focus();
+  }
   async function submit(event:React.FormEvent) {
     event.preventDefault();
     if(hasConflict||editing&&!existing)return;
@@ -45,7 +60,7 @@ export function ProductionEditor() {
     setShowFeedback(true);
     if(!saved)return;
     setDate(form.date);
-    if(another&&!editing){setForm(blank(form.date,form.lineId));product.current?.focus();}
+    if(another&&!editing){setForm(blank(form.date,form.lineId));setSuggestionsOpen(false);setActiveSuggestion(-1);product.current?.focus();}
     else closeInput();
   }
   return <div className="editor-layer">
@@ -65,7 +80,12 @@ export function ProductionEditor() {
           <div className="field-grid">
             <label className="field">Production line<select value={form.lineId} onChange={event=>set('lineId',event.target.value as LineId)}>{LINE_IDS.map(line=><option key={line}>{line}</option>)}</select></label>
             <label className="field">Planning date<input type="date" required value={form.date} onChange={event=>set('date',event.target.value)}/></label>
-            <label className="field">Product code <span className="required">*</span><input ref={product} required maxLength={80} value={form.productCode} onChange={event=>set('productCode',event.target.value)} placeholder="e.g. 6220"/></label>
+            <div className="field product-catalog-field"><label htmlFor="production-product-code">Product code <span className="required">*</span></label><div className="product-combobox" onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node)){setSuggestionsOpen(false);setActiveSuggestion(-1);}}}><input id="production-product-code" ref={product} required maxLength={80} value={form.productCode} onChange={event=>{set('productCode',event.target.value);setSuggestionsOpen(Boolean(event.target.value.trim()));setActiveSuggestion(-1);}} onFocus={()=>setSuggestionsOpen(Boolean(form.productCode.trim()))} onKeyDown={event=>{
+              if(event.key==='ArrowDown'){event.preventDefault();event.stopPropagation();if(suggestions.length){setSuggestionsOpen(true);setActiveSuggestion(value=>value<suggestions.length-1?value+1:0);}}
+              else if(event.key==='ArrowUp'){event.preventDefault();event.stopPropagation();if(suggestions.length){setSuggestionsOpen(true);setActiveSuggestion(value=>value>0?value-1:suggestions.length-1);}}
+              else if(event.key==='Enter'){event.preventDefault();event.stopPropagation();if(suggestionsOpen&&suggestions.length)chooseProduct(suggestions[Math.max(activeSuggestion,0)]);}
+              else if(event.key==='Escape'&&suggestionsOpen){event.preventDefault();event.stopPropagation();setSuggestionsOpen(false);setActiveSuggestion(-1);}
+            }} placeholder="Search code or product name" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded={suggestionsOpen} aria-controls="production-product-suggestions" aria-activedescendant={suggestionsOpen&&activeSuggestion>=0?`production-product-option-${activeSuggestion}`:undefined} aria-describedby="production-product-help"/>{suggestionsOpen&&(suggestions.length?<div id="production-product-suggestions" className="product-suggestions" role="listbox" aria-label="Active catalog products">{suggestions.map((item,index)=><button id={`production-product-option-${index}`} key={item.id} type="button" role="option" aria-selected={activeSuggestion===index} className={activeSuggestion===index?'active':''} onMouseDown={event=>event.preventDefault()} onMouseEnter={()=>setActiveSuggestion(index)} onClick={()=>chooseProduct(item)}><strong>{item.code}</strong><span>{item.description}</span><small>{item.defaultMode==='bags'?'Bags':'Bulk'}</small></button>)}</div>:<div id="production-product-suggestions" className="product-suggestions" role="status"><p>No active catalog match. You can keep this manual product code.</p></div>)}</div><small id="production-product-help">Choose a match to fill its name and default delivery, or enter a manual code.</small></div>
             <label className="field">Destination bin<input maxLength={120} value={form.bin} onChange={event=>set('bin',event.target.value)} placeholder="e.g. 86 87"/></label>
             <div className="field">Delivery mode<div className="segmented-control" role="group" aria-label="Delivery mode"><button type="button" aria-pressed={form.mode==='bags'} className={form.mode==='bags'?'selected':''} onClick={()=>set('mode','bags')}><Package size={15}/>Bags{form.mode==='bags'&&<Check size={13}/>}</button><button type="button" aria-pressed={form.mode==='bulk'} className={form.mode==='bulk'?'selected':''} onClick={()=>set('mode','bulk')}><Layers3 size={15}/>Bulk{form.mode==='bulk'&&<Check size={13}/>}</button></div></div>
             {form.mode==='bags'?<label className="field">Number of bags<div className="input-with-unit"><input type="number" min="0" step="1" value={form.bagCount??''} onChange={event=>set('bagCount',event.target.value===''?null:Number(event.target.value))}/><span>bags</span></div><small>{numberLabel(state.settings.bagWeightKg,0)} kg per bag</small></label>:<label className="field">Bulk quantity<div className="input-with-unit"><input type="number" min="0" step="0.01" value={form.quantityMt||''} onChange={event=>set('quantityMt',Number(event.target.value))}/><span>MT</span></div></label>}

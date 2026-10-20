@@ -66,7 +66,7 @@ function job(
 }
 
 function state(jobs: Job[] = [], config = settings()): AppState {
-  return { schemaVersion: 1, jobs, settings: config, events: [] };
+  return { schemaVersion: 2, catalog: [], jobs, settings: config, events: [] };
 }
 
 function input(overrides: Partial<JobInput> = {}): JobInput {

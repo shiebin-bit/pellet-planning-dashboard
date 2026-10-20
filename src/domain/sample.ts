@@ -1,5 +1,6 @@
 import { completeJob, getBoard, startJob } from "./engine";
 import { createDefaultSettings } from "./defaults";
+import { PRODUCTS } from "./demo-history";
 import {
   LINE_IDS,
   type AppState,
@@ -108,7 +109,12 @@ export function createSampleState(date: string): AppState {
   }
 
   let state: AppState = {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    catalog: PRODUCTS.map((product) => ({
+      id: `demo-product-${product.code.toLowerCase()}`,
+      ...product,
+      active: true,
+    })),
     jobs,
     settings,
     events: [

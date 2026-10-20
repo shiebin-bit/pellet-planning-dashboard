@@ -26,12 +26,8 @@ function loadState() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const value = JSON.parse(raw);
-      if (value.schemaVersion === 1 && Array.isArray(value.jobs) && value.settings && Array.isArray(value.events)) {
-        getBoard(value, localDate());
-        return { state: value as AppState, isDemo: localStorage.getItem(STORAGE_KEY + '.demo') !== 'false', warning: '' };
-      }
-      return { state: createSampleState(localDate()), isDemo: true, warning: 'The saved workspace could not be opened. The sample schedule is shown; your previous browser data has not been overwritten.' };
+      const value = parseWorkspaceBackup(raw);
+      return { state: value, isDemo: localStorage.getItem(STORAGE_KEY + '.demo') !== 'false', warning: '' };
     }
   } catch {
     return { state: createSampleState(localDate()), isDemo: true, warning: 'Saved data is unavailable. The sample schedule is shown; export a backup before closing this browser.' };
@@ -45,6 +41,8 @@ interface Workspace {
   openJob: (id: string, goToPlanning?: boolean) => void; closeJob: () => void;
   editor: { jobId: string | null; lineId: LineId } | null;
   openInput: (lineId?: LineId) => void; closeInput: () => void; editJob: (id: string) => void;
+  copyDialog: { id: string; targetDate: string } | null;
+  openCopy: () => void; closeCopy: () => void;
   commit: (command: Command, message: string, undoable?: boolean) => Promise<boolean>;
   undo: () => Promise<void>; canUndo: boolean; toast: { message: string; error: boolean } | null;
   notify: (message: string, error?: boolean) => void;
@@ -64,6 +62,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedSnapshot = useRef<ScheduledJob | null>(null);
   const [editor, setEditor] = useState<Workspace['editor']>(() => window.location.hash === '#/input' ? { jobId: null, lineId: 'PM1' } : null);
+  const [copyDialog, setCopyDialog] = useState<Workspace['copyDialog']>(null);
   const [toast, setToast] = useState<Workspace['toast']>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [isDemo, setIsDemo] = useState(initial.isDemo);
@@ -75,7 +74,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const reading = useRef(false);
   const remote = useRef<WorkspaceEnvelope | null>(null);
   const uncertain = useRef<CommandRequest | null>(null);
-  const uncertainSource = useRef<{ editor: string | null; selectedId: string | null; page: Page } | null>(null);
+  const uncertainSource = useRef<{ editor: string | null; selectedId: string | null; page: Page; copyId: string | null } | null>(null);
   const awaitingConfirmation = useRef(false);
   const [awaiting, setAwaiting] = useState(false);
   const conflict = useRef(false);
@@ -85,8 +84,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [loaded, setLoaded] = useState(!databaseMode);
   const [loadError, setLoadError] = useState('');
   const interaction = useRef(false);
-  interaction.current = Boolean(editor || selectedId || page === 'settings');
+  interaction.current = Boolean(editor || selectedId || copyDialog || page === 'settings');
   const editorRef = useRef(editor); editorRef.current = editor;
+  const copyRef = useRef(copyDialog); copyRef.current = copyDialog;
   const selectedRef = useRef(selectedId); selectedRef.current = selectedId;
   const pageRef = useRef(page); pageRef.current = page;
   const [previousBackup, setPreviousBackup] = useState<AppState | null>(() => {
@@ -124,6 +124,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const currentEditorKey = currentEditor ? `${currentEditor.jobId ?? 'new'}:${currentEditor.lineId}` : null;
         if (source?.editor && source.editor === currentEditorKey) setEditor(null);
         if (source?.selectedId && source.selectedId === selectedRef.current) setSelectedId(null);
+        if (source?.copyId && source.copyId === copyRef.current?.id && pending.command.type === 'job.copyBatch') {
+          setCopyDialog(null); setDateState(pending.command.targetDate);
+        }
         notify('The previous change is confirmed in PostgreSQL.');
       } else {
         const next = await readDatabaseWorkspace();
@@ -186,14 +189,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     const onStorage = (event: StorageEvent) => {
       if (event.key !== STORAGE_KEY || !event.newValue) return;
       try {
-        const next = JSON.parse(event.newValue) as AppState;
+        const next = parseWorkspaceBackup(event.newValue);
+        if (JSON.stringify(next) === JSON.stringify(stateRef.current)) return;
         getBoard(next, date); stateRef.current = next; setState(next);
+        if (interaction.current) registerConflict();
         undoState.current = null; setCanUndo(false); notify('Workspace updated from another tab.');
       } catch { notify('Could not read the workspace update from another tab.', true); }
     };
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
-  }, [date, notify]);
+  }, [date, notify, registerConflict]);
   const locked = () => saving.current || awaitingConfirmation.current;
   const blocked = () => { notify('Confirm the pending database save before leaving this work.', true); };
   const navigate = (next: Page) => {
@@ -224,6 +229,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           editor: currentEditor ? `${currentEditor.jobId ?? 'new'}:${currentEditor.lineId}` : null,
           selectedId: selectedRef.current,
           page: pageRef.current,
+          copyId: copyRef.current?.id ?? null,
         };
         const next = await sendCommand(request);
         clearUncertain(); acceptRemote(next);
@@ -272,13 +278,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const undo = async () => { if (canUndo) await commit({ type: 'workspace.undoLastMove' }, 'Previous schedule restored.'); };
   const resetDemo = async () => {
     const saved = await commit({ type: 'workspace.resetDemo', date }, 'Sample schedule restored.');
-    if (saved) { setSelectedId(null); setEditor(null); }
+    if (saved) { setSelectedId(null); setEditor(null); setCopyDialog(null); }
     return saved;
   };
   const restoreBackup = async (backup: AppState) => {
     const saved = await commit({ type: 'workspace.restore', backup }, 'Backup restored. Your previous workspace is available to download in Settings.');
     if (saved) {
-      setSelectedId(null); setEditor(null);
+      setSelectedId(null); setEditor(null); setCopyDialog(null);
       const dates = [...new Set(backup.jobs.map(job => job.date))].sort();
       if (dates.length && !dates.includes(date)) setDateState(dates[dates.length - 1]);
     }
@@ -298,10 +304,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }
   return <WorkspaceContext.Provider value={{
     state, board, date, setDate: changeDate, page, navigate, selectedId, selectedJob,
-    openJob: (id, goToPlanning = false) => { if (locked()) { blocked(); return; } setEditor(null); setSelectedId(id); if (goToPlanning) navigate('planning'); },
+    openJob: (id, goToPlanning = false) => { if (locked()) { blocked(); return; } setCopyDialog(null); setEditor(null); setSelectedId(id); if (goToPlanning) navigate('planning'); },
     closeJob: () => { if (locked()) { blocked(); return; } setSelectedId(null); }, editor,
-    openInput: (lineId = 'PM1') => { if (locked()) { blocked(); return; } if (conflict.current) { notify('Reload the latest data before adding another task.', true); return; } setSelectedId(null); setEditor({ jobId: null, lineId }); },
+    openInput: (lineId = 'PM1') => { if (locked()) { blocked(); return; } if (conflict.current) { notify('Reload the latest data before adding another task.', true); return; } setCopyDialog(null); setSelectedId(null); setEditor({ jobId: null, lineId }); },
     closeInput: () => { if (locked()) { blocked(); return; } setEditor(null); },
+    copyDialog,
+    openCopy: () => { if (locked()) { blocked(); return; } if (conflict.current) { notify('Reload the latest data before copying a plan.', true); return; } setEditor(null); setSelectedId(null); setCopyDialog({ id: crypto.randomUUID(), targetDate: date }); },
+    closeCopy: () => { if (locked()) { blocked(); return; } setCopyDialog(null); },
     editJob: id => { if (locked()) { blocked(); return; } if (conflict.current) { notify('Reload the latest data before editing another task.', true); return; } const job = stateRef.current.jobs.find(item => item.id === id); if (job) { setSelectedId(null); setEditor({ jobId: id, lineId: job.lineId }); } },
     commit, undo, canUndo: canUndo && !busy, toast, notify, resetDemo, isDemo, savedAt, storageWarning, restoreBackup, previousBackup,
     storageMode: databaseMode ? 'database' : 'offline', busy, refresh,

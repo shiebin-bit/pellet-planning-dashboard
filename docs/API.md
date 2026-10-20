@@ -14,7 +14,7 @@ Envelope:
 
 ```typescript
 interface WorkspaceEnvelope {
-  state: AppState; // schemaVersion, jobs, settings, events
+  state: AppState; // schemaVersion: 2, catalog, jobs, settings, events
   revision: number;
   isDemo: boolean;
   previousBackup: AppState | null;
@@ -63,12 +63,22 @@ Read the current revision first. Use a new command ID for a new action; retain t
 | `job.reportIssue` | `jobId`, nonblank `reason` |
 | `job.resolveIssue` | `jobId` |
 | `job.confirmBin` | `jobId` |
+| `job.copyBatch` | `sourceDate`, `targetDate`, `items: {sourceJobId, orderNo, quantity}[]`; 1–500 items |
+| `catalog.create` | `input: {code, description, defaultMode}` |
+| `catalog.update` | `productId`, `patch: Partial<{code, description, defaultMode}>` |
+| `catalog.setActive` | `productId`, `active: boolean` |
 | `settings.update` | complete `settings: Settings` |
 | `workspace.restore` | `backup: AppState`; validates then replaces workspace with recovery copy |
 | `workspace.resetDemo` | `date: YYYY-MM-DD`; replaces workspace with demo and retains recovery copy |
 | `workspace.undoLastMove` | No additional fields |
 
 Lines are `PM1` through `PM4`. Quantity mode is `bags` or `bulk`; use `bagCount: null` for bulk. Quantities must be finite and non-negative. Bagged MT is calculated using the configured bag weight. Scheduling and status constraints are checked server-side. See [domain types](../src/domain/types.ts) for complete settings/job/backup shapes.
+
+Copy quantity is a discriminated object: `{mode: "bags", bagCount: 200}` or `{mode: "bulk", quantityMt: 10}`. Its mode must match the source. Dates must differ, sources must belong to `sourceDate`, and cancelled/duplicate source IDs and blank new order references are rejected. Cards are ordered by their original line/sequence, appended to `targetDate`, reset to pending and scheduled with current rules. Any invalid item or schedule collision rolls back the whole batch. Use the same request ID/content to retry an uncertain copy; the batch cannot partially persist.
+
+Catalog codes are trimmed and unique ignoring case, including inactive products. Code length is at most 80, description at most 200; both are required. Create defaults to active; setActive controls availability. Stored products have `{id, code, description, defaultMode, active}`. Catalog changes do not rewrite existing job fields. Empty ordinary workspaces have no products; explicitly reset Demo workspaces include eight fictional products.
+
+Workspace exports are version 2. `workspace.restore` also accepts strict version 1 JSON, normalizes it to version 2 with an empty catalog, and preserves a recovery copy of the replaced workspace.
 
 ## Errors
 

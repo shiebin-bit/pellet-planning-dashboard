@@ -31,11 +31,12 @@ The default setup serves only this PC. It has no login or user roles. Company-wi
 | Overview | Planned MT, utilisation, production load, completion, actual-output coverage, four line summaries, 24-hour status timelines and items needing attention |
 | Planning board | Four horizontal lines; card length follows production time; Day/Full plan; carry-over; changeover and downtime; direct date/month/year selection |
 | Card movement | Drag a pending card to another line or sequence; destination-bin review; recalculated line rate; one-step Undo; keyboard and held-touch movement |
-| Production details | Add/edit in a dialog; bags or bulk; order, product, bin, quantity, description and remarks; issues and resolution |
+| Production details | Add/edit in a dialog; searchable product catalog with description/default delivery; manual products; bags or bulk, orders, bins, remarks and issues |
+| Copy planning | Select a source date/line/cards, enter fresh order references and adjusted quantities, preview target utilisation/carry-over, then append the batch atomically |
 | Actual production | Manually enter actual start; Done asks for actual MT and records the server's end time; later output corrections retain the original timestamps |
-| History | Search and combined date, PM1–PM4 line and status filters; actual versus planned output; activity log |
+| History | Combined date/line/status/search filters; totals across all matches, actual-output coverage; records and activity in pages of 50 |
 | Reports | Daily or up to 31 days; optional line selection; numeric Excel output; A4 landscape print/Save as PDF |
-| Settings and backup | Calendar, rates, bag weight, slow-product rules and downtime; validated JSON import with preview; previous workspace recovery; PostgreSQL dump backup |
+| Settings and backup | Product catalog with deactivate/reactivate; calendar, rates, bag weight and downtime; version 2 JSON backup and legacy import; workspace recovery; PostgreSQL dumps |
 
 Card colours: **gray** not started, **blue** running, **green** completed, **red** issue. Yellow stripes indicate changeover. Started/completed plans stay locked, and each line can have only one running production.
 
@@ -63,7 +64,7 @@ After reviewing the counts and running `scripts/backup.ps1`, repeat with `--appl
 
 To migrate: open the old offline dashboard in its original browser/path → Settings → Download backup. Open the database dashboard → Settings → Restore JSON backup → review → Replace workspace. This replaces rather than merges records, settings and activity. A copy of the preceding database workspace remains available for download after reload. Nothing is silently imported or seeded.
 
-JSON is a portable workspace copy. It does not contain command receipts or database migrations. Use PostgreSQL dumps for full database recovery.
+JSON version 2 includes the product catalog alongside records, settings and activity. Version 1 backups remain readable and restore an empty catalog; the import preview warns before replacement. Catalog changes affect future input only: saved production records retain their details. JSON does not contain command receipts or database migrations. Use PostgreSQL dumps for full database recovery.
 
 ## Planning assumptions
 
@@ -97,7 +98,7 @@ On other operating systems, copy `.env.example` to `.env`, set a long random hex
 ## Verification
 
 ```powershell
-npm test                  # 57 domain/command/backup/report/storage/demo-history tests
+npm test                  # domain, command, catalog, copy, backup, report and storage tests
 npm run build             # frontend + server TypeScript and production HTML
 npm audit --omit=dev      # deployed npm dependency audit
 ```

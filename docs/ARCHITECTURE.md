@@ -32,11 +32,11 @@ HTTP(S) always uses the API, even if browser records exist. Its in-memory loadin
 
 ## Data model
 
-One workspace is supported. Domain backups remain `schemaVersion: 1`; database migration versions are independent.
+One workspace is supported. Domain backups use `schemaVersion: 2` with a top-level `catalog` array. Strict version 1 imports are normalized to version 2 with an empty catalog; legacy recovery and Undo snapshots are normalized on read. Database migration versions are independent.
 
 | Table | Stored information |
 | --- | --- |
-| `workspace` | Singleton revision, settings JSONB, demo flag, previous workspace, Undo snapshot/revision and update time |
+| `workspace` | Singleton revision, settings JSONB, catalog JSONB (migration 003), demo flag, previous workspace, Undo snapshot/revision and update time |
 | `jobs` | Job ID, planning date, line, sequence, status, array order and complete job JSONB |
 | `history_events` | Event ID, occurrence time, type, optional job ID, array order and complete event JSONB |
 | `command_receipts` | Command ID, canonical content hash, applied revision and time |
@@ -56,7 +56,11 @@ Do not edit tables directly: commands validate scheduling across lines/dates and
 
 Reads use a repeatable-read, read-only transaction so metadata, jobs and history belong to one snapshot. Changes are serialized at workspace level, deliberately favouring simple correctness over concurrent independent line writes. This follows node-postgres' requirement that a transaction use the [same client throughout](https://node-postgres.com/features/transactions).
 
-The browser waits for confirmation before accepting state. Network ambiguity retains the original command ID; a reconnect retries that ID. It does not guess whether the save succeeded. The originating surface stays open until confirmation. Background refresh pauses while an editor, details drawer or Settings is open to avoid updating the revision underneath a draft. A rejected stale action retains its draft but disables submission until an explicit Reload latest; an edit whose job was removed never becomes a create action.
+The browser waits for confirmation before accepting state. Network ambiguity retains the original command ID; a reconnect retries that ID. It does not guess whether the save succeeded. The originating surface stays open until confirmation. Background refresh pauses while an editor, copy dialog, details drawer or Settings is open to avoid updating the revision underneath a draft. A rejected stale action retains its draft but disables submission until explicit review; an edit whose job was removed never becomes a create action.
+
+Catalog commands replace only `AppState.catalog`, independently of an unsaved Settings form. Production cards store product snapshots rather than catalog foreign keys. Copy validates at most 500 source selections before creating any new cards, preserves per-line source order and appends them after existing target work. It clears execution fields and recomputes with current production rules, then persists the entire batch, one activity entry and its receipt in the same transaction. Browser previews run the shared command in memory without writing to the API.
+
+History filtering and totals run against the full loaded collection. Pagination slices only the displayed rows; report selection reads the full workspace independently. Activity has its own search/date filters and count because events do not all identify a production line or status.
 
 ## Recovery and audit
 

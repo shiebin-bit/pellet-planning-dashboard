@@ -13,6 +13,7 @@
 | `PUBLIC_PORT` | Optional external port recognized in Host/Origin checks; Compose sets this from APP_PORT |
 | `ALLOWED_ORIGINS` | Additional exact origins, comma-separated; needed for native Vite development |
 | `DIST_DIR` | Optional native static build path |
+| `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR` | Optional persistent Compose file selection; on Windows use `compose.yml;compose.dev.yml` and `;` to retain DataGrip port 5434 through normal startup |
 
 Changing `.env`'s PostgreSQL password does **not** change the role password inside an existing volume. Coordinate password rotation through PostgreSQL and update all connection settings. Do not delete a data volume to fix a password mismatch. Arbitrary passwords need URL encoding in a connection URL; the generated hex passwords avoid that problem.
 
@@ -29,11 +30,15 @@ docker compose stop
 
 Before updating, create a database backup. Then pull the reviewed source and run `docker compose up --build -d --wait`. Existing data is retained. Avoid running the native server and container app on the same port. Changing `APP_PORT` changes the browser URL; do not publish the port to all network interfaces to bypass the local boundary.
 
+If DataGrip uses `127.0.0.1:5434`, keep `compose.dev.yml` enabled during every update/start. Either pass `-f compose.yml -f compose.dev.yml`, or put `COMPOSE_FILE=compose.yml;compose.dev.yml` and `COMPOSE_PATH_SEPARATOR=;` in the private Windows `.env`. The override publishes only loopback PostgreSQL; database/user remain `millplan` with the existing private password. Do not paste the password into documentation.
+
+The efficiency update adds migration 003 (`workspace.catalog` JSONB) without replacing existing jobs. Before deploying, retain a dump and a workspace JSON, then compare all pre-existing job payloads after startup. Seed the eight fictional `-DEMO` catalog entries only when the existing workspace is marked Demo and its catalog is empty; do not reset its production data. Ordinary workspaces stay empty. New backups and newly saved recovery/Undo snapshots use version 2; rolling back to a binary that only reads version 1 requires a matching pre-upgrade database backup.
+
 The named volume is `millplan_postgres_data` with the default project name. It survives container replacement. It is **not a backup**, and `down -v` deletes it.
 
 ## Backups
 
-Portable workspace: Settings → Download backup. It includes visible records, settings and activity. Import requires a preview and replaces the active workspace; the preceding workspace is retained once. Download that recovery copy if it must be kept permanently.
+Portable workspace: Settings → Download backup. Version 2 includes the product catalog, records, settings and activity. Import requires a preview and replaces the active workspace; version 1 is accepted with an explicit missing-catalog warning and an empty restored catalog. The preceding workspace is retained once. Download that recovery copy if it must be kept permanently.
 
 Full database:
 

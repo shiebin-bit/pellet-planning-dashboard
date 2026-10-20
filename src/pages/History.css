@@ -1,0 +1,7 @@
+.history-pagination{gap:16px;flex-wrap:wrap}
+.history-pagination nav{display:flex;align-items:center;gap:12px}
+.history-pagination nav .button{min-height:36px;padding:7px 11px;font-size:12px}
+.history-export-note{padding:0 20px 15px;font-size:11px;color:#617b8d;line-height:1.6}
+.history-activity-summary{margin:0 0 20px;padding:18px 22px;background:#fff;border:1px solid #d4e1eb;border-radius:10px;color:#527083;font-size:13px}
+.history-activity-summary strong{font-size:24px;color:#244558;margin-right:5px}
+@media(max-width:600px){.history-pagination{align-items:flex-start}.history-pagination nav{width:100%;justify-content:space-between;gap:8px}.history-pagination nav>span{font-size:11px}.history-export-note{padding-inline:15px}}

@@ -8,7 +8,8 @@ describe("workspace defaults", () => {
     const second = createEmptyState();
 
     expect(first).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
+      catalog: [],
       jobs: [],
       settings: createDefaultSettings(),
       events: [],
@@ -23,5 +24,7 @@ describe("workspace defaults", () => {
       ...createDefaultSettings(),
       siteName: "Demo Pellet Plant",
     });
+    expect(createSampleState("2026-10-19").catalog).toHaveLength(8);
+    expect(createSampleState("2026-10-19").catalog.every(product => product.code.endsWith("-DEMO"))).toBe(true);
   });
 });

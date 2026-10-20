@@ -95,9 +95,8 @@ describe("workspace backup validation", () => {
     expect(() => parseWorkspaceBackup("   ")).toThrow(/empty/i);
     expect(() => parseWorkspaceBackup('{"schemaVersion":1')).toThrow(/valid JSON/i);
     expect(() => parseWorkspaceBackup(" ".repeat(10_000_001))).toThrow(/exceeds/i);
-    expect(() => parseWorkspaceBackup('{"schemaVersion":2,"jobs":[],"settings":{},"events":[]}')).toThrow(
-      /schemaVersion.*unsupported/i,
-    );
+    expect(() => parseWorkspaceBackup('{"schemaVersion":2,"jobs":[],"settings":{},"events":[]}')).toThrow(/catalog.*required/i);
+    expect(() => parseWorkspaceBackup('{"schemaVersion":3,"catalog":[],"jobs":[],"settings":{},"events":[]}')).toThrow(/schemaVersion.*unsupported/i);
   });
 
   it("rejects malformed top-level, settings, job, and event data", () => {
@@ -312,15 +311,18 @@ describe("workspace backup validation", () => {
     const originalProduct = raw.jobs[0].productCode;
     const originalRate = raw.settings.rates.PM1;
     const originalMessage = raw.events[0].message;
+    const originalCatalogCode = raw.catalog[0].code;
     const originalSegmentStart = completedJob(raw).lockedSegments[0].start;
 
     restored.jobs[0].productCode = "CHANGED";
     restored.settings.rates.PM1 = 99;
     restored.events[0].message = "CHANGED";
+    restored.catalog[0].code = "CHANGED";
     restored.jobs.find((job) => job.status === "completed")!.lockedSegments![0].start = 0;
     expect(raw.jobs[0].productCode).toBe(originalProduct);
     expect(raw.settings.rates.PM1).toBe(originalRate);
     expect(raw.events[0].message).toBe(originalMessage);
+    expect(raw.catalog[0].code).toBe(originalCatalogCode);
     expect(completedJob(raw).lockedSegments[0].start).toBe(originalSegmentStart);
 
     raw.jobs[0].bin = "RAW-CHANGED";
@@ -329,8 +331,20 @@ describe("workspace backup validation", () => {
     expect(restored.settings.slowProductPrefixes[0]).not.toBe("RAW-CHANGED");
   });
 
-  it("returns a schema-version-one AppState", () => {
-    const restored: AppState = validateWorkspaceBackup(rawBackup());
-    expect(restored.schemaVersion).toBe(1);
+  it("upgrades strict schema-version-one backups and validates schema-version-two catalogs", () => {
+    const legacy = rawBackup();
+    legacy.schemaVersion = 1;
+    delete legacy.catalog;
+    const restored: AppState = validateWorkspaceBackup(legacy);
+    expect(restored.schemaVersion).toBe(2);
+    expect(restored.catalog).toEqual([]);
+
+    const duplicate = rawBackup();
+    duplicate.catalog.push({ ...duplicate.catalog[0], id: "another-id", code: `  ${duplicate.catalog[0].code.toLowerCase()}  ` });
+    expect(() => validateWorkspaceBackup(duplicate)).toThrow(/duplicate product code/i);
+
+    const missingCatalog = rawBackup();
+    delete missingCatalog.catalog;
+    expect(() => validateWorkspaceBackup(missingCatalog)).toThrow(/catalog.*required/i);
   });
 });

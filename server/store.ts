@@ -10,6 +10,7 @@ interface WorkspaceRow {
   revision: string;
   is_demo: boolean;
   settings: unknown;
+  catalog: unknown;
   previous_backup: unknown | null;
   undo_state: unknown | null;
   undo_revision: string | null;
@@ -30,7 +31,7 @@ export class WorkspaceStore {
   constructor(private readonly pool: pg.Pool) {}
 
   async initialize(defaultSettings: Settings): Promise<void> {
-    const settings = validateWorkspaceBackup({ schemaVersion: 1, jobs: [], settings: defaultSettings, events: [] }).settings;
+    const settings = validateWorkspaceBackup({ schemaVersion: 2, catalog: [], jobs: [], settings: defaultSettings, events: [] }).settings;
     await this.pool.query(
       `INSERT INTO workspace(id, revision, is_demo, settings, updated_at)
        VALUES (1, 0, false, $1::jsonb, now())
@@ -177,7 +178,7 @@ export class WorkspaceStore {
 async function loadWorkspace(client: pg.PoolClient, lock: false | "update"): Promise<LoadedWorkspace> {
   const lockClause = lock === "update" ? " FOR UPDATE" : "";
   const workspace = await client.query<WorkspaceRow>(
-    `SELECT revision, is_demo, settings, previous_backup, undo_state, undo_revision, updated_at
+    `SELECT revision, is_demo, settings, catalog, previous_backup, undo_state, undo_revision, updated_at
      FROM workspace WHERE id = 1${lockClause}`,
   );
   if (!workspace.rowCount) throw new Error("Workspace has not been initialized.");
@@ -187,7 +188,8 @@ async function loadWorkspace(client: pg.PoolClient, lock: false | "update"): Pro
     client.query<{ payload: unknown }>("SELECT payload FROM history_events WHERE workspace_id = 1 ORDER BY ordinal"),
   ]);
   const state = validateWorkspaceBackup({
-    schemaVersion: 1,
+    schemaVersion: 2,
+    catalog: row.catalog,
     jobs: jobs.rows.map(item => item.payload),
     settings: row.settings,
     events: events.rows.map(item => item.payload),
@@ -206,12 +208,13 @@ async function loadWorkspace(client: pg.PoolClient, lock: false | "update"): Pro
 async function persistWorkspace(client: pg.PoolClient, value: LoadedWorkspace): Promise<void> {
   await client.query(
     `UPDATE workspace SET revision = $1, is_demo = $2, settings = $3::jsonb,
-       previous_backup = $4::jsonb, undo_state = $5::jsonb, undo_revision = $6,
-       updated_at = $7::timestamptz WHERE id = 1`,
+       catalog = $4::jsonb, previous_backup = $5::jsonb, undo_state = $6::jsonb, undo_revision = $7,
+       updated_at = $8::timestamptz WHERE id = 1`,
     [
       value.revision,
       value.isDemo,
       JSON.stringify(value.state.settings),
+      JSON.stringify(value.state.catalog),
       value.previousBackup === null ? null : JSON.stringify(value.previousBackup),
       value.undoState === null ? null : JSON.stringify(value.undoState),
       value.undoRevision,

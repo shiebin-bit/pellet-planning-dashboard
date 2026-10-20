@@ -1,6 +1,7 @@
 import {
   LINE_IDS,
   type AppState,
+  type CatalogProduct,
   type Downtime,
   type HistoryEvent,
   type Job,
@@ -14,6 +15,7 @@ import { getRate, getScheduledJobs } from "./engine";
 
 const MAX_BACKUP_CHARACTERS = 10_000_000;
 const MAX_JOBS = 10_000;
+const MAX_CATALOG_PRODUCTS = 10_000;
 const MAX_EVENTS = 50_000;
 const MAX_DOWNTIME = 10_000;
 const MAX_PREFIXES = 1_000;
@@ -55,27 +57,75 @@ export function parseWorkspaceBackup(text: string): AppState {
 
 export function validateWorkspaceBackup(value: unknown): AppState {
   const root = objectValue(value, "backup");
-  onlyKeys(root, ["schemaVersion", "jobs", "settings", "events"], "backup");
-
   const schemaVersion = numberValue(required(root, "schemaVersion", "backup"), "backup.schemaVersion", {
     integer: true,
   });
-  if (schemaVersion !== 1) {
-    throw invalid("backup.schemaVersion", `is unsupported (${schemaVersion}); expected 1`);
+  if (schemaVersion !== 1 && schemaVersion !== 2) {
+    throw invalid("backup.schemaVersion", `is unsupported (${schemaVersion}); expected 1 or 2`);
   }
+  onlyKeys(
+    root,
+    schemaVersion === 1
+      ? ["schemaVersion", "jobs", "settings", "events"]
+      : ["schemaVersion", "catalog", "jobs", "settings", "events"],
+    "backup",
+  );
 
   const jobsValue = arrayValue(required(root, "jobs", "backup"), "backup.jobs", MAX_JOBS);
   const eventsValue = arrayValue(required(root, "events", "backup"), "backup.events", MAX_EVENTS);
+  const catalogValue = schemaVersion === 1
+    ? []
+    : arrayValue(required(root, "catalog", "backup"), "backup.catalog", MAX_CATALOG_PRODUCTS);
   const jobs = jobsValue.map((job, index) => validateJob(job, `backup.jobs[${index}]`));
   const events = eventsValue.map((event, index) => validateEvent(event, `backup.events[${index}]`));
+  const catalog = catalogValue.map((product, index) => validateCatalogProduct(product, `backup.catalog[${index}]`));
   const settings = validateSettings(required(root, "settings", "backup"), "backup.settings");
 
+  uniqueIds(catalog, "backup.catalog");
+  uniqueCatalogCodes(catalog);
   uniqueIds(jobs, "backup.jobs");
   uniqueIds(events, "backup.events");
 
-  const restored: AppState = { schemaVersion: 1, jobs, settings, events };
+  const restored: AppState = { schemaVersion: 2, catalog, jobs, settings, events };
   validateSchedule(restored);
   return restored;
+}
+
+function validateCatalogProduct(value: unknown, path: string): CatalogProduct {
+  const source = objectValue(value, path);
+  onlyKeys(source, ["id", "code", "description", "defaultMode", "active"], path);
+  const code = normalizedCatalogText(required(source, "code", path), `${path}.code`, 80);
+  const description = normalizedCatalogText(required(source, "description", path), `${path}.description`, 200);
+  return {
+    id: nonEmptyString(required(source, "id", path), `${path}.id`, MAX_ID_LENGTH),
+    code,
+    description,
+    defaultMode: enumValue<QuantityMode>(
+      required(source, "defaultMode", path),
+      ["bags", "bulk"],
+      `${path}.defaultMode`,
+    ),
+    active: booleanValue(required(source, "active", path), `${path}.active`),
+  };
+}
+
+function normalizedCatalogText(value: unknown, path: string, maxLength: number): string {
+  if (typeof value !== "string") throw invalid(path, "must be text");
+  const result = value.trim();
+  if (!result) throw invalid(path, "cannot be blank");
+  if (result.length > maxLength) throw invalid(path, `must be ${maxLength} characters or fewer`);
+  return result;
+}
+
+function uniqueCatalogCodes(catalog: CatalogProduct[]): void {
+  const seen = new Set<string>();
+  for (const product of catalog) {
+    const key = product.code.toLowerCase();
+    if (seen.has(key)) {
+      throw invalid("backup.catalog", `contains duplicate product code ${JSON.stringify(product.code)}`);
+    }
+    seen.add(key);
+  }
 }
 
 function validateSchedule(state: AppState): void {

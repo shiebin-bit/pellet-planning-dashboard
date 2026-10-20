@@ -4,6 +4,14 @@ export type LineId = (typeof LINE_IDS)[number];
 export type JobStatus = "pending" | "running" | "completed" | "cancelled";
 export type QuantityMode = "bags" | "bulk";
 
+export interface CatalogProduct {
+  id: string;
+  code: string;
+  description: string;
+  defaultMode: QuantityMode;
+  active: boolean;
+}
+
 export interface ScheduleSegment {
   jobId: string;
   lineId: LineId;
@@ -84,7 +92,8 @@ export interface HistoryEvent {
 }
 
 export interface AppState {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  catalog: CatalogProduct[];
   jobs: Job[];
   settings: Settings;
   events: HistoryEvent[];

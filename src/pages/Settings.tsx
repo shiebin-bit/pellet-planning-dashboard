@@ -4,6 +4,7 @@ import { useWorkspace } from '../lib/workspace';
 import { LINE_IDS } from '../domain/types';
 import type { Settings, Downtime } from '../domain/types';
 import { BackupPanel } from '../components/BackupPanel';
+import { CatalogPanel } from '../components/CatalogPanel';
 import { numberLabel } from '../lib/format';
 
 export function SettingsPage() {
@@ -40,5 +41,6 @@ export function SettingsPage() {
       <div className="form-actions">{hasConflict?<span className="notice warning" role="alert">Your settings draft is preserved. <button type="button" className="text-link" onClick={()=>{setForm(structuredClone(state.settings));setDirty(false);resolveConflict();}}>Reload latest settings</button></span>:<span className="muted small">Running and completed tasks keep their locked schedule.</span>}<div className="toolbar-spacer"/><button className="button primary" type="submit" disabled={mutationLocked||hasConflict}><Save size={16}/>{busy?'Saving…':'Save settings'}</button></div></div>
       <aside className="settings-aside"><div className="panel settings-info"><span className="eyebrow">ABOUT UTILISATION</span><h3>A plan you can measure.</h3><p>Planned utilisation = production hours within the day ÷ available line hours.</p><div className="formula-visual"><span>Production time</span><i/><strong>Available time</strong></div><p>Changeover is shown separately. Actual start and Done timestamps record elapsed time; they do not measure OEE.</p></div><BackupPanel/><div className="reset-area"><h4>Reset sample schedule</h4><p>{storageMode==='database'?'Replaces all database records with the demo for the selected day. A recovery copy is kept.':'Replaces all locally saved records with the original demo for the selected day.'}</p>{confirmReset?<div className="reset-confirm"><strong>Replace the {storageMode==='database'?'database':'local'} workspace?</strong><button type="button" className="button danger" disabled={mutationLocked||hasConflict} onClick={async()=>{if(await resetDemo())setConfirmReset(false);}}>Replace with demo</button><button type="button" className="text-link" disabled={mutationLocked} onClick={()=>setConfirmReset(false)}>Keep my records</button></div>:<button type="button" className="text-link danger-text" disabled={mutationLocked||hasConflict} onClick={()=>setConfirmReset(true)}><RotateCcw size={14}/>Reset demo</button>}</div></aside>
     </form>
+    <CatalogPanel/>
   </div>;
 }

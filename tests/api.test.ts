@@ -160,6 +160,118 @@ integration("PostgreSQL workspace API", () => {
     assert.equal(reset.state.events.at(-1)?.type, "workspace.reset");
   });
 
+  it("persists catalog edits, keeps inactive codes reserved, and leaves job snapshots unchanged", async () => {
+    const resetResponse = await postCommand(0, "catalog-demo", {
+      type: "workspace.resetDemo", date: "2026-10-16",
+    });
+    const reset = await resetResponse.json() as WorkspaceEnvelope;
+    const jobsBefore = structuredClone(reset.state.jobs);
+    const createdResponse = await postCommand(1, "catalog-create", {
+      type: "catalog.create",
+      input: { code: "  QA-PRODUCT  ", description: "  QA catalog product  ", defaultMode: "bags" },
+    });
+    assert.equal(createdResponse.status, 200);
+    const created = await createdResponse.json() as WorkspaceEnvelope;
+    const product = created.state.catalog.find(item => item.code === "QA-PRODUCT")!;
+    assert.ok(product.id);
+    assert.equal(product.description, "QA catalog product");
+    assert.deepEqual(created.state.jobs, jobsBefore);
+
+    const inactiveResponse = await postCommand(2, "catalog-inactive", {
+      type: "catalog.setActive", productId: product.id, active: false,
+    });
+    assert.equal(inactiveResponse.status, 200);
+    const duplicateResponse = await postCommand(3, "catalog-duplicate", {
+      type: "catalog.create",
+      input: { code: " qa-product ", description: "Duplicate", defaultMode: "bulk" },
+    });
+    assert.equal(duplicateResponse.status, 400);
+    assert.match((await duplicateResponse.json()).error.message, /already exists/i);
+
+    const restarted = await new WorkspaceStore(pool).getWorkspace();
+    assert.equal(restarted.revision, 3);
+    assert.deepEqual(restarted.state.jobs, jobsBefore);
+    assert.deepEqual(restarted.state.catalog.find(item => item.id === product.id), {
+      id: product.id,
+      code: "QA-PRODUCT",
+      description: "QA catalog product",
+      defaultMode: "bags",
+      active: false,
+    });
+  });
+
+  it("copies a batch atomically and preserves stale and retry receipt behavior", async () => {
+    const bulkResponse = await postCommand(0, "copy-source-bulk", {
+      type: "job.create", input: input("COPY-BULK"),
+    });
+    assert.equal(bulkResponse.status, 200);
+    const bulkState = await bulkResponse.json() as WorkspaceEnvelope;
+    const bagResponse = await postCommand(1, "copy-source-bags", {
+      type: "job.create",
+      input: {
+        ...input("COPY-BAGS"),
+        orderNo: "ORDER-COPY-BAGS",
+        mode: "bags",
+        bagCount: 20,
+        quantityMt: 1,
+      },
+    });
+    assert.equal(bagResponse.status, 200);
+    const sources = (await bagResponse.json() as WorkspaceEnvelope).state.jobs;
+    const bulk = sources.find(job => job.productCode === "COPY-BULK")!;
+    const bags = sources.find(job => job.productCode === "COPY-BAGS")!;
+    const command: Command = {
+      type: "job.copyBatch",
+      sourceDate: "2026-10-16",
+      targetDate: "2026-10-17",
+      items: [
+        { sourceJobId: bulk.id, orderNo: "COPY-TARGET-BULK", quantity: { mode: "bulk", quantityMt: 2.5 } },
+        { sourceJobId: bags.id, orderNo: "COPY-TARGET-BAGS", quantity: { mode: "bags", bagCount: 30 } },
+      ],
+    };
+
+    const copiedResponse = await postCommand(2, "copy-batch-stable", command);
+    assert.equal(copiedResponse.status, 200);
+    const copied = await copiedResponse.json() as WorkspaceEnvelope;
+    assert.equal(copied.revision, 3);
+    assert.equal(copied.state.jobs.filter(job => job.date === "2026-10-17").length, 2);
+    assert.equal(copied.state.events.filter(event => event.type === "plan.copied").length, 1);
+
+    const invalid = await postCommand(3, "copy-batch-invalid", {
+      type: "job.copyBatch",
+      sourceDate: "2026-10-16",
+      targetDate: "2026-10-18",
+      items: [
+        { sourceJobId: bulk.id, orderNo: "WOULD-BE-VALID", quantity: { mode: "bulk", quantityMt: 1 } },
+        { sourceJobId: "missing-source", orderNo: "INVALID", quantity: { mode: "bulk", quantityMt: 1 } },
+      ],
+    });
+    assert.equal(invalid.status, 400);
+    let current = await getWorkspace();
+    assert.equal(current.revision, 3);
+    assert.equal(current.state.jobs.filter(job => job.date === "2026-10-18").length, 0);
+
+    const later = await postCommand(3, "after-copy", {
+      type: "catalog.create",
+      input: { code: "AFTER-COPY", description: "Receipt test", defaultMode: "bulk" },
+    });
+    assert.equal(later.status, 200);
+    const retry = await postCommand(2, "copy-batch-stable", command);
+    assert.equal(retry.status, 200);
+    current = await retry.json() as WorkspaceEnvelope;
+    assert.equal(current.revision, 4);
+    assert.equal(current.state.jobs.filter(job => job.date === "2026-10-17").length, 2);
+
+    const stale = await postCommand(2, "copy-batch-stale", {
+      ...command,
+      targetDate: "2026-10-19",
+    });
+    assert.equal(stale.status, 409);
+    assert.equal((await stale.json()).error.code, "STALE_REVISION");
+    assert.equal((await getWorkspace()).revision, 4);
+    assert.equal(bulkState.state.jobs.length, 1);
+  });
+
   it("invalidates move undo after any later successful mutation", async () => {
     const resetResponse = await postCommand(0, "seed-demo", { type: "workspace.resetDemo", date: "2026-10-16" });
     const reset = await resetResponse.json() as WorkspaceEnvelope;

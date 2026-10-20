@@ -17,7 +17,8 @@ export function createDefaultSettings(): Settings {
 
 export function createEmptyState(): AppState {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    catalog: [],
     jobs: [],
     settings: createDefaultSettings(),
     events: [],

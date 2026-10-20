@@ -18,7 +18,7 @@ describe('recoverable backup replacement',()=>{
   });
   it('never writes invalid input or replaces the active workspace after a safety-copy failure',()=>{
     const current=createSampleState('2026-10-15');let writes=0;
-    expect(()=>storeRestoredWorkspace({...storageFor(new Map()),setItem:()=>{writes++;}},current,{...current,schemaVersion:2} as never)).toThrow();
+    expect(()=>storeRestoredWorkspace({...storageFor(new Map()),setItem:()=>{writes++;}},current,{...current,schemaVersion:999} as never)).toThrow();
     expect(writes).toBe(0);
     const entries=new Map([[WORKSPACE_KEY,JSON.stringify(current)]]);
     expect(()=>storeRestoredWorkspace({...storageFor(entries),setItem:()=>{throw new Error('Storage full');}},current,createSampleState('2026-10-16'))).toThrow('Storage full');

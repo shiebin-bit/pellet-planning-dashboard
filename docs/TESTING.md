@@ -8,7 +8,7 @@ npm run build
 npm audit --omit=dev
 ```
 
-The current unit suite has **57 tests** for scheduling, quantities, frozen states, carry-over, conflicts, actual output, attention selection, report bounds, strict backup validation, recoverable local storage, shared commands, independent empty-workspace defaults and deterministic synthetic history.
+The unit suite covers scheduling, quantities, frozen states, carry-over, conflicts, actual output, attention selection, report bounds, version 1/2 backup validation, recoverable storage, catalog uniqueness/snapshots/autocomplete, atomic copy, empty defaults and deterministic synthetic history.
 
 The six synthetic-history cases cover a bounded fictional month, preserved source records and computed plans, frozen completed work, bags and output variance, chronological non-overlap, repeat imports, Malaysia date boundaries and unschedulable downtime. The administrator CLI defaults to a dry run and requires a demo workspace; verify its write path against a disposable database before changing import behavior. Check that an event-insert failure rolls back preceding job inserts, a concurrent revision change aborts the import, and a repeated import leaves both rows and revision unchanged.
 
@@ -24,11 +24,11 @@ npm run test:api
 Remove-Item Env:TEST_DATABASE_URL
 ```
 
-The **8 API tests** exercise concurrent revisions, invalid-command rollback, duplicate request receipts, command-ID conflicts, move Undo, restore/recovery, demo-reset recovery, server-controlled completion timestamps and rejected Host/Origin/content-type/oversize requests. They use a real PostgreSQL service rather than an in-memory substitute.
+The API tests exercise concurrent revisions, invalid-command rollback, duplicate receipts, command-ID conflicts, move Undo, restore/recovery, demo reset, server timestamps and HTTP boundaries. They also test migration 003, catalog uniqueness/persistence and historical snapshots, plus whole-copy rollback, append ordering, reset fields and duplicate copy retry. They use real PostgreSQL. Keep DATABASE_URL pointed at the normal application identity and TEST_DATABASE_URL at a different disposable database; the guard deliberately rejects matching identities.
 
 ## Browser integration
 
-`tests/browser.cjs` replaces the entire selected workspace and restores the starting state in `finally`. Use a **separate disposable database/server**, never the real planning service. Create `millplan_browser_test` using the same `createdb` command as above with that database name. Copy `.env` to ignored `.env.browser-test`; change only its DATABASE_URL database path to `/millplan_browser_test`, keep HOST=127.0.0.1 and set PORT=8091. Build `dist` first.
+`npm run test:browser` runs `tests/browser.cjs` and `tests/browser-efficiency.cjs`; both replace the entire selected workspace and restore the starting state in `finally`. Use a **separate disposable database/server**, never the real planning service. Create `millplan_browser_test` using the same `createdb` command as above with that database name. Copy `.env` to ignored `.env.browser-test`; change only its DATABASE_URL database path to `/millplan_browser_test`, keep HOST=127.0.0.1 and set PORT=8091. Build `dist` first.
 
 ```powershell
 npx playwright install chromium
@@ -61,7 +61,9 @@ Its **12 workflow groups** cover:
 11. JSON restore/demo reset retain recovery copies, reconcile intentional settings replacement and fit desktop/mobile layouts.
 12. Initial connection failure blocks fallback and reconnects without page errors.
 
-CI runs these tests on Ubuntu with PostgreSQL 16, Node 24 and Playwright Chromium. Browser tests use the CI-only database after the API suite.
+The efficiency suite adds catalog management/defaults/manual input and snapshot preservation, unsaved Settings isolation, cancelled-source exclusion, blank new orders, quantity/carry-over preview, copy append/reset, lost-copy-response recovery and stale-draft review. It verifies 124 History fixtures across three pages, combined filters, actual coverage, activity pagination, empty results, full Excel export while page 2 is displayed, and desktop/mobile layouts.
+
+CI runs both suites on Ubuntu with PostgreSQL 16, Node 24 and Playwright Chromium. Browser tests use the CI-only database after the API suite.
 
 ## Release checks
 

@@ -1,5 +1,7 @@
 import {
   cancelJob,
+  copyJobBatch,
+  createCatalogProduct,
   completeJob,
   confirmBin,
   createJob,
@@ -8,11 +10,31 @@ import {
   reportJobIssue,
   resolveJobIssue,
   startJob,
+  setCatalogProductActive,
+  updateCatalogProduct,
   updateJob,
   updateSettings,
 } from "./engine";
 import { validateWorkspaceBackup } from "./backup";
 import type { AppState, JobInput, LineId, Settings } from "./types";
+
+export type CopyBatchQuantity =
+  | { mode: "bags"; bagCount: number }
+  | { mode: "bulk"; quantityMt: number };
+
+export interface CopyBatchItem {
+  sourceJobId: string;
+  orderNo: string;
+  quantity: CopyBatchQuantity;
+}
+
+export interface CatalogCreateInput {
+  code: string;
+  description: string;
+  defaultMode: "bags" | "bulk";
+}
+
+export type CatalogUpdatePatch = Partial<CatalogCreateInput>;
 
 export type Command =
   | { type: "job.create"; input: JobInput }
@@ -25,6 +47,10 @@ export type Command =
   | { type: "job.reportIssue"; jobId: string; reason: string }
   | { type: "job.resolveIssue"; jobId: string }
   | { type: "job.confirmBin"; jobId: string }
+  | { type: "job.copyBatch"; sourceDate: string; targetDate: string; items: CopyBatchItem[] }
+  | { type: "catalog.create"; input: CatalogCreateInput }
+  | { type: "catalog.update"; productId: string; patch: CatalogUpdatePatch }
+  | { type: "catalog.setActive"; productId: string; active: boolean }
   | { type: "settings.update"; settings: Settings }
   | { type: "workspace.restore"; backup: AppState }
   | { type: "workspace.resetDemo"; date: string }
@@ -72,6 +98,20 @@ export function executeCommand(
     case "job.reportIssue": return reportJobIssue(state, command.jobId, command.reason);
     case "job.resolveIssue": return resolveJobIssue(state, command.jobId);
     case "job.confirmBin": return confirmBin(state, command.jobId);
+    case "job.copyBatch":
+      return copyJobBatch(
+        state,
+        command.sourceDate,
+        command.targetDate,
+        command.items,
+        context.nowIso ?? new Date().toISOString(),
+      );
+    case "catalog.create":
+      return createCatalogProduct(state, command.input, context.nowIso ?? new Date().toISOString());
+    case "catalog.update":
+      return updateCatalogProduct(state, command.productId, command.patch, context.nowIso ?? new Date().toISOString());
+    case "catalog.setActive":
+      return setCatalogProductActive(state, command.productId, command.active, context.nowIso ?? new Date().toISOString());
     case "settings.update": return updateSettings(state, command.settings);
     case "workspace.restore":
     case "workspace.resetDemo":
@@ -122,9 +162,38 @@ export function parseCommand(value: unknown): Command {
     case "job.reportIssue":
       exact(source, ["type", "jobId", "reason"], "command");
       return { type, jobId: id(source.jobId, "command.jobId"), reason: text(source.reason, "command.reason", 1_000) };
+    case "job.copyBatch": {
+      exact(source, ["type", "sourceDate", "targetDate", "items"], "command");
+      const items = array(source.items, "command.items", 500).map((item, index) =>
+        copyBatchItem(item, `command.items[${index}]`),
+      );
+      if (items.length === 0) throw new Error("command.items must contain at least one item.");
+      return {
+        type,
+        sourceDate: date(source.sourceDate, "command.sourceDate"),
+        targetDate: date(source.targetDate, "command.targetDate"),
+        items,
+      };
+    }
+    case "catalog.create":
+      exact(source, ["type", "input"], "command");
+      return { type, input: catalogInput(source.input, "command.input", false) as CatalogCreateInput };
+    case "catalog.update": {
+      exact(source, ["type", "productId", "patch"], "command");
+      const patch = catalogInput(source.patch, "command.patch", true);
+      if (Object.keys(patch).length === 0) throw new Error("command.patch must contain at least one change.");
+      return { type, productId: reference(source.productId, "command.productId"), patch };
+    }
+    case "catalog.setActive":
+      exact(source, ["type", "productId", "active"], "command");
+      return {
+        type,
+        productId: reference(source.productId, "command.productId"),
+        active: boolean(source.active, "command.active"),
+      };
     case "settings.update": {
       exact(source, ["type", "settings"], "command");
-      const settings = validateWorkspaceBackup({ schemaVersion: 1, jobs: [], settings: source.settings, events: [] }).settings;
+      const settings = validateWorkspaceBackup({ schemaVersion: 2, catalog: [], jobs: [], settings: source.settings, events: [] }).settings;
       return { type, settings };
     }
     case "workspace.restore":
@@ -139,6 +208,41 @@ export function parseCommand(value: unknown): Command {
     default:
       throw new Error("command.type is unsupported.");
   }
+}
+
+function catalogInput(value: unknown, path: string, partial: true): CatalogUpdatePatch;
+function catalogInput(value: unknown, path: string, partial: false): CatalogCreateInput;
+function catalogInput(value: unknown, path: string, partial: boolean): CatalogUpdatePatch {
+  const source = object(value, path);
+  const keys = ["code", "description", "defaultMode"] as const;
+  rejectUnknown(source, keys, path);
+  if (!partial) for (const key of keys) if (!has(source, key)) throw new Error(`${path}.${key} is required.`);
+  const result: CatalogUpdatePatch = {};
+  if (has(source, "code")) result.code = trimmedText(source.code, `${path}.code`, 80);
+  if (has(source, "description")) result.description = trimmedText(source.description, `${path}.description`, 200);
+  if (has(source, "defaultMode")) result.defaultMode = quantityMode(source.defaultMode, `${path}.defaultMode`);
+  return result;
+}
+
+function copyBatchItem(value: unknown, path: string): CopyBatchItem {
+  const source = object(value, path);
+  exact(source, ["sourceJobId", "orderNo", "quantity"], path);
+  const quantitySource = object(source.quantity, `${path}.quantity`);
+  const mode = quantityMode(quantitySource.mode, `${path}.quantity.mode`);
+  if (mode === "bags") {
+    exact(quantitySource, ["mode", "bagCount"], `${path}.quantity`);
+    return {
+      sourceJobId: reference(source.sourceJobId, `${path}.sourceJobId`),
+      orderNo: reference(source.orderNo, `${path}.orderNo`),
+      quantity: { mode, bagCount: finite(quantitySource.bagCount, `${path}.quantity.bagCount`, 0) },
+    };
+  }
+  exact(quantitySource, ["mode", "quantityMt"], `${path}.quantity`);
+  return {
+    sourceJobId: reference(source.sourceJobId, `${path}.sourceJobId`),
+    orderNo: reference(source.orderNo, `${path}.orderNo`),
+    quantity: { mode, quantityMt: finite(quantitySource.quantityMt, `${path}.quantity.quantityMt`, 0) },
+  };
 }
 
 function jobInput(value: unknown, path: string, partial: true): Partial<JobInput>;
@@ -169,6 +273,12 @@ function object(value: unknown, path: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+function array(value: unknown, path: string, max: number): unknown[] {
+  if (!Array.isArray(value)) throw new Error(`${path} must be an array.`);
+  if (value.length > max) throw new Error(`${path} must contain ${max} items or fewer.`);
+  return value;
+}
+
 function exact(source: Record<string, unknown>, keys: readonly string[], path: string, optionalLast = false): void {
   rejectUnknown(source, keys, path);
   const required = optionalLast ? keys.slice(0, -1) : keys;
@@ -196,7 +306,26 @@ function text(value: unknown, path: string, max: number): string {
   return result;
 }
 
+function trimmedText(value: unknown, path: string, max: number): string {
+  if (typeof value !== "string") throw new Error(`${path} must be text.`);
+  const result = value.trim();
+  if (!result) throw new Error(`${path} cannot be blank.`);
+  if (result.length > max) throw new Error(`${path} must be ${max} characters or fewer.`);
+  return result;
+}
+
 function id(value: unknown, path: string): string { return text(value, path, 200); }
+function reference(value: unknown, path: string): string { return trimmedText(value, path, 120); }
+
+function boolean(value: unknown, path: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`${path} must be true or false.`);
+  return value;
+}
+
+function quantityMode(value: unknown, path: string): "bags" | "bulk" {
+  if (value !== "bags" && value !== "bulk") throw new Error(`${path} must be bags or bulk.`);
+  return value;
+}
 
 function finite(value: unknown, path: string, min: number): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < min) throw new Error(`${path} must be a finite number ${min} or greater.`);

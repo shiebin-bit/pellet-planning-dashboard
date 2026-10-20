@@ -15,15 +15,15 @@ const MINUTE_MS = 60_000;
 const MALAYSIA_OFFSET_MS = 8 * 60 * MINUTE_MS;
 const MAX_HISTORY_DAYS = 31;
 
-const PRODUCTS = [
-  { code: "6220-DEMO", description: "Fictional demo grower pellet batch" },
-  { code: "6210-DEMO", description: "Fictional demo maintenance pellet batch" },
-  { code: "6148-DEMO", description: "Fictional demo starter pellet batch" },
-  { code: "6811-DEMO", description: "Fictional demo slow-rate pellet batch" },
-  { code: "6542-DEMO", description: "Fictional demo specialty pellet batch" },
-  { code: "6227-DEMO", description: "Fictional demo finisher pellet batch" },
-  { code: "6315-DEMO", description: "Fictional demo breeder pellet batch" },
-  { code: "6402-DEMO", description: "Fictional demo general pellet batch" },
+export const PRODUCTS = [
+  { code: "6220-DEMO", description: "Fictional demo grower pellet batch", defaultMode: "bulk" },
+  { code: "6210-DEMO", description: "Fictional demo maintenance pellet batch", defaultMode: "bulk" },
+  { code: "6148-DEMO", description: "Fictional demo starter pellet batch", defaultMode: "bulk" },
+  { code: "6811-DEMO", description: "Fictional demo slow-rate pellet batch", defaultMode: "bulk" },
+  { code: "6542-DEMO", description: "Fictional demo specialty pellet batch", defaultMode: "bulk" },
+  { code: "6227-DEMO", description: "Fictional demo finisher pellet batch", defaultMode: "bulk" },
+  { code: "6315-DEMO", description: "Fictional demo breeder pellet batch", defaultMode: "bulk" },
+  { code: "6402-DEMO", description: "Fictional demo general pellet batch", defaultMode: "bulk" },
 ] as const;
 
 export interface DemoHistoryOptions {
@@ -111,7 +111,8 @@ export function generateDemoHistory(
   }
 
   const candidate = validateWorkspaceBackup({
-    schemaVersion: 1,
+    schemaVersion: 2,
+    catalog: baseline.catalog,
     jobs: [...baseline.jobs, ...jobs],
     settings: baseline.settings,
     events: [...baseline.events, ...events],
