@@ -41,6 +41,22 @@ Card colours: **gray** not started, **blue** running, **green** completed, **red
 
 Database saves are confirmed before cards/forms show success. Concurrent stale changes keep the draft and require an explicit Reload latest before resubmitting. Uncertain saves keep the originating form open and offer Retry connection; retrying an acknowledged command cannot create a duplicate. Other changes refresh approximately every 15 seconds when no editor/details/settings draft is open.
 
+## Historical demo records
+
+For presentations, the administrator script can append explicitly fictional history to an existing **demo workspace**. Load the initial sample in Settings first if the workspace is empty. The script accepts up to 31 calendar days before today in Malaysia time, skips every date/line that already has records, preserves existing records and settings, and does nothing on a repeat import. It creates no automatic startup seed.
+
+Preview from the project directory with Docker running:
+
+```powershell
+docker compose run --rm --no-deps `
+  --volume "${PWD}/scripts:/app/scripts:ro" `
+  --volume "${PWD}/src/domain:/app/src/domain:ro" `
+  app node --import tsx scripts/seed-demo-history.ts `
+  --dry-run --from 2026-09-20 --to 2026-10-19 --seed 20261020
+```
+
+After reviewing the counts and running `scripts/backup.ps1`, repeat with `--apply` in place of `--dry-run`. Import appends records in one revision-checked transaction and retains the preceding workspace as a recovery copy. It refuses non-demo workspaces. All generated products, orders, descriptions and activity are marked as fictional; they are not company or SAP records. A native development setup can use `npm run seed:demo-history --` with the same arguments and its private `DATABASE_URL`.
+
 ## Existing browser records
 
 `OPEN-OFFLINE-DASHBOARD.cmd` opens the optional standalone **offline** `dist/index.html` after a build. It uses browser localStorage and the device clock. `OPEN-DASHBOARD.cmd` and `START-DASHBOARD.cmd` always start the HTTP application, which uses PostgreSQL and the server clock; these are separate workspaces.
@@ -81,7 +97,7 @@ On other operating systems, copy `.env.example` to `.env`, set a long random hex
 ## Verification
 
 ```powershell
-npm test                  # 51 domain/command/backup/report/storage tests
+npm test                  # 57 domain/command/backup/report/storage/demo-history tests
 npm run build             # frontend + server TypeScript and production HTML
 npm audit --omit=dev      # deployed npm dependency audit
 ```

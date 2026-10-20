@@ -5,5 +5,5 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["server/**/*.ts", "src/domain/**/*.ts", "tests/api*.ts"]
+  "include": ["server/**/*.ts", "scripts/**/*.ts", "src/domain/**/*.ts", "tests/api*.ts"]
 }

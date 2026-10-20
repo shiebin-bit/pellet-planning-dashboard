@@ -12,6 +12,7 @@
     "start": "node --env-file-if-exists=.env --import tsx server/index.ts",
     "server:dev": "node --env-file-if-exists=.env --import tsx --watch server/index.ts",
     "db:migrate": "node --env-file-if-exists=.env --import tsx server/migrate.ts",
+    "seed:demo-history": "node --env-file-if-exists=.env --import tsx scripts/seed-demo-history.ts",
     "test:api": "node --env-file-if-exists=.env --import tsx --test tests/api.test.ts",
     "test:browser": "node tests/browser.cjs",
     "check": "npm test && npm run build"

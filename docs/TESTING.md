@@ -8,7 +8,9 @@ npm run build
 npm audit --omit=dev
 ```
 
-The current unit suite has **51 tests** for scheduling, quantities, frozen states, carry-over, conflicts, actual output, attention selection, report bounds, strict backup validation, recoverable local storage, shared commands and independent empty-workspace defaults.
+The current unit suite has **57 tests** for scheduling, quantities, frozen states, carry-over, conflicts, actual output, attention selection, report bounds, strict backup validation, recoverable local storage, shared commands, independent empty-workspace defaults and deterministic synthetic history.
+
+The six synthetic-history cases cover a bounded fictional month, preserved source records and computed plans, frozen completed work, bags and output variance, chronological non-overlap, repeat imports, Malaysia date boundaries and unschedulable downtime. The administrator CLI defaults to a dry run and requires a demo workspace; verify its write path against a disposable database before changing import behavior. Check that an event-insert failure rolls back preceding job inserts, a concurrent revision change aborts the import, and a repeated import leaves both rows and revision unchanged.
 
 ## Real PostgreSQL API tests
 
