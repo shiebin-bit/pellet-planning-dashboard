@@ -41,6 +41,7 @@
 .hplan-card,.hplan-changeover{position:absolute;top:7px;bottom:7px;min-width:0;overflow:visible}
 .hplan-card{--hplan-bg:var(--pending-bg,#edf1f5);--hplan-border:var(--pending-border,#a7b4c0);--hplan-text:var(--pending-text,#344b5d);container-type:inline-size;container-name:hplan-card;z-index:2;border:1px solid var(--hplan-border);border-left-width:3px;background:var(--hplan-bg);color:var(--hplan-text);transition:box-shadow .15s ease,opacity .15s ease}
 .hplan-card.running{--hplan-bg:var(--running-bg,#dfedff);--hplan-border:var(--running-border,#6c9fdb);--hplan-text:var(--running-text,#1f4c7e)}
+.hplan-card.paused{--hplan-bg:#fff0c4;--hplan-border:#c79b3b;--hplan-text:#765317}
 .hplan-card.completed{--hplan-bg:var(--completed-bg,#d8f1df);--hplan-border:var(--completed-border,#65ad7a);--hplan-text:var(--completed-text,#21603a)}
 .hplan-card.issue{--hplan-bg:var(--issue-bg,#ffe3df);--hplan-border:var(--issue-border,#df7d72);--hplan-text:var(--issue-text,#8e3028)}
 .hplan-card:hover{z-index:5;box-shadow:0 0 0 1px var(--hplan-border),0 4px 12px #263f501f}

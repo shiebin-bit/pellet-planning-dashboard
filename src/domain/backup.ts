@@ -4,10 +4,12 @@ import {
   type CatalogProduct,
   type Downtime,
   type HistoryEvent,
+  type HistoryChange,
   type Job,
   type JobStatus,
   type LineId,
   type QuantityMode,
+  type ProductionPause,
   type ScheduleSegment,
   type Settings,
 } from "./types";
@@ -20,6 +22,8 @@ const MAX_EVENTS = 50_000;
 const MAX_DOWNTIME = 10_000;
 const MAX_PREFIXES = 1_000;
 const MAX_SEGMENTS_PER_JOB = 20_000;
+const MAX_PAUSES_PER_JOB = 10_000;
+const MAX_CHANGES_PER_EVENT = 100;
 const MAX_ID_LENGTH = 200;
 const MAX_TEXT_LENGTH = 10_000;
 const MAX_EVENT_MESSAGE_LENGTH = 20_000;
@@ -33,7 +37,15 @@ const JOB_KEYS = [
   "remarks", "actualStart", "actualEnd", "actualQuantityMt",
   "completionNote", "binNeedsReview", "createdAt", "updatedAt",
   "lockedSegments", "issue",
+  "pauseIntervals",
 ] as const;
+
+const JOB_CHANGE_FIELDS = new Set([
+  "date", "lineId", "sequence", "orderNo", "productCode", "description",
+  "bin", "mode", "bagCount", "quantityMt", "remarks", "status",
+  "actualStart", "actualEnd", "actualQuantityMt", "completionNote",
+  "binNeedsReview", "issue.reason", "pauseState", "pauseReason",
+]);
 
 export function parseWorkspaceBackup(text: string): AppState {
   if (typeof text !== "string") {
@@ -265,8 +277,66 @@ function validateJob(value: unknown, path: string): Job {
     }
     result.issue = validateIssue(source.issue, `${path}.issue`);
   }
+  if (hasOwn(source, "pauseIntervals")) {
+    const pauses = arrayValue(source.pauseIntervals, `${path}.pauseIntervals`, MAX_PAUSES_PER_JOB)
+      .map((pause, index) => validateProductionPause(pause, `${path}.pauseIntervals[${index}]`));
+    validateProductionPauses(pauses, status, actualStart, actualEnd, `${path}.pauseIntervals`);
+    result.pauseIntervals = pauses;
+  }
 
   return result;
+}
+
+function validateProductionPause(value: unknown, path: string): ProductionPause {
+  const source = objectValue(value, path);
+  onlyKeys(source, ["pausedAt", "resumedAt", "reason"], path);
+  return {
+    pausedAt: timestampValue(required(source, "pausedAt", path), `${path}.pausedAt`),
+    resumedAt: nullableTimestamp(required(source, "resumedAt", path), `${path}.resumedAt`),
+    reason: nonEmptyString(required(source, "reason", path), `${path}.reason`, MAX_NOTE_LENGTH),
+  };
+}
+
+function validateProductionPauses(
+  pauses: ProductionPause[],
+  status: JobStatus,
+  actualStart: string | null,
+  actualEnd: string | null,
+  path: string,
+): void {
+  if ((status === "pending" || status === "cancelled") && pauses.length > 0) {
+    throw invalid(path, `${status} jobs cannot have production pauses`);
+  }
+  const startMs = actualStart === null ? null : Date.parse(actualStart);
+  const endMs = actualEnd === null ? null : Date.parse(actualEnd);
+  let previousEnd: number | null = null;
+  for (let index = 0; index < pauses.length; index += 1) {
+    const pause = pauses[index];
+    const pausedAt = Date.parse(pause.pausedAt);
+    const resumedAt = pause.resumedAt === null ? null : Date.parse(pause.resumedAt);
+    if (startMs !== null && pausedAt < startMs) {
+      throw invalid(`${path}[${index}].pausedAt`, "cannot be earlier than actual start");
+    }
+    if (endMs !== null && pausedAt > endMs) {
+      throw invalid(`${path}[${index}].pausedAt`, "cannot be later than actual end");
+    }
+    if (resumedAt !== null && resumedAt < pausedAt) {
+      throw invalid(`${path}[${index}].resumedAt`, "cannot be earlier than pause start");
+    }
+    if (resumedAt !== null && endMs !== null && resumedAt > endMs) {
+      throw invalid(`${path}[${index}].resumedAt`, "cannot be later than actual end");
+    }
+    if (index > 0 && (previousEnd === null || pausedAt < previousEnd)) {
+      throw invalid(`${path}[${index}].pausedAt`, "must follow the previous resumed pause without overlap");
+    }
+    if (resumedAt === null && index !== pauses.length - 1) {
+      throw invalid(`${path}[${index}].resumedAt`, "may be open only on the final pause");
+    }
+    previousEnd = resumedAt;
+  }
+  if (status === "completed" && pauses.some((pause) => pause.resumedAt === null)) {
+    throw invalid(path, "completed jobs cannot have an open production pause");
+  }
 }
 
 function validateActualTimes(
@@ -392,7 +462,7 @@ function validateDowntime(value: unknown, path: string): Downtime {
 
 function validateEvent(value: unknown, path: string): HistoryEvent {
   const source = objectValue(value, path);
-  onlyKeys(source, ["id", "at", "type", "jobId", "message"], path);
+  onlyKeys(source, ["id", "at", "type", "jobId", "message", "changes"], path);
   const result: HistoryEvent = {
     id: nonEmptyString(required(source, "id", path), `${path}.id`, MAX_ID_LENGTH),
     at: timestampValue(required(source, "at", path), `${path}.at`),
@@ -402,7 +472,37 @@ function validateEvent(value: unknown, path: string): HistoryEvent {
   if (hasOwn(source, "jobId")) {
     result.jobId = nonEmptyString(source.jobId, `${path}.jobId`, MAX_ID_LENGTH);
   }
+  if (hasOwn(source, "changes")) {
+    result.changes = arrayValue(source.changes, `${path}.changes`, MAX_CHANGES_PER_EVENT)
+      .map((change, index) => validateHistoryChange(change, `${path}.changes[${index}]`));
+    const fields = new Set<string>();
+    for (let index = 0; index < result.changes.length; index += 1) {
+      const field = result.changes[index].field;
+      if (fields.has(field)) throw invalid(`${path}.changes[${index}].field`, `duplicates ${JSON.stringify(field)}`);
+      fields.add(field);
+    }
+  }
   return result;
+}
+
+function validateHistoryChange(value: unknown, path: string): HistoryChange {
+  const source = objectValue(value, path);
+  onlyKeys(source, ["field", "before", "after"], path);
+  const field = nonEmptyString(required(source, "field", path), `${path}.field`, 200);
+  if (!JOB_CHANGE_FIELDS.has(field) && !/^settings\.[A-Za-z0-9_.]+$/.test(field) && !/^catalog\.[A-Za-z0-9_.]+$/.test(field)) {
+    throw invalid(`${path}.field`, "is not an allowed audit field");
+  }
+  const before = historyChangeValue(required(source, "before", path), `${path}.before`);
+  const after = historyChangeValue(required(source, "after", path), `${path}.after`);
+  if (Object.is(before, after)) throw invalid(path, "must describe a changed value");
+  return { field, before, after };
+}
+
+function historyChangeValue(value: unknown, path: string): HistoryChange["before"] {
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "number") return numberValue(value, path);
+  if (typeof value === "string") return stringValue(value, path, MAX_EVENT_MESSAGE_LENGTH);
+  throw invalid(path, "must be text, a finite number, true, false, or null");
 }
 
 function objectValue(value: unknown, path: string): DataObject {

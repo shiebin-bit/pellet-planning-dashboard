@@ -57,6 +57,8 @@ Read the current revision first. Use a new command ID for a new action; retain t
 | `job.update` | `jobId`, `patch: Partial<JobInput>` |
 | `job.move` | `jobId`, `toLineId`, optional `beforeJobId`; omitted means append |
 | `job.start` | `jobId`, `actualStart`: ISO timestamp with an explicit offset |
+| `job.pause` | `jobId`, nonblank `reason` (trimmed, at most 1,000 characters); time is server-generated |
+| `job.resume` | `jobId`; time is server-generated |
 | `job.complete` | `jobId`, `actualQuantityMt`, optional `completionNote`; end time is server-generated |
 | `job.recordActual` | `jobId`, `actualQuantityMt`, optional `completionNote`; preserves existing start/end |
 | `job.cancel` | `jobId` |
@@ -79,6 +81,16 @@ Copy quantity is a discriminated object: `{mode: "bags", bagCount: 200}` or `{mo
 Catalog codes are trimmed and unique ignoring case, including inactive products. Code length is at most 80, description at most 200; both are required. Create defaults to active; setActive controls availability. Stored products have `{id, code, description, defaultMode, active}`. Catalog changes do not rewrite existing job fields. Empty ordinary workspaces have no products; explicitly reset Demo workspaces include eight fictional products.
 
 Workspace exports are version 2. `workspace.restore` also accepts strict version 1 JSON, normalizes it to version 2 with an empty catalog, and preserves a recovery copy of the replaced workspace.
+
+## Pause intervals and change history
+
+Paused jobs keep `status: "running"` and optionally store `pauseIntervals: {pausedAt: string, resumedAt: string | null, reason: string}[]`. Only running jobs can pause/resume; at most the final interval may be open. Intervals are ordered, non-overlapping, start no earlier than actual start and end no later than actual end. Completing while paused closes the interval at the same timestamp as actual end. Clock regressions are rejected. Pausing does not change `lockedSegments`, release the line or recalculate planned utilisation. Copy omits all pause intervals.
+
+Do not send pause/resume timestamps: unknown command fields are rejected. Both commands use normal revision checks, transactions, receipts and retry deduplication. A job accepts at most 10,000 pause intervals.
+
+New activity may carry `changes: {field: string, before: string | number | boolean | null, after: string | number | boolean | null}[]`. These snapshots are derived from normalized persisted values. Unchanged fields and incidental timestamps are omitted; missing values use `null`. Move Undo stores the reverse changes. Settings changes record causal settings values, not every derived pending-job quantity. Large settings lists use bounded count/fingerprint summaries. At most 100 unique changed fields are accepted per event.
+
+Existing jobs/events may omit these optional fields and remain readable in version 1 or 2 imports. The JSON schema version remains 2; no SQL migration is needed for the optional JSONB fields. Restore replaces activity along with the workspace. These records have no authenticated actor and are not an immutable compliance log.
 
 ## Errors
 

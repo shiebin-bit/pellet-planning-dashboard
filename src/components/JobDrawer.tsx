@@ -7,6 +7,8 @@ import type { LineId } from '../domain/types';
 import { durationLabel, fullDateTime, fromDateTimeInput, numberLabel, productColor, toDateTimeInput, dateLabel, timeLabel } from '../lib/format';
 import { StatusBadge } from './Shared';
 import { ActualOutputForm,ActualOutputResult } from './ActualOutput';
+import { ProductionStops } from './ProductionStops';
+import { useCurrentTime } from '../lib/useCurrentTime';
 
 export function JobDrawer() {
   const {selectedJob:job,closeJob,editJob,state,board,commit,notify,busy,storageWarning,storageMode,refresh,hasConflict,resolveConflict,mutationLocked}=useWorkspace();
@@ -22,6 +24,7 @@ export function JobDrawer() {
   const drawerRef=useRef<HTMLElement>(null);
   const closeRef=useRef<HTMLButtonElement>(null);
   const previousFocus=useRef<HTMLElement|null>(null);
+  const now=useCurrentTime(job?.status==='running');
   useEffect(()=>{
     if(!job)return;
     setActualStart(job.actualStart?toDateTimeInput(job.actualStart):'');
@@ -54,7 +57,7 @@ export function JobDrawer() {
     if(new Date(timestamp).getTime()>Date.now()){notify('Actual start must be in the past or the current time.',true);return;}
     void commit({type:'job.start',jobId:job!.id,actualStart:timestamp},'Actual start recorded. Production is running.');
   }
-  const result=getProductionResult(job);
+  const result=getProductionResult(job,now);
   const elapsed=result.elapsedMinutes;
   const missing=!state.jobs.some(item=>item.id===job.id);
   const closeOutput=()=>{setShowOutput(false);requestAnimationFrame(()=>outputToggle.current?.focus());};
@@ -68,10 +71,10 @@ export function JobDrawer() {
     <div className="drawer-top"><span>PRODUCTION DETAILS</span><button ref={closeRef} className="icon-button" disabled={mutationLocked} onClick={closeJob} aria-label="Close production details"><X size={21}/></button></div>
     <div className="drawer-body">
       <div className="drawer-product"><span className="drawer-product-color" style={{background:productColor(job.productCode)}}/><div><h2 id="drawer-title">{job.productCode}</h2><p>{job.description||'Pellet production'}</p></div><span className="line-id">{job.lineId}</span></div>
-      <div className="drawer-status-row"><StatusBadge status={job.status} issue={!!job.issue}/><span>{dateLabel(job.date,true)}</span></div>
+      <div className="drawer-status-row"><StatusBadge status={job.status} issue={!!job.issue} paused={result.isPaused}/><span>{dateLabel(job.date,true)}</span></div>
       {storageWarning&&storageMode==='database'&&<div className="notice warning" role="alert">{storageWarning}<button className="text-link" disabled={busy} onClick={()=>void refresh()}>Retry connection</button></div>}
       {hasConflict&&(!showOutput||missing)&&<div className="notice warning" role="alert">{missing?'This task is no longer in the latest workspace. Its open details are preserved for review.':'The latest workspace changed while this task was open. Your entries are preserved.'} <button type="button" className="text-link" onClick={reloadLatest}>{missing?'Close details':'Reload latest task'}</button></div>}
-      {job.issue&&<section className="issue-banner" aria-label="Reported production issue" inert={mutationLocked||hasConflict}><div><AlertTriangle size={19}/><strong>Production issue</strong><StatusBadge status={job.status}/></div><p>{job.issue.reason}</p><small>Reported {fullDateTime(job.issue.reportedAt)}</small><button className="button secondary full-width" onClick={()=>commit({type:'job.resolveIssue',jobId:job.id},'Issue resolved. Original production status retained.')}><Check size={15}/>Resolve issue</button></section>}
+      {job.issue&&<section className="issue-banner" aria-label="Reported production issue" inert={mutationLocked||hasConflict}><div><AlertTriangle size={19}/><strong>Production issue</strong><StatusBadge status={job.status} paused={result.isPaused}/></div><p>{job.issue.reason}</p><small>Reported {fullDateTime(job.issue.reportedAt)}</small><button className="button secondary full-width" onClick={()=>commit({type:'job.resolveIssue',jobId:job.id},'Issue resolved. Original production status retained.')}><Check size={15}/>Resolve issue</button></section>}
       {job.binNeedsReview&&<div className="bin-review-box" inert={mutationLocked||hasConflict}><AlertTriangle size={18}/><div><strong>Review the destination bin</strong><p>This task changed production line. Confirm that bin {job.bin||'—'} is suitable for {job.lineId}.</p><button className="text-link" onClick={()=>commit({type:'job.confirmBin',jobId:job.id},'Destination bin confirmed.')}><Check size={14}/>Confirm bin assignment</button></div></div>}
       <div className="drawer-volume"><span>{numberLabel(job.quantityMt,2)}<small>MT</small></span><div><Package size={16}/>{job.mode==='bags'?numberLabel(job.bagCount||0,0)+' bags':'Bulk production'}</div></div>
       <div className="detail-grid"><Detail label="ORDER REFERENCE" value={job.orderNo||'—'}/><Detail label="DESTINATION BIN" value={job.bin||'Not assigned'}/><Detail label="PRODUCTION RATE" value={numberLabel(job.rate)+' MT / hr'}/><Detail label="PRODUCTION TIME" value={durationLabel(job.durationMinutes)}/></div>
@@ -85,6 +88,7 @@ export function JobDrawer() {
         {(job.status==='running'||job.status==='completed')&&(showOutput?<ActualOutputForm key={job.id} job={job} completing={job.status==='running'} onCancel={closeOutput} onSaved={closeOutput}/>:<button ref={outputToggle} disabled={mutationLocked||hasConflict} className={'button full-width '+(job.status==='running'?'primary':'secondary')} onClick={()=>setShowOutput(true)} aria-expanded={false}><CheckCheck size={17}/>{job.status==='running'?'Mark as done':result.actualQuantityMt===null?'Record actual output':'Edit actual output'}</button>)}
         </>}
       </section>
+      <ProductionStops key={job.id} job={job}/>
       {(job.status==='pending'||job.status==='running')&&!job.issue&&<section className="drawer-section issue-actions" inert={mutationLocked||hasConflict}><button className="text-link danger-text" onClick={()=>setShowIssue(!showIssue)} aria-expanded={showIssue}><AlertTriangle size={16}/>Report a problem</button>{showIssue&&<div className="issue-form"><label className="field">Problem details<textarea value={issueReason} onChange={event=>setIssueReason(event.target.value)} placeholder="Describe the problem for the team…" maxLength={1000}/><small>The card turns red until the problem is resolved or production is completed.</small></label><button className="button danger full-width" disabled={busy||!issueReason.trim()} onClick={async()=>{if(await commit({type:'job.reportIssue',jobId:job.id,reason:issueReason},'Problem recorded. The card is now marked red.')){setShowIssue(false);setIssueReason('');}}}><AlertTriangle size={16}/>Mark as issue</button></div>}</section>}
       {job.remarks&&<section className="drawer-section"><h3>Remarks</h3><p className="drawer-remarks">{job.remarks}</p></section>}
       {pending&&<section className="drawer-section" inert={mutationLocked||hasConflict}><button className="drawer-move-toggle" onClick={()=>setShowMove(!showMove)} aria-expanded={showMove}><MoveRight size={16}/><span>Move to another line or position</span><ArrowRight size={15}/></button>{showMove&&<div className="drawer-move-form"><div className="field-grid"><label className="field">Line<select value={toLine} onChange={e=>{setToLine(e.target.value as LineId);setBeforeId('');}}>{LINE_IDS.map(line=><option key={line}>{line}</option>)}</select></label><label className="field">Position<select value={beforeId} onChange={e=>setBeforeId(e.target.value)}><option value="">After the last task</option>{movableJobs.map(item=><option value={item.id} key={item.id}>Before {item.productCode} · {numberLabel(item.quantityMt)} MT</option>)}</select></label></div><button className="button secondary full-width" disabled={busy} onClick={async()=>{if(await commit({type:'job.move',jobId:job.id,toLineId:toLine,...(beforeId?{beforeJobId:beforeId}:{})},'Task moved. Check the destination bin.',true))setShowMove(false);}}>Apply move<ArrowRight size={15}/></button></div>}</section>}

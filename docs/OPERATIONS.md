@@ -34,6 +34,8 @@ If DataGrip uses `127.0.0.1:5434`, keep `compose.dev.yml` enabled during every u
 
 The efficiency update adds migration 003 (`workspace.catalog` JSONB) without replacing existing jobs. Before deploying, retain a dump and a workspace JSON, then compare all pre-existing job payloads after startup. Seed the eight fictional `-DEMO` catalog entries only when the existing workspace is marked Demo and its catalog is empty; do not reset its production data. Ordinary workspaces stay empty. New backups and newly saved recovery/Undo snapshots use version 2; rolling back to a binary that only reads version 1 requires a matching pre-upgrade database backup.
 
+The pause/history update adds optional `jobs.payload.pauseIntervals` and `history_events.payload.changes` fields without SQL changes or automatic backfills. Back up both PostgreSQL and the workspace JSON before deploying, then verify that the revision, complete job payloads, settings, catalog and existing activity match the predeployment snapshot. The existing DataGrip port remains 5434. Once new fields have been written, **an older binary's strict reader cannot read them**; rollback requires the matching predeployment dump plus the previous application image/source, not just an old image. Restore that dump into a separate verified database and coordinate any newer records before switching the service.
+
 The named volume is `millplan_postgres_data` with the default project name. It survives container replacement. It is **not a backup**, and `down -v` deletes it.
 
 ## Backups

@@ -116,6 +116,77 @@ integration("PostgreSQL workspace API", () => {
     assert.ok(Date.parse(job.actualEnd!) >= earliest && Date.parse(job.actualEnd!) <= latest);
   });
 
+  it("pauses and resumes atomically with trusted timestamps, stale guards, and retry receipts", async () => {
+    const createdResponse = await postCommand(0, "pause-create", {
+      type: "job.create", input: input("PAUSE-FLOW"),
+    });
+    const created = await createdResponse.json() as WorkspaceEnvelope;
+    const jobId = created.state.jobs[0].id;
+    const startedResponse = await postCommand(1, "pause-start", {
+      type: "job.start", jobId, actualStart: "2026-10-16T01:00:00.000Z",
+    });
+    assert.equal(startedResponse.status, 200);
+
+    const pauseCommand: Command = { type: "job.pause", jobId, reason: "  Hopper inspection  " };
+    const earliestPause = Date.now();
+    const pausedResponse = await postCommand(2, "pause-stable", pauseCommand);
+    const latestPause = Date.now();
+    assert.equal(pausedResponse.status, 200);
+    const paused = await pausedResponse.json() as WorkspaceEnvelope;
+    const pausedJob = paused.state.jobs.find(job => job.id === jobId)!;
+    assert.equal(paused.revision, 3);
+    assert.equal(pausedJob.status, "running");
+    assert.equal(pausedJob.pauseIntervals?.length, 1);
+    assert.equal(pausedJob.pauseIntervals?.[0].reason, "Hopper inspection");
+    assert.equal(pausedJob.pauseIntervals?.[0].resumedAt, null);
+    const pausedAt = Date.parse(pausedJob.pauseIntervals![0].pausedAt);
+    assert.ok(pausedAt >= earliestPause && pausedAt <= latestPause);
+
+    const duplicatePause = await postCommand(2, "pause-stable", pauseCommand);
+    assert.equal(duplicatePause.status, 200);
+    const duplicateState = await duplicatePause.json() as WorkspaceEnvelope;
+    assert.equal(duplicateState.revision, 3);
+    assert.equal(duplicateState.state.jobs.find(job => job.id === jobId)?.pauseIntervals?.length, 1);
+
+    const staleResume = await postCommand(2, "resume-stale", { type: "job.resume", jobId });
+    assert.equal(staleResume.status, 409);
+    assert.equal((await staleResume.json()).error.code, "STALE_REVISION");
+    assert.equal((await getWorkspace()).state.jobs.find(job => job.id === jobId)?.pauseIntervals?.[0].resumedAt, null);
+
+    const earliestResume = Date.now();
+    const resumedResponse = await postCommand(3, "resume-valid", { type: "job.resume", jobId });
+    const latestResume = Date.now();
+    assert.equal(resumedResponse.status, 200);
+    const resumed = await resumedResponse.json() as WorkspaceEnvelope;
+    const resumedAt = Date.parse(resumed.state.jobs.find(job => job.id === jobId)!.pauseIntervals![0].resumedAt!);
+    assert.ok(resumedAt >= earliestResume && resumedAt <= latestResume);
+    assert.ok(resumedAt >= pausedAt);
+
+    const pausedAgainResponse = await postCommand(4, "pause-again", {
+      type: "job.pause", jobId, reason: "Material hold",
+    });
+    assert.equal(pausedAgainResponse.status, 200);
+    const completedResponse = await postCommand(5, "complete-paused", {
+      type: "job.complete", jobId, actualQuantityMt: 8.25, completionNote: "Closed during hold",
+    });
+    assert.equal(completedResponse.status, 200);
+    const completed = await completedResponse.json() as WorkspaceEnvelope;
+    const completedJob = completed.state.jobs.find(job => job.id === jobId)!;
+    assert.equal(completedJob.status, "completed");
+    assert.equal(completedJob.pauseIntervals?.length, 2);
+    assert.equal(completedJob.pauseIntervals?.at(-1)?.resumedAt, completedJob.actualEnd);
+    assert.equal(completed.state.events.at(-1)?.type, "job.completed");
+    assert.ok(completed.state.events.at(-1)?.changes?.some(change =>
+      change.field === "pauseState" && change.before === "paused" && change.after === null
+    ));
+    const persisted = await new WorkspaceStore(pool).getWorkspace();
+    assert.deepEqual(
+      persisted.state.jobs.find(job => job.id === jobId)?.pauseIntervals,
+      completedJob.pauseIntervals,
+    );
+    assert.deepEqual(persisted.state.events.at(-1)?.changes, completed.state.events.at(-1)?.changes);
+  });
+
   it("persists restore recovery, move undo, and workspace state across store instances", async () => {
     const baseResponse = await postCommand(0, "base-job", { type: "job.create", input: input("BASE") });
     assert.equal(baseResponse.status, 200);
@@ -142,6 +213,10 @@ integration("PostgreSQL workspace API", () => {
     assert.equal(undone.canUndo, false);
     assert.equal(undone.state.jobs.find(job => job.id === backlog.id)?.lineId, backlog.lineId);
     assert.equal(undone.state.events.at(-1)?.type, "job.move.undone");
+    assert.deepEqual(
+      undone.state.events.at(-1)?.changes?.find(change => change.field === "lineId"),
+      { field: "lineId", before: destination, after: backlog.lineId },
+    );
     assert.equal(undone.state.events.at(-2)?.type, "job.moved");
 
     const restartedStore = new WorkspaceStore(pool);

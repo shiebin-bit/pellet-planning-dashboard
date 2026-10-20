@@ -6,6 +6,7 @@ import {
 import type { Active, CollisionDetection, DragEndEvent, Over } from '@dnd-kit/core';
 import { AlertTriangle, ArrowUpRight, ChevronDown, Copy, GripVertical, LockKeyhole, Plus, Undo2 } from 'lucide-react';
 import { StatusLegend } from '../components/Shared';
+import { isJobPaused } from '../domain/production-results';
 import type { Downtime, LineId, LineSchedule, ScheduledJob, ScheduleSegment } from '../domain/types';
 import { downtimeRange, durationLabel, numberLabel, timeLabel } from '../lib/format';
 import { useWorkspace } from '../lib/workspace';
@@ -172,12 +173,13 @@ function ProductionSegment({ segment, job, start, end, primary, activeId, select
   });
   const clippedStart = Math.max(start, segment.start);
   const clippedEnd = Math.min(end, segment.end);
-  const status = job.issue ? 'issue' : job.status;
-  const detail = `${job.productCode} · ${numberLabel(job.quantityMt)} MT · ${timeLabel(segment.start)}–${timeLabel(segment.end)} · ${job.issue ? `Issue: ${job.issue.reason}` : job.status}`;
+  const paused = isJobPaused(job);
+  const status = job.issue ? 'issue' : paused ? 'paused' : job.status;
+  const detail = `${job.productCode} · ${numberLabel(job.quantityMt)} MT · ${timeLabel(segment.start)}–${timeLabel(segment.end)} · ${job.issue ? `Issue: ${job.issue.reason}` : paused ? 'Paused' : job.status}`;
   const insert=isOver&&activeId&&activeId!==job.id;
   return <div ref={node => {dragRef(node);dropRef(node);}} data-job-id={primary ? job.id : undefined} data-production-job={job.id} data-draggable={!locked} className={`hplan-card ${status} ${selected ? 'selected' : ''} ${activeId===job.id ? 'dragging' : ''} ${insert ? 'drop-before' : ''} ${segment.end > end ? 'clipped-end' : ''}`} style={intervalStyle(clippedStart, clippedEnd, start, end)} title={detail}>
     <button type="button" className="hplan-card-open" {...(!locked?attributes:{})} {...(!locked?listeners:{})} onClick={onOpen} aria-label={`Open ${job.productCode} on ${job.lineId}${primary?'':' continued segment'}`} aria-description={`${detail}. ${locked?'This production plan is locked.':'Drag anywhere on this card to move it. On touch screens, hold briefly then drag. Enter opens details; Space starts a keyboard move.'}`}/>
-    <div className="hplan-card-content" aria-hidden="true"><strong className="hplan-code-short">{job.productCode.trim().slice(0, 4)}</strong><strong className="hplan-code-full">{job.productCode}</strong><span className="hplan-quantity">{numberLabel(job.quantityMt)} MT</span><span className="hplan-time">{timeLabel(segment.start)}–{timeLabel(segment.end)}</span><span className="hplan-state">{job.issue ? <AlertTriangle size={12}/> : locked ? <LockKeyhole size={11}/> : null}{job.issue ? 'Issue' : job.status === 'running' ? 'Running' : job.status === 'completed' ? 'Done' : primary ? 'Planned' : 'Continued'}</span></div>
+    <div className="hplan-card-content" aria-hidden="true"><strong className="hplan-code-short">{job.productCode.trim().slice(0, 4)}</strong><strong className="hplan-code-full">{job.productCode}</strong><span className="hplan-quantity">{numberLabel(job.quantityMt)} MT</span><span className="hplan-time">{timeLabel(segment.start)}–{timeLabel(segment.end)}</span><span className="hplan-state">{job.issue ? <AlertTriangle size={12}/> : locked ? <LockKeyhole size={11}/> : null}{job.issue ? 'Issue' + (paused ? ' · Paused' : '') : paused ? 'Paused' : job.status === 'running' ? 'Running' : job.status === 'completed' ? 'Done' : primary ? 'Planned' : 'Continued'}</span></div>
     {!locked && <span className="hplan-drag-handle" aria-hidden="true"><GripVertical size={15}/></span>}
     {insert && <span className="hplan-insert">Insert</span>}
   </div>;

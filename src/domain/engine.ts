@@ -5,6 +5,7 @@ import {
   type CatalogProduct,
   type Downtime,
   type HistoryEvent,
+  type HistoryChange,
   type Job,
   type JobInput,
   type LineId,
@@ -13,6 +14,11 @@ import {
   type ScheduledJob,
   type Settings,
 } from "./types";
+import {
+  getCatalogHistoryChanges,
+  getJobHistoryChanges,
+  getSettingsHistoryChanges,
+} from "./audit";
 import type {
   CatalogCreateInput,
   CatalogUpdatePatch,
@@ -174,7 +180,13 @@ export function createJob(state: AppState, input: JobInput): AppState {
   return finalizeMutation(
     state,
     [...state.jobs, job],
-    event("job.created", `Created order ${job.orderNo}.`, job.id, now),
+    event(
+      "job.created",
+      `Created order ${job.orderNo}.`,
+      job.id,
+      now,
+      getJobHistoryChanges(null, job),
+    ),
   );
 }
 
@@ -205,7 +217,13 @@ export function updateJob(
   return finalizeMutation(
     state,
     jobs,
-    event("job.updated", `Updated order ${current.orderNo}.`, id, now),
+    event(
+      "job.updated",
+      `Updated order ${current.orderNo}.`,
+      id,
+      now,
+      getJobHistoryChanges(current, jobFrom(jobs, id)),
+    ),
   );
 }
 
@@ -260,6 +278,7 @@ export function moveJob(
       `Moved order ${current.orderNo} to ${toLineId}.`,
       id,
       now,
+      getJobHistoryChanges(current, jobFrom(jobs, id)),
     ),
   );
 }
@@ -303,7 +322,13 @@ export function startJob(
   return withEvent(
     state,
     jobs,
-    event("job.started", `Started order ${current.orderNo}.`, id, now),
+    event(
+      "job.started",
+      `Started order ${current.orderNo}.`,
+      id,
+      now,
+      getJobHistoryChanges(current, jobFrom(jobs, id)),
+    ),
   );
 }
 
@@ -328,6 +353,16 @@ export function completeJob(
   ) {
     throw new Error("Actual end cannot be earlier than actual start.");
   }
+  const openPause = current.pauseIntervals?.at(-1)?.resumedAt === null
+    ? current.pauseIntervals.at(-1)
+    : undefined;
+  if (openPause && Date.parse(actualEnd) < Date.parse(openPause.pausedAt)) {
+    throw new Error("Actual end cannot be earlier than the active pause.");
+  }
+  const pauseIntervals = current.pauseIntervals?.map((pause, index, pauses) => ({
+    ...pause,
+    resumedAt: index === pauses.length - 1 && pause.resumedAt === null ? actualEnd : pause.resumedAt,
+  }));
   const frozenSegments = (
     current.lockedSegments ?? scheduleState(state).byId.get(id)?.segments ?? []
   ).map((segment) => ({ ...segment }));
@@ -343,6 +378,7 @@ export function completeJob(
       actualQuantityMt,
       ...(frozenSegments.length > 0 ? { lockedSegments: frozenSegments } : {}),
       ...(normalizedNote ? { completionNote: normalizedNote } : {}),
+      ...(pauseIntervals ? { pauseIntervals } : {}),
       updatedAt: changedAt,
     };
   });
@@ -362,6 +398,7 @@ export function completeJob(
       `${details.join("; ")}.`,
       id,
       changedAt,
+      getJobHistoryChanges(current, jobFrom(jobs, id), { includePauseState: Boolean(openPause) }),
     ),
   );
 }
@@ -412,6 +449,7 @@ export function recordActualOutput(
       `${action}; ${details.join("; ")}.`,
       id,
       now,
+      getJobHistoryChanges(current, jobFrom(jobs, id)),
     ),
   );
 }
@@ -428,7 +466,13 @@ export function cancelJob(state: AppState, id: string): AppState {
   return withEvent(
     state,
     jobs,
-    event("job.cancelled", `Cancelled order ${current.orderNo}.`, id, now),
+    event(
+      "job.cancelled",
+      `Cancelled order ${current.orderNo}.`,
+      id,
+      now,
+      getJobHistoryChanges(current, jobFrom(jobs, id)),
+    ),
   );
 }
 
@@ -460,6 +504,7 @@ export function reportJobIssue(
       `Reported issue for order ${current.orderNo}: ${normalizedReason}.`,
       id,
       now,
+      getJobHistoryChanges(current, jobFrom(jobs, id)),
     ),
   );
 }
@@ -483,6 +528,7 @@ export function resolveJobIssue(state: AppState, id: string): AppState {
       `Resolved issue for order ${current.orderNo}: ${current.issue.reason}.`,
       id,
       now,
+      getJobHistoryChanges(current, jobFrom(jobs, id)),
     ),
   );
 }
@@ -500,7 +546,88 @@ export function confirmBin(state: AppState, id: string): AppState {
   return withEvent(
     state,
     jobs,
-    event("job.bin-confirmed", `Confirmed bin for order ${current.orderNo}.`, id, now),
+    event(
+      "job.bin-confirmed",
+      `Confirmed bin for order ${current.orderNo}.`,
+      id,
+      now,
+      getJobHistoryChanges(current, jobFrom(jobs, id)),
+    ),
+  );
+}
+
+export function pauseJob(
+  state: AppState,
+  id: string,
+  reason: string,
+  nowIso = new Date().toISOString(),
+): AppState {
+  const current = requireJob(state, id);
+  if (current.status !== "running") throw new Error("Only a running job can be paused.");
+  if (current.pauseIntervals?.at(-1)?.resumedAt === null) throw new Error("This job is already paused.");
+  const normalizedReason = optionalNote(reason, "Pause reason");
+  if (!normalizedReason) throw new Error("Pause reason is required.");
+  assertIsoDateTime(nowIso, "Pause time");
+  const pausedAt = new Date(nowIso).toISOString();
+  if (!current.actualStart || Date.parse(pausedAt) < Date.parse(current.actualStart)) {
+    throw new Error("Pause time cannot be earlier than actual start.");
+  }
+  const previousResume = current.pauseIntervals?.at(-1)?.resumedAt;
+  if (previousResume && Date.parse(pausedAt) < Date.parse(previousResume)) {
+    throw new Error("Pause time cannot be earlier than the previous resume time.");
+  }
+  const jobs = state.jobs.map((job) => job.id === id ? {
+    ...job,
+    pauseIntervals: [
+      ...(job.pauseIntervals?.map((pause) => ({ ...pause })) ?? []),
+      { pausedAt, resumedAt: null, reason: normalizedReason },
+    ],
+    updatedAt: pausedAt,
+  } : job);
+  return withEvent(
+    state,
+    jobs,
+    event(
+      "job.paused",
+      `Paused order ${current.orderNo}: ${normalizedReason}.`,
+      id,
+      pausedAt,
+      getJobHistoryChanges(current, jobFrom(jobs, id), { includePauseState: true }),
+    ),
+  );
+}
+
+export function resumeJob(
+  state: AppState,
+  id: string,
+  nowIso = new Date().toISOString(),
+): AppState {
+  const current = requireJob(state, id);
+  if (current.status !== "running") throw new Error("Only a running job can be resumed.");
+  const openPause = current.pauseIntervals?.at(-1);
+  if (!openPause || openPause.resumedAt !== null) throw new Error("This job is not paused.");
+  assertIsoDateTime(nowIso, "Resume time");
+  const resumedAt = new Date(nowIso).toISOString();
+  if (Date.parse(resumedAt) < Date.parse(openPause.pausedAt)) {
+    throw new Error("Resume time cannot be earlier than pause time.");
+  }
+  const jobs = state.jobs.map((job) => job.id === id ? {
+    ...job,
+    pauseIntervals: job.pauseIntervals!.map((pause, index, pauses) =>
+      index === pauses.length - 1 ? { ...pause, resumedAt } : { ...pause },
+    ),
+    updatedAt: resumedAt,
+  } : job);
+  return withEvent(
+    state,
+    jobs,
+    event(
+      "job.resumed",
+      `Resumed order ${current.orderNo}.`,
+      id,
+      resumedAt,
+      getJobHistoryChanges(current, jobFrom(jobs, id), { includePauseState: true }),
+    ),
   );
 }
 
@@ -519,7 +646,13 @@ export function updateSettings(state: AppState, settings: Settings): AppState {
   return finalizeMutation(
     { ...state, settings: copiedSettings },
     jobs,
-    event("settings.updated", "Updated planning settings.", undefined, now),
+    event(
+      "settings.updated",
+      "Updated planning settings.",
+      undefined,
+      now,
+      getSettingsHistoryChanges(state.settings, copiedSettings),
+    ),
   );
 }
 
@@ -541,7 +674,13 @@ export function createCatalogProduct(
     catalog: [...state.catalog.map(cloneCatalogProduct), product],
     events: [
       ...state.events,
-      event("catalog.created", `Created catalog product ${product.code}.`, undefined, nowIso),
+      event(
+        "catalog.created",
+        `Created catalog product ${product.code}.`,
+        undefined,
+        nowIso,
+        getCatalogHistoryChanges(null, product),
+      ),
     ],
   };
 }
@@ -568,7 +707,13 @@ export function updateCatalogProduct(
     ),
     events: [
       ...state.events,
-      event("catalog.updated", `Updated catalog product ${normalized.code}.`, undefined, nowIso),
+      event(
+        "catalog.updated",
+        `Updated catalog product ${normalized.code}.`,
+        undefined,
+        nowIso,
+        getCatalogHistoryChanges(current, { ...current, ...normalized }),
+      ),
     ],
   };
 }
@@ -594,6 +739,7 @@ export function setCatalogProductActive(
         `${active ? "Activated" : "Deactivated"} catalog product ${current.code}.`,
         undefined,
         nowIso,
+        getCatalogHistoryChanges(current, { ...current, active }),
       ),
     ],
   };
@@ -1048,8 +1194,16 @@ function event(
   message: string,
   jobId?: string,
   at = new Date().toISOString(),
+  changes: HistoryChange[] = [],
 ): HistoryEvent {
-  return { id: makeId("event"), at, type, ...(jobId ? { jobId } : {}), message };
+  return {
+    id: makeId("event"),
+    at,
+    type,
+    ...(jobId ? { jobId } : {}),
+    message,
+    ...(changes.length ? { changes } : {}),
+  };
 }
 
 function resequence(jobs: Job[], lineId: LineId, date: string): Job[] {
@@ -1068,6 +1222,12 @@ function resequence(jobs: Job[], lineId: LineId, date: string): Job[] {
 function requireJob(state: AppState, id: string): Job {
   const job = state.jobs.find((candidate) => candidate.id === id);
   if (!job) throw new Error(`Job ${id} was not found.`);
+  return job;
+}
+
+function jobFrom(jobs: Job[], id: string): Job {
+  const job = jobs.find((candidate) => candidate.id === id);
+  if (!job) throw new Error(`Job ${id} was not found after mutation.`);
   return job;
 }
 
@@ -1103,6 +1263,7 @@ function cloneJob(job: Job): Job {
     ...job,
     lockedSegments: job.lockedSegments?.map((segment) => ({ ...segment })),
     ...(job.issue ? { issue: { ...job.issue } } : {}),
+    ...(job.pauseIntervals ? { pauseIntervals: job.pauseIntervals.map((pause) => ({ ...pause })) } : {}),
   };
 }
 

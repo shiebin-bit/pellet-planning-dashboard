@@ -320,6 +320,9 @@ describe("actual production output", () => {
       varianceMt: 0,
       shortfallMt: 0,
       elapsedMinutes: 90,
+      downtimeMinutes: 0,
+      netProductionMinutes: 90,
+      isPaused: false,
     });
     expect(getProductionResult({ ...base, actualQuantityMt: 8 })).toMatchObject({
       actualQuantityMt: 8,

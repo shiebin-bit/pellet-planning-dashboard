@@ -107,7 +107,7 @@ export function CopyPlanningDialog() {
               <td><div className="input-with-unit"><input type="number" aria-label={`Copy quantity ${job.productCode} on ${job.lineId} in ${job.mode === 'bags' ? 'bags' : 'MT'}`} required={draft.selected} disabled={!draft.selected} min="0" step={job.mode === 'bags' ? '1' : '0.01'} value={draft.quantity} onChange={event => update(job, { quantity: event.target.value })}/><span>{job.mode === 'bags' ? 'bags' : 'MT'}</span></div></td>
             </tr>;
           })}</tbody></table></div> : <EmptyState title="No cards to copy" text="Choose another source date or line with non-cancelled production tasks."/>}
-          <p className="copy-note" aria-live="polite">{selected.length} cards selected{missingOrders ? ` · ${missingOrders} new order references still required` : ''}. Actual results, problems and completion details are cleared on the new cards.</p>
+          <p className="copy-note" aria-live="polite">{selected.length} cards selected{missingOrders ? ` · ${missingOrders} new order references still required` : ''}. Actual results, recorded pauses, problems and completion details are cleared on the new cards.</p>
         </div>
         {hasConflict && <div className="editor-feedback error" role="alert">The workspace changed. Your order references are preserved. Review the source and quantities; changed packaging reloads its source quantity. <button type="button" className="text-link" onClick={() => {
           setDrafts(previous => Object.fromEntries(sourceJobs(state, from).map(job => {

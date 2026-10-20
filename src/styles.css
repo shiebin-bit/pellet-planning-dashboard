@@ -3298,6 +3298,11 @@ main{
   .page-is-overview .timeline-segment.production.issue { background: var(--issue-bg); color: var(--issue-text); box-shadow: inset 0 -3px var(--issue-border); }
   .legend-pending { background: var(--pending-bg); border: 1px solid var(--pending-border); }
   .legend-running { background: var(--running-bg); border: 1px solid var(--running-border); }
+  .legend-paused { background: #fff0b8; border: 1px solid #c99b28; }
+  .status-badge.paused { background: #fff0b8; color: #745110; }
+  .tiny-status.paused { color: #795711; }
+  .tiny-status.paused > span { background: #c29420; }
+  .page-is-overview .timeline-segment.production.paused { background: #fff0b8; color: #705116; box-shadow: inset 0 -3px #c99b28; }
   .legend-completed { background: var(--completed-bg); border: 1px solid var(--completed-border); }
   .queue-panel { margin-top: 18px; }
   .queue-toggle { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 17px 23px; cursor: pointer; list-style: none; color: #314f61; font-size: 13px; }

@@ -28,17 +28,17 @@ The default setup serves only this PC. It has no login or user roles. Company-wi
 
 | Area | Features |
 | --- | --- |
-| Overview | Planned MT, utilisation, production load, completion, actual-output coverage, four line summaries, 24-hour status timelines and items needing attention |
+| Overview | Planned MT, utilisation, production load, completion, actual-output coverage, four line summaries, 24-hour status timelines, recorded downtime by mill and items needing attention |
 | Planning board | Four horizontal lines; card length follows production time; Day/Full plan; carry-over; changeover and downtime; direct date/month/year selection |
 | Card movement | Drag a pending card to another line or sequence; destination-bin review; recalculated line rate; one-step Undo; keyboard and held-touch movement |
 | Production details | Add/edit in a dialog; searchable product catalog with description/default delivery; manual products; bags or bulk, orders, bins, remarks and issues |
 | Copy planning | Select a source date/line/cards, enter fresh order references and adjusted quantities, preview target utilisation/carry-over, then append the batch atomically |
-| Actual production | Manually enter actual start; Done asks for actual MT and records the server's end time; later output corrections retain the original timestamps |
-| History | Combined date/line/status/search filters; totals across all matches, actual-output coverage; records and activity in pages of 50 |
-| Reports | Daily or up to 31 days; optional line selection; numeric Excel output; A4 landscape print/Save as PDF |
+| Actual production | Manually enter actual start; Done asks for actual MT and records the server's end time; later output corrections retain the original timestamps; pause/resume with reasons and recorded stop durations |
+| History | Combined date/line/status/search filters; totals across all matches, actual-output coverage; records and activity in pages of 50; before/after changes for edits, moves, execution, settings and catalog |
+| Reports | Daily or up to 31 days; optional line selection; numeric Excel output with production-stop intervals; A4 landscape print/Save as PDF |
 | Settings and backup | Product catalog with deactivate/reactivate; calendar, rates, bag weight and downtime; version 2 JSON backup and legacy import; workspace recovery; PostgreSQL dumps |
 
-Card colours: **gray** not started, **blue** running, **green** completed, **red** issue. Yellow stripes indicate changeover. Started/completed plans stay locked, and each line can have only one running production.
+Card colours: **gray** not started, **blue** running, **yellow** paused, **green** completed, **red** issue. Yellow stripes indicate changeover. Started/completed plans stay locked, and each line can have only one running production.
 
 Database saves are confirmed before cards/forms show success. Concurrent stale changes keep the draft and require an explicit Reload latest before resubmitting. Uncertain saves keep the originating form open and offer Retry connection; retrying an acknowledged command cannot create a duplicate. Other changes refresh approximately every 15 seconds when no editor/details/settings draft is open.
 
@@ -74,7 +74,9 @@ JSON version 2 includes the product catalog alongside records, settings and acti
 - The default planning day begins at 08:30 with 23 available hours; confirm these settings with the planner.
 - Downtime interrupts production/changeover and reduces availability. Work may carry into following days.
 - Planned utilisation measures production inside the selected planning-day window divided by available time. It includes carry-over. Planned MT and report records are grouped by assigned planning date.
-- Actual elapsed time includes stops; it is **not OEE**. Unknown actual MT remains blank, while known zero remains zero.
+- Pausing records the server time and a required reason; Resume closes that interval. Done also closes an ongoing pause. Paused tasks retain their locked plan and occupy their line. Reporting an issue and recording a pause are separate actions.
+- Recorded downtime sums only explicit pause intervals. Overview clips these to the selected 24-hour planning day across all records, including jobs assigned to earlier dates. Across mills the total is line-minutes, so two mills paused for 30 minutes contribute 60 minutes.
+- Actual elapsed time includes stops; elapsed minus recorded stops is **not productive time or OEE**. Older tasks without pause intervals show zero recorded downtime, which does not prove there were no stops. Unknown actual MT remains blank, while known zero remains zero.
 - Scheduling and display use Asia/Kuala_Lumpur, independently of the browser's time zone.
 
 The optional sample reflects the original prototype's product families/quantities and configurable planning assumptions. Its order references, site, bins, statuses and actual results are illustrative, not an SAP import. No original workbook, company database, exported reports, credentials or local backups are committed.

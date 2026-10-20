@@ -6,9 +6,11 @@ import {
   confirmBin,
   createJob,
   moveJob,
+  pauseJob,
   recordActualOutput,
   reportJobIssue,
   resolveJobIssue,
+  resumeJob,
   startJob,
   setCatalogProductActive,
   updateCatalogProduct,
@@ -47,6 +49,8 @@ export type Command =
   | { type: "job.reportIssue"; jobId: string; reason: string }
   | { type: "job.resolveIssue"; jobId: string }
   | { type: "job.confirmBin"; jobId: string }
+  | { type: "job.pause"; jobId: string; reason: string }
+  | { type: "job.resume"; jobId: string }
   | { type: "job.copyBatch"; sourceDate: string; targetDate: string; items: CopyBatchItem[] }
   | { type: "catalog.create"; input: CatalogCreateInput }
   | { type: "catalog.update"; productId: string; patch: CatalogUpdatePatch }
@@ -98,6 +102,10 @@ export function executeCommand(
     case "job.reportIssue": return reportJobIssue(state, command.jobId, command.reason);
     case "job.resolveIssue": return resolveJobIssue(state, command.jobId);
     case "job.confirmBin": return confirmBin(state, command.jobId);
+    case "job.pause":
+      return pauseJob(state, command.jobId, command.reason, context.nowIso ?? new Date().toISOString());
+    case "job.resume":
+      return resumeJob(state, command.jobId, context.nowIso ?? new Date().toISOString());
     case "job.copyBatch":
       return copyJobBatch(
         state,
@@ -157,9 +165,13 @@ export function parseCommand(value: unknown): Command {
     case "job.cancel":
     case "job.resolveIssue":
     case "job.confirmBin":
+    case "job.resume":
       exact(source, ["type", "jobId"], "command");
       return { type, jobId: id(source.jobId, "command.jobId") };
     case "job.reportIssue":
+      exact(source, ["type", "jobId", "reason"], "command");
+      return { type, jobId: id(source.jobId, "command.jobId"), reason: text(source.reason, "command.reason", 1_000) };
+    case "job.pause":
       exact(source, ["type", "jobId", "reason"], "command");
       return { type, jobId: id(source.jobId, "command.jobId"), reason: text(source.reason, "command.reason", 1_000) };
     case "job.copyBatch": {

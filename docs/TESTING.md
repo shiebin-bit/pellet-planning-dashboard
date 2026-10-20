@@ -28,7 +28,7 @@ The API tests exercise concurrent revisions, invalid-command rollback, duplicate
 
 ## Browser integration
 
-`npm run test:browser` runs `tests/browser.cjs` and `tests/browser-efficiency.cjs`; both replace the entire selected workspace and restore the starting state in `finally`. Use a **separate disposable database/server**, never the real planning service. Create `millplan_browser_test` using the same `createdb` command as above with that database name. Copy `.env` to ignored `.env.browser-test`; change only its DATABASE_URL database path to `/millplan_browser_test`, keep HOST=127.0.0.1 and set PORT=8091. Build `dist` first.
+`npm run test:browser` runs `tests/browser.cjs`, `tests/browser-efficiency.cjs` and `tests/browser-pause-audit.cjs`; all replace the entire selected workspace and restore the starting state in `finally`. Use a **separate disposable database/server**, never the real planning service. Create `millplan_browser_test` using the same `createdb` command as above with that database name. Copy `.env` to ignored `.env.browser-test`; change only its DATABASE_URL database path to `/millplan_browser_test`, keep HOST=127.0.0.1 and set PORT=8091. Build `dist` first.
 
 ```powershell
 npx playwright install chromium
@@ -63,7 +63,9 @@ Its **12 workflow groups** cover:
 
 The efficiency suite adds catalog management/defaults/manual input and snapshot preservation, unsaved Settings isolation, cancelled-source exclusion, blank new orders, quantity/carry-over preview, copy append/reset, lost-copy-response recovery and stale-draft review. It verifies 124 History fixtures across three pages, combined filters, actual coverage, activity pagination, empty results, full Excel export while page 2 is displayed, and desktop/mobile layouts.
 
-CI runs both suites on Ubuntu with PostgreSQL 16, Node 24 and Playwright Chromium. Browser tests use the CI-only database after the API suite.
+The pause/audit suite covers required pause reasons, trusted time, locked plans and reload persistence; multiple pauses/resume; lost pause/resume replies with request deduplication; Done closing an open interval; stale drafts and explicit review; paused filtering and reason search; before/after quantities, moves, Undo, settings and catalog snapshots; legacy activity; cross-day downtime independent of planned segments; Excel numeric readback, daily clipping, complete range stops, print/PDF and responsive layouts; copying paused cards clears execution data; offline Undo appends reverse structured changes. Unit/API tests additionally reject invalid transitions, overlapping imported intervals, clock regression, duplicate/open intervals, stale revisions and command-ID misuse. Optional fields preserve legacy JSON/recovery compatibility.
+
+CI runs all three suites on Ubuntu with PostgreSQL 16, Node 24 and Playwright Chromium. Browser tests use the CI-only database after the API suite.
 
 ## Release checks
 

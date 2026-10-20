@@ -1,7 +1,8 @@
-import type { AppState, Board } from '../domain/types';
+import type { Workbook } from 'exceljs';
+import type { AppState, Board, Job } from '../domain/types';
 import type { ProductionReport } from '../domain/reports';
-import { getProductionResult } from '../domain/production-results';
-import { dateLabel, fullDateTime, numberLabel, STATUS_LABELS } from './format';
+import { getDowntimeMinutesForWindow, getProductionResult } from '../domain/production-results';
+import { dateLabel, fullDateTime, numberLabel, jobStatusLabel } from './format';
 
 function saveBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -15,6 +16,7 @@ export function exportBackup(state: AppState,filename='millplan-workspace-backup
 export async function exportExcel(board: Board, state: AppState) {
   const { default: ExcelJS } = await import('exceljs');
   const workbook = new ExcelJS.Workbook();
+  const asOf = Date.now();
   workbook.creator = 'Millplan'; workbook.created = new Date();
   const sheet = workbook.addWorksheet('Daily production', { pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
   sheet.views = [{ state: 'frozen', ySplit: 7 }];
@@ -36,7 +38,7 @@ export async function exportExcel(board: Board, state: AppState) {
       sheet.getColumn(offset + column + 1).width = [10, 25, 11, 10, 10, 20, 20, 13, 26][column];
     });
     const rows = [
-      ...line.jobs.map(job => ({ ...job, exportStart: fullDateTime(job.plannedStart), exportEnd: fullDateTime(job.plannedEnd), exportStatus: job.issue ? 'Issue (' + STATUS_LABELS[job.status] + ')' : STATUS_LABELS[job.status] })),
+      ...line.jobs.map(job => ({ ...job, exportStart: fullDateTime(job.plannedStart), exportEnd: fullDateTime(job.plannedEnd), exportStatus: jobStatusLabel(job) })),
       ...board.backlog.filter(job => job.lineId === line.lineId).map(job => ({ ...job, exportStart: '', exportEnd: '', exportStatus: job.issue ? 'Issue / awaiting quantity' : 'Awaiting quantity' })),
     ];
     rows.forEach((job, rowIndex) => {
@@ -60,20 +62,26 @@ export async function exportExcel(board: Board, state: AppState) {
     { header: 'Actual end (Done)', key: 'end', width: 24 }, { header: 'Planned production hrs', key: 'plannedHours', width: 24 },
     { header: 'Actual elapsed hrs (includes stops)', key: 'elapsedHours', width: 34 }, { header: 'Status', key: 'status', width: 22 },
     { header: 'Completion note', key: 'note', width: 48 }, { header: 'Issue details', key: 'issue', width: 40 },
+    { header: 'Whole-task recorded downtime hrs', key: 'downtimeHours', width: 26 },
+    { header: 'Whole-task elapsed minus recorded stops hrs', key: 'netHours', width: 36 },
+    { header: 'Recorded downtime inside selected planning day hrs', key: 'dailyDowntimeHours', width: 40 },
   ];
-  board.lines.flatMap(line => line.jobs).forEach(job => {
-    const result=getProductionResult(job);
+  [...new Map(board.lines.flatMap(line => line.jobs).map(job => [job.id, job])).values()].forEach(job => {
+    const result=getProductionResult(job, asOf);
     actuals.addRow({ line: job.lineId, product: job.productCode, order:job.orderNo, date:job.date, planned:job.quantityMt,
       actual:result.actualQuantityMt??'',variance:result.varianceMt??'',plannedHours:job.durationMinutes/60,
       elapsedHours:result.elapsedMinutes===null?'':result.elapsedMinutes/60,
       start:job.actualStart?fullDateTime(job.actualStart):'',end:job.actualEnd?fullDateTime(job.actualEnd):'',
-      status:job.issue?'Issue ('+STATUS_LABELS[job.status]+')':STATUS_LABELS[job.status],note:job.completionNote??'',issue:job.issue?.reason||'' });
+      downtimeHours:result.downtimeMinutes/60,netHours:result.netProductionMinutes===null?'':result.netProductionMinutes/60,
+      dailyDowntimeHours:getDowntimeMinutesForWindow([job],board.start,board.end,asOf)/60,
+      status:jobStatusLabel(job),note:job.completionNote??'',issue:job.issue?.reason||'' });
   });
   actuals.views=[{state:'frozen',ySplit:1}];
-  actuals.autoFilter='A1:N1';
-  for(const column of ['planned','actual','variance','plannedHours','elapsedHours'])actuals.getColumn(column).numFmt='#,##0.00';
+  actuals.autoFilter='A1:Q1';
+  for(const column of ['planned','actual','variance','plannedHours','elapsedHours','downtimeHours','netHours','dailyDowntimeHours'])actuals.getColumn(column).numFmt='#,##0.00';
   actuals.getRow(1).font={bold:true};
   actuals.eachRow(row=>{row.alignment={vertical:'top',wrapText:true};});
+  addStopsSheet(workbook, state.jobs, asOf, { start: board.start, end: board.end });
   const buffer = await workbook.xlsx.writeBuffer();
   saveBlob(new Blob([buffer as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'Millplan_' + board.date + '.xlsx');
 }
@@ -81,7 +89,7 @@ export function printReport() { window.print(); }
 
 export async function exportRangeExcel(report:ProductionReport,state:AppState) {
   const {default:ExcelJS}=await import('exceljs');
-  const workbook=new ExcelJS.Workbook();workbook.creator='Millplan';workbook.created=new Date();
+  const workbook=new ExcelJS.Workbook();const asOf=Date.now();workbook.creator='Millplan';workbook.created=new Date();
   const summary=workbook.addWorksheet('Summary');
   summary.addRow([state.settings.siteName]);
   summary.addRow(['Planning dates',report.selection.from,report.selection.to,'Line',report.selection.lineId]);
@@ -92,7 +100,7 @@ export async function exportRangeExcel(report:ProductionReport,state:AppState) {
   for(const day of report.days)for(const line of day.lines){
     const jobs=report.jobs.filter(job=>job.date===day.date&&job.lineId===line.lineId);
     const completed=jobs.filter(job=>job.status==='completed');
-    const recorded=completed.map(getProductionResult).filter(result=>result.actualQuantityMt!==null);
+    const recorded=completed.map(job => getProductionResult(job, asOf)).filter(result=>result.actualQuantityMt!==null);
     summary.addRow([day.date,line.lineId,line.plannedMt,line.productionMinutes/60,line.availableMinutes/60,line.utilisation??'',completed.length,recorded.length,recorded.length?recorded.reduce((sum,result)=>sum+result.actualQuantityMt!,0):'']);
   }
   summary.columns.forEach((column,index)=>{column.width=[18,14,17,24,19,22,20,20,18][index]??20;});
@@ -109,17 +117,47 @@ export async function exportRangeExcel(report:ProductionReport,state:AppState) {
     {header:'Actual start (MYT)',key:'actualStart',width:25},{header:'Actual end (MYT)',key:'actualEnd',width:25},
     {header:'Planned production hrs',key:'plannedHours',width:25},{header:'Actual elapsed hrs (includes stops)',key:'elapsedHours',width:35},
     {header:'Status',key:'status',width:22},{header:'Completion note',key:'note',width:45},{header:'Remarks',key:'remarks',width:40},{header:'Issue details',key:'issue',width:40},
+    {header:'Recorded downtime hrs',key:'downtimeHours',width:26},{header:'Elapsed minus recorded stops hrs',key:'netHours',width:36},
   ];
   for(const job of report.jobs){
-    const result=getProductionResult(job);
+    const result=getProductionResult(job, asOf);
     records.addRow({date:job.date,line:job.lineId,order:job.orderNo,product:job.productCode,description:job.description,bin:job.bin,mode:job.mode,bags:job.bagCount??'',planned:job.quantityMt,actual:result.actualQuantityMt??'',variance:result.varianceMt??'',
       plannedStart:job.plannedStart===null?'':fullDateTime(job.plannedStart),plannedEnd:job.plannedEnd===null?'':fullDateTime(job.plannedEnd),actualStart:job.actualStart?fullDateTime(job.actualStart):'',actualEnd:job.actualEnd?fullDateTime(job.actualEnd):'',
       plannedHours:job.durationMinutes/60,elapsedHours:result.elapsedMinutes===null?'':result.elapsedMinutes/60,
-      status:job.issue?'Issue ('+STATUS_LABELS[job.status]+')':job.quantityMt===0&&job.status==='pending'?'Awaiting quantity':STATUS_LABELS[job.status],note:job.completionNote??'',remarks:job.remarks,issue:job.issue?.reason??''});
+      downtimeHours:result.downtimeMinutes/60,netHours:result.netProductionMinutes===null?'':result.netProductionMinutes/60,
+      status:job.quantityMt===0&&job.status==='pending'&&!job.issue?'Awaiting quantity':jobStatusLabel(job),note:job.completionNote??'',remarks:job.remarks,issue:job.issue?.reason??''});
   }
-  records.views=[{state:'frozen',ySplit:1}];records.autoFilter='A1:U1';records.getRow(1).font={bold:true};
-  for(const key of ['planned','actual','variance','plannedHours','elapsedHours'])records.getColumn(key).numFmt='#,##0.00';
+  records.views=[{state:'frozen',ySplit:1}];records.autoFilter='A1:W1';records.getRow(1).font={bold:true};
+  for(const key of ['planned','actual','variance','plannedHours','elapsedHours','downtimeHours','netHours'])records.getColumn(key).numFmt='#,##0.00';
   records.eachRow(row=>{row.alignment={vertical:'top',wrapText:true};});
+  addStopsSheet(workbook,report.jobs,asOf);
   const buffer=await workbook.xlsx.writeBuffer();
   saveBlob(new Blob([buffer as BlobPart],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),`Millplan_${report.selection.from}_${report.selection.to}_${report.selection.lineId}.xlsx`);
+}
+
+/** Daily exports clip totals to the business-day window; range exports list each selected job's full stops. */
+function addStopsSheet(workbook: Workbook, jobs: readonly Job[], asOf: number, window?: { start: number; end: number }) {
+  const sheet = workbook.addWorksheet('Production stops');
+  sheet.columns = [
+    { header: 'Planning date', key: 'date', width: 17 }, { header: 'Line', key: 'line', width: 10 },
+    { header: 'Product', key: 'product', width: 22 }, { header: 'Order reference', key: 'order', width: 24 },
+    { header: 'Pause start (MYT)', key: 'start', width: 26 }, { header: 'Resumed / completed (MYT)', key: 'end', width: 29 },
+    { header: window ? 'Minutes inside selected planning day' : 'Recorded stop minutes', key: 'minutes', width: 37 },
+    { header: 'Reason', key: 'reason', width: 60 }, { header: 'State', key: 'state', width: 16 },
+    { header: 'As of (MYT)', key: 'asOf', width: 26 },
+  ];
+  for (const job of jobs) for (const pause of job.pauseIntervals ?? []) {
+    const start = Date.parse(pause.pausedAt);
+    const end = pause.resumedAt ? Date.parse(pause.resumedAt) : asOf;
+    const left = Math.max(start, window?.start ?? start);
+    const right = Math.min(end, window?.end ?? end);
+    if (window && (start >= window.end || end <= window.start)) continue;
+    sheet.addRow({ date: job.date, line: job.lineId, product: job.productCode, order: job.orderNo,
+      start: fullDateTime(pause.pausedAt), end: pause.resumedAt ? fullDateTime(pause.resumedAt) : '',
+      minutes: Math.max(0, right - left) / 60_000, reason: pause.reason, state: pause.resumedAt ? 'Closed' : 'Ongoing', asOf: fullDateTime(asOf) });
+  }
+  sheet.getColumn('minutes').numFmt = '#,##0.00';
+  sheet.views = [{ state: 'frozen', ySplit: 1 }]; sheet.autoFilter = 'A1:J1';
+  sheet.getRow(1).font = { bold: true };
+  sheet.eachRow(row => { row.alignment = { vertical: 'top', wrapText: true }; });
 }

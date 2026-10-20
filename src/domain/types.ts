@@ -20,6 +20,12 @@ export interface ScheduleSegment {
   end: number;
 }
 
+export interface ProductionPause {
+  pausedAt: string;
+  resumedAt: string | null;
+  reason: string;
+}
+
 export interface Job {
   id: string;
   date: string;
@@ -46,6 +52,7 @@ export interface Job {
     reason: string;
     reportedAt: string;
   };
+  pauseIntervals?: ProductionPause[];
 }
 
 export interface JobInput {
@@ -89,6 +96,15 @@ export interface HistoryEvent {
   type: string;
   jobId?: string;
   message: string;
+  changes?: HistoryChange[];
+}
+
+export type HistoryChangeValue = string | number | boolean | null;
+
+export interface HistoryChange {
+  field: string;
+  before: HistoryChangeValue;
+  after: HistoryChangeValue;
 }
 
 export interface AppState {

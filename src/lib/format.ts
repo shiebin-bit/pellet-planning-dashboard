@@ -1,4 +1,5 @@
-import type { Downtime, LineId } from '../domain/types';
+import type { Downtime, Job, LineId } from '../domain/types';
+import { isJobPaused } from '../domain/production-results';
 
 export const TIME_ZONE = 'Asia/Kuala_Lumpur';
 export function localDate(value: Date = new Date()) {
@@ -55,3 +56,11 @@ const productColors: Record<string, string> = { '6220': '#b6d88e', '6210': '#80b
 export function productColor(code: string) { return productColors[code.trim().slice(0, 4)] || '#a5b8a5'; }
 export function lineLabel(line: LineId) { return 'Pellet mill ' + line.slice(-1).padStart(2, '0'); }
 export const STATUS_LABELS = { pending: 'Not started', running: 'Running', completed: 'Completed', cancelled: 'Cancelled' };
+
+export function stopDurationLabel(minutes: number) {
+  return minutes > 0 && minutes < 1 ? '<1m' : durationLabel(minutes);
+}
+export function jobStatusLabel(job: Job) {
+  const status = isJobPaused(job) ? 'Paused' : STATUS_LABELS[job.status];
+  return job.issue ? 'Issue · ' + status : status;
+}

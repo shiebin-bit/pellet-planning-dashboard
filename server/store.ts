@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type pg from "pg";
 import { validateWorkspaceBackup } from "../src/domain/backup";
+import { createMoveUndoEvent } from "../src/domain/audit";
 import { executeCommand, type Command, type WorkspaceEnvelope } from "../src/domain/commands";
 import { createSampleState } from "../src/domain/sample";
 import type { AppState, HistoryEvent, Settings } from "../src/domain/types";
@@ -120,15 +121,12 @@ export class WorkspaceStore {
             if (!current.undoState || current.undoRevision !== current.revision) {
               throw new ApiError(409, "UNDO_NOT_AVAILABLE", "Only the most recent move can be undone before another change.");
             }
-            nextState = {
-              ...current.undoState,
-              events: [...current.state.events, {
-                id: `event-${randomUUID()}`,
-                at: nowIso,
-                type: "job.move.undone",
-                message: "Undid the most recent production move.",
-              }],
-            };
+            {
+              nextState = {
+                ...current.undoState,
+                events: [...current.state.events, createMoveUndoEvent(current.state, current.undoState, `event-${randomUUID()}`, nowIso)],
+              };
+            }
             break;
           default:
             nextState = executeCommand(current.state, command, { nowIso });

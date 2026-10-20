@@ -347,4 +347,80 @@ describe("workspace backup validation", () => {
     delete missingCatalog.catalog;
     expect(() => validateWorkspaceBackup(missingCatalog)).toThrow(/catalog.*required/i);
   });
+
+  it("preserves legacy jobs without pause fields and validates ordered pause intervals", () => {
+    const legacy = rawBackup();
+    expect(legacy.jobs.every((job: any) => !("pauseIntervals" in job))).toBe(true);
+    const restoredLegacy = validateWorkspaceBackup(legacy);
+    expect(restoredLegacy.jobs.every(job => !("pauseIntervals" in job))).toBe(true);
+
+    const raw = rawBackup();
+    const running = pendingJob(raw);
+    running.status = "running";
+    running.actualStart = "2026-10-15T01:00:00.000Z";
+    running.pauseIntervals = [
+      { pausedAt: "2026-10-15T01:30:00.000Z", resumedAt: "2026-10-15T01:45:00.000Z", reason: "First" },
+      { pausedAt: "2026-10-15T02:00:00.000Z", resumedAt: null, reason: "Open" },
+    ];
+    expect(validateWorkspaceBackup(raw).jobs.find(job => job.id === running.id)?.pauseIntervals).toEqual(running.pauseIntervals);
+
+    const pending = rawBackup();
+    pendingJob(pending).pauseIntervals = [{ pausedAt: "2026-10-15T01:00:00.000Z", resumedAt: null, reason: "Invalid" }];
+    expect(() => validateWorkspaceBackup(pending)).toThrow(/pending jobs cannot have production pauses/i);
+
+    const openCompleted = rawBackup();
+    completedJob(openCompleted).pauseIntervals = [{
+      pausedAt: completedJob(openCompleted).actualStart,
+      resumedAt: null,
+      reason: "Still open",
+    }];
+    expect(() => validateWorkspaceBackup(openCompleted)).toThrow(/completed jobs cannot have an open/i);
+
+    const overlap = rawBackup();
+    const completed = completedJob(overlap);
+    const completedStart = Date.parse(completed.actualStart);
+    completed.pauseIntervals = [
+      { pausedAt: completed.actualStart, resumedAt: new Date(completedStart + 20 * 60_000).toISOString(), reason: "First" },
+      { pausedAt: new Date(completedStart + 10 * 60_000).toISOString(), resumedAt: completed.actualEnd, reason: "Overlap" },
+    ];
+    expect(() => validateWorkspaceBackup(overlap)).toThrow(/without overlap/i);
+  });
+
+  it("strictly validates optional structured audit changes while preserving old events", () => {
+    const raw = rawBackup();
+    raw.events.forEach((event: any) => delete event.changes);
+    expect(raw.events.every((event: any) => !("changes" in event))).toBe(true);
+    raw.events[0].changes = [
+      { field: "status", before: "pending", after: "running" },
+      { field: "settings.downtime", before: "[]", after: "[{\"id\":\"d1\"}]" },
+    ];
+    expect(validateWorkspaceBackup(raw).events[0].changes).toEqual(raw.events[0].changes);
+
+    const duplicate = rawBackup();
+    duplicate.events[0].changes = [
+      { field: "status", before: "pending", after: "running" },
+      { field: "status", before: "running", after: "completed" },
+    ];
+    expect(() => validateWorkspaceBackup(duplicate)).toThrow(/duplicates.*status/i);
+
+    const unchanged = rawBackup();
+    unchanged.events[0].changes = [{ field: "status", before: "running", after: "running" }];
+    expect(() => validateWorkspaceBackup(unchanged)).toThrow(/changed value/i);
+
+    const unsupported = rawBackup();
+    unsupported.events[0].changes = [{ field: "updatedAt", before: "a", after: "b" }];
+    expect(() => validateWorkspaceBackup(unsupported)).toThrow(/allowed audit field/i);
+
+    const tooMany = rawBackup();
+    tooMany.events[0].changes = Array.from({ length: 101 }, (_, index) => ({
+      field: `settings.test${index}`,
+      before: index,
+      after: index + 1,
+    }));
+    expect(() => validateWorkspaceBackup(tooMany)).toThrow(/more than 100 items/i);
+
+    const nonscalar = rawBackup();
+    nonscalar.events[0].changes = [{ field: "status", before: { value: "pending" }, after: "running" }];
+    expect(() => validateWorkspaceBackup(nonscalar)).toThrow(/finite number.*null/i);
+  });
 });

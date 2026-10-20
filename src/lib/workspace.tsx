@@ -5,6 +5,7 @@ import type { Command, WorkspaceEnvelope } from '../domain/commands';
 import { executeCommand } from '../domain/commands';
 import { createEmptyState } from '../domain/defaults';
 import { getBoard } from '../domain/engine';
+import { createMoveUndoEvent } from '../domain/audit';
 import { createSampleState } from '../domain/sample';
 import { localDate } from './format';
 import { parseWorkspaceBackup } from '../domain/backup';
@@ -245,7 +246,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           try { localStorage.setItem(STORAGE_KEY + '.demo', 'true'); } catch { /* Cosmetic metadata. */ }
         } else if (command.type === 'workspace.undoLastMove') {
           if (!undoState.current) throw new Error('No planning move is available to undo.');
-          persist({ ...undoState.current, events: [{ id: crypto.randomUUID(), at: new Date().toISOString(), type: 'restored', message: 'Undid the last planning move.' }, ...previous.events] });
+          persist({ ...undoState.current, events: [...previous.events, createMoveUndoEvent(previous, undoState.current, crypto.randomUUID(), new Date().toISOString())] });
         } else {
           persist(executeCommand(previous, command, { nowIso: new Date().toISOString() }));
         }

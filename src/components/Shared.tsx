@@ -1,14 +1,14 @@
-import { ArrowUpRight, Inbox, Search, X, AlertCircle, CheckCircle2, Circle, Clock3, CircleOff } from 'lucide-react';
+import { ArrowUpRight, Inbox, Search, X, AlertCircle, CheckCircle2, Circle, Clock3, CircleOff, Pause } from 'lucide-react';
 import type { ReactNode } from 'react';
 import type { JobStatus } from '../domain/types';
 import { STATUS_LABELS } from '../lib/format';
 
-export function StatusBadge({ status, issue = false }: { status: JobStatus; issue?: boolean }) {
-  const Icon = issue ? AlertCircle : status === 'completed' ? CheckCircle2 : status === 'running' ? Clock3 : status === 'cancelled' ? CircleOff : Circle;
-  return <span className={'status-badge ' + (issue ? 'issue' : status)}><Icon size={13}/>{issue ? 'Issue' : STATUS_LABELS[status]}</span>;
+export function StatusBadge({ status, issue = false, paused = false }: { status: JobStatus; issue?: boolean; paused?: boolean }) {
+  const Icon = issue ? AlertCircle : paused ? Pause : status === 'completed' ? CheckCircle2 : status === 'running' ? Clock3 : status === 'cancelled' ? CircleOff : Circle;
+  return <span className={'status-badge ' + (issue ? 'issue' : paused ? 'paused' : status)}><Icon size={13}/>{issue ? 'Issue' + (paused ? ' · Paused' : '') : paused ? 'Paused' : STATUS_LABELS[status]}</span>;
 }
 export function StatusLegend() {
-  return <div className="status-legend" aria-label="Card status colours"><span>Card status</span><StatusBadge status="pending"/><StatusBadge status="running"/><StatusBadge status="completed"/><StatusBadge status="pending" issue/></div>;
+  return <div className="status-legend" aria-label="Card status colours"><span>Card status</span><StatusBadge status="pending"/><StatusBadge status="running"/><StatusBadge status="running" paused/><StatusBadge status="completed"/><StatusBadge status="pending" issue/></div>;
 }
 export function SectionHeading({ title, description, action }: { title: string; description?: string; action?: ReactNode }) {
   return <div className="section-heading"><div><h2>{title}</h2>{description && <p>{description}</p>}</div>{action}</div>;

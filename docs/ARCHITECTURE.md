@@ -21,6 +21,7 @@ HTTP(S) always uses the API, even if browser records exist. Its in-memory loadin
 | --- | --- |
 | `src/domain/engine.ts`, `defaults.ts` | Scheduling, quantities, conflicts, state transitions, frozen tasks and empty-workspace defaults |
 | `src/domain/commands.ts` | Typed commands, strict API parsing and shared command execution |
+| `src/domain/audit.ts`, `production-results.ts` | Normalized before/after snapshots and recorded pause-duration calculations |
 | `src/domain/backup.ts`, `reports.ts` | Workspace validation and report selection |
 | `src/lib/workspace.tsx`, `api.ts` | Frontend persistence provider, revisions, drafts and request retries |
 | `src/pages/`, `src/components/` | Overview, board, history, settings, dialogs and reports |
@@ -51,7 +52,7 @@ Do not edit tables directly: commands validate scheduling across lines/dates and
 1. A mutation opens a transaction on one database client and locks the singleton workspace row.
 2. An existing command receipt is checked before its expected revision. Identical content returns the current workspace without reapplying the action; conflicting content returns 409.
 3. A new command must match the current revision. A stale action returns 409 plus the latest workspace and makes no change.
-4. The server runs the shared planning rules and validates the complete resulting workspace. Completion uses the server's clock.
+4. The server runs the shared planning rules and validates the complete resulting workspace. Completion, pause and resume use the server's clock.
 5. Jobs, history, metadata and receipt are persisted atomically; the revision advances once. Failure rolls the transaction back.
 
 Reads use a repeatable-read, read-only transaction so metadata, jobs and history belong to one snapshot. Changes are serialized at workspace level, deliberately favouring simple correctness over concurrent independent line writes. This follows node-postgres' requirement that a transaction use the [same client throughout](https://node-postgres.com/features/transactions).
@@ -61,6 +62,14 @@ The browser waits for confirmation before accepting state. Network ambiguity ret
 Catalog commands replace only `AppState.catalog`, independently of an unsaved Settings form. Production cards store product snapshots rather than catalog foreign keys. Copy validates at most 500 source selections before creating any new cards, preserves per-line source order and appends them after existing target work. It clears execution fields and recomputes with current production rules, then persists the entire batch, one activity entry and its receipt in the same transaction. Browser previews run the shared command in memory without writing to the API.
 
 History filtering and totals run against the full loaded collection. Pagination slices only the displayed rows; report selection reads the full workspace independently. Activity has its own search/date filters and count because events do not all identify a production line or status.
+
+## Recorded pauses
+
+A paused production remains a running job with one open optional `pauseIntervals` entry. This retains the unique running-per-line constraint and frozen plan; it does not insert planned downtime or shift the schedule. Issue flags remain independent. Pause/resume commands use a trusted transaction timestamp; completion closes any open interval at its actual end. Ordered/non-overlapping validation also applies to restores, previous backups and Undo snapshots. Legacy records keep their absent fields rather than being rewritten.
+
+`getProductionResult(job, asOfMs)` computes wall elapsed time and recorded pause time with an explicit snapshot clock when required. Net elapsed is wall elapsed minus recorded stops, not observed productive time. Selected-day downtime scans all job intervals and clips them to the business-day window, regardless of assigned planning date or locked planned segments. Totals across mills are line-minutes. Daily Excel stop rows use the same clipping; range reports list full intervals for jobs selected by planning date.
+
+New events store bounded scalar `changes` snapshots derived from old/new persisted jobs, settings or catalog products. UI labels never resolve old values from current job data. Undo derives the reverse job diff. Causal settings changes are recorded without listing all dependent quantity recalculations; large list values use count/fingerprint summaries. Old events remain message-only. JSONB carries both additions without a migration or schema-version bump.
 
 ## Recovery and audit
 
