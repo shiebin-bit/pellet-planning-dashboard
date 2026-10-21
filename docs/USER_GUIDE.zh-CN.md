@@ -6,6 +6,12 @@
 
 双击 `STOP-DASHBOARD.cmd` 停止服务，资料会保留在 Docker volume。不要删除 volume。只有 `OPEN-OFFLINE-DASHBOARD.cmd` 会打开独立的离线版本；资料只在原本浏览器里，和数据库版不共用。
 
+## 界面布局
+
+顶部工具栏集中日期、Today、Export 和 Add production。左侧保留 Overview、Planning board、History 和 Settings；平板会缩成图标，手机从左上角菜单展开。
+
+Overview 先显示四项总数和当日时间轴，点产品段可查看卡片；下方 Line capacity 集中每条线的 MT、任务数、利用率、生产／空闲时间和跨日情况。Needs attention、实际产量、停机时间和待生产任务继续保留。Planning board 四条产线横向排列，电脑 1366 × 768 可完整查看；新增、复制、报表和卡片详情在当前页面弹出。
+
 ## 日常 planning
 
 1. 在日期选择器直接选日期、月份和年份。

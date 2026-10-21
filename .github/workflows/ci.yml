@@ -62,5 +62,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: browser-failure
-          path: output/playwright/database/
+          path: |
+            output/playwright/database/
+            output/playwright/redesign/
           if-no-files-found: ignore

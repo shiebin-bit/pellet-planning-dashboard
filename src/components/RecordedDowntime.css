@@ -1,7 +1,71 @@
-.recorded-downtime{display:flex;align-items:center;gap:20px;padding:17px 20px;margin:0 0 22px;flex-wrap:wrap}
-.recorded-downtime>div:first-child{display:flex;align-items:center;gap:12px;margin-right:auto}
-.downtime-icon{display:grid;place-items:center;background:#fff0c9;color:#8a641d;width:36px;height:36px;border-radius:7px;flex-shrink:0}
-.recorded-downtime h2{font-size:14px;color:#36576a}.recorded-downtime p{font-size:10px;color:#67808e;margin-top:5px}
-.recorded-downtime>strong{font-size:24px;color:#805d21;white-space:nowrap}.downtime-lines{display:flex;gap:15px}.downtime-lines>span{display:flex;flex-direction:column;gap:5px;font-size:10px;color:#6a8090}.downtime-lines strong{font-size:12px;color:#36586b;white-space:nowrap}
-.downtime-open{color:#875f18;font-size:11px;background:#fff2ce;padding:5px 8px;border-radius:5px}
-@media(max-width:600px){.recorded-downtime{padding:15px;gap:13px}.recorded-downtime>div:first-child{width:100%;margin:0}.downtime-lines{flex:1;justify-content:space-between}.recorded-downtime>strong{font-size:22px}.recorded-downtime p{font-size:9px;line-height:1.5}}
+.recorded-downtime {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-content: start;
+  gap: 20px;
+  padding: 20px;
+}
+.recorded-downtime>div:first-child {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+}
+.downtime-icon {
+  color: #92701f;
+  padding-top: 1px;
+}
+.recorded-downtime h2 {
+  font-size: 15px;
+  font-weight: 650;
+}
+.recorded-downtime p {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin-top: 5px;
+}
+.recorded-downtime>strong {
+  font-size: 29px;
+  font-weight: 600;
+  letter-spacing: -.6px;
+  font-variant-numeric: tabular-nums;
+  color: #805a13;
+}
+.downtime-lines {
+  display: grid;
+  grid-column: 1/-1;
+  grid-template-columns: repeat(4,1fr);
+  gap: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.downtime-lines>span {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.downtime-lines strong {
+  font-size: 16px;
+  color: var(--text);
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+.downtime-open {
+  grid-column: 1/-1;
+  font-size: 11px;
+  color: #805a13;
+  background: #fff3d7;
+  padding: 6px 8px;
+  border-radius: 3px;
+  justify-self: start;
+}
+@media(max-width:600px) {
+  .recorded-downtime {
+    padding: 16px;
+  }
+  .recorded-downtime>strong {
+    font-size: 27px;
+  }
+}

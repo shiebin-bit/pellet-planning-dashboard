@@ -1,19 +1,111 @@
-.actual-output-form{display:grid;gap:13px;padding:16px;margin-top:13px;border:1px solid #bdd6ca;border-radius:8px;background:#f5faf7}
-.actual-output-form .field textarea{min-height:66px}
-.actual-output-form .field-help{margin:0;font-size:11px;line-height:1.6}
-.output-preview{padding:9px 11px;border-radius:5px;background:#e0f2e8;color:#226247;font-size:12px;font-weight:650}
-.output-preview.shortfall{background:#fff0d2;color:#815b19}
-.output-form-actions{display:flex;gap:9px;justify-content:flex-end;flex-wrap:wrap}
-.output-form-actions .button{flex:1;font-size:12px;justify-content:center}
-.output-error{font-size:12px;color:#a13228;line-height:1.5}
-.actual-output-result{margin-top:16px}
-.output-comparison{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-bottom:10px}
-.output-comparison>div{display:flex;flex-direction:column;gap:7px;padding:12px;border:1px solid #d6e3e9;border-radius:6px;background:#f6f9fb}
-.output-comparison span{font-size:11px;color:#587485}
-.output-comparison strong{font-size:18px;font-weight:650;color:#24495b}
-.output-comparison small{font-size:11px;font-weight:500}
-.actual-output-result .actual-time-row{font-size:11px;gap:12px}
-.actual-output-result .actual-time-row strong{text-align:right;font-size:11px}
-.output-note{display:flex;flex-direction:column;gap:5px;font-size:12px;color:#456777;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:12px}
-.output-note strong{font-size:10px;text-transform:uppercase;letter-spacing:.4px}
-@media(max-width:600px){.actual-output-form{padding:13px}.output-form-actions .button{font-size:11px}.output-comparison strong{font-size:17px}}
+.actual-output-form {
+  display: grid;
+  gap: 13px;
+  padding: 16px;
+  margin-top: 13px;
+  border: 1px solid #bdd6ca;
+  border-radius: 4px;
+  background: #f5faf7;
+}
+.actual-output-form .field textarea {
+  min-height: 66px;
+}
+.actual-output-form .field-help {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.output-preview {
+  padding: 9px 11px;
+  border-radius: 5px;
+  background: #e0f2e8;
+  color: #226247;
+  font-size: 12px;
+  font-weight: 650;
+}
+.output-preview.shortfall {
+  background: #fff0d2;
+  color: #815b19;
+}
+.output-form-actions {
+  display: flex;
+  gap: 9px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.output-form-actions .button {
+  flex: 1;
+  font-size: 12px;
+  justify-content: center;
+}
+.output-error {
+  font-size: 12px;
+  color: #a13228;
+  line-height: 1.5;
+}
+.actual-output-result {
+  margin-top: 16px;
+}
+.output-comparison {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.output-comparison>div {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-raised);
+}
+.output-comparison span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.output-comparison strong {
+  font-size: 18px;
+  font-weight: 650;
+  color: var(--text);
+}
+.output-comparison small {
+  font-size: 11px;
+  font-weight: 500;
+}
+.actual-output-result .actual-time-row {
+  font-size: 11px;
+  gap: 12px;
+}
+.actual-output-result .actual-time-row strong {
+  text-align: right;
+  font-size: 11px;
+}
+.output-note {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-top: 12px;
+}
+.output-note strong {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+@media(max-width:600px) {
+  .actual-output-form {
+    padding: 13px;
+  }
+  .output-form-actions .button {
+    font-size: 11px;
+  }
+  .output-comparison strong {
+    font-size: 17px;
+  }
+}

@@ -144,7 +144,6 @@ export function CatalogPanel() {
   return <section className="panel catalog-panel" aria-labelledby="catalog-title">
     <div className="catalog-heading">
       <div>
-        <span className="eyebrow">PRODUCT REFERENCE</span>
         <h2 id="catalog-title">Product catalog</h2>
         <p>Maintain the products suggested when a production task is created. Existing tasks keep their saved product details.</p>
       </div>
@@ -219,8 +218,8 @@ function CatalogForm({ id, title, draft, disabled, submitLabel, onChange, onCanc
   return <form className="catalog-form" aria-labelledby={`${id}-title`} onSubmit={onSubmit}>
     <div className="catalog-form-title"><strong id={`${id}-title`}>{title}</strong><button type="button" className="icon-button" disabled={disabled} onClick={onCancel} aria-label={`Cancel ${title.toLocaleLowerCase()}`}><X size={17}/></button></div>
     <fieldset disabled={disabled}>
-      <label className="field">Product code <span className="required">*</span><input autoFocus required maxLength={80} value={draft.code} onChange={event => onChange({ ...draft, code: event.target.value })}/></label>
-      <label className="field catalog-name-field">Product name / description <span className="required">*</span><input required maxLength={200} value={draft.description} onChange={event => onChange({ ...draft, description: event.target.value })}/></label>
+      <label className="field"><span>Product code <span className="required">*</span></span><input autoFocus required maxLength={80} value={draft.code} onChange={event => onChange({ ...draft, code: event.target.value })}/></label>
+      <label className="field catalog-name-field"><span>Product name / description <span className="required">*</span></span><input required maxLength={200} value={draft.description} onChange={event => onChange({ ...draft, description: event.target.value })}/></label>
       <label className="field">Default delivery<select value={draft.defaultMode} onChange={event => onChange({ ...draft, defaultMode: event.target.value as QuantityMode })}><option value="bags">Bags</option><option value="bulk">Bulk</option></select></label>
     </fieldset>
     <div className="catalog-form-actions"><button type="button" className="button secondary" disabled={disabled} onClick={onCancel}>Cancel</button><button type="submit" className="button primary" disabled={disabled}><Save size={15}/>{submitLabel}</button></div>

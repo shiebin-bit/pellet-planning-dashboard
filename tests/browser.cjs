@@ -276,7 +276,7 @@ const wait=async(fn)=>{
     await unavailable.goto(base);await unavailable.getByRole('heading',{name:'Database connection needed',exact:true}).waitFor();
     assert.equal(await unavailable.locator('.hplan-board').count(),0);
     await unavailable.unroute('**/api/workspace');await unavailable.getByRole('button',{name:'Retry connection',exact:true}).click();
-    await unavailable.getByRole('heading',{name:'Production overview.'}).waitFor();await unavailable.close();
+    await unavailable.getByRole('heading',{name:'Production overview',exact:true}).waitFor();await unavailable.close();
     assert.deepEqual(errors,[]);
     pass('Initial API failure requires reconnection and never falls back to browser/demo data; no page errors');
     await fs.writeFile(path.join(output,'verification.json'),JSON.stringify({at:new Date().toISOString(),date:date(),checks,errors},null,2));

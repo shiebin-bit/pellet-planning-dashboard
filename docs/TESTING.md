@@ -28,7 +28,7 @@ The API tests exercise concurrent revisions, invalid-command rollback, duplicate
 
 ## Browser integration
 
-`npm run test:browser` runs `tests/browser.cjs`, `tests/browser-efficiency.cjs` and `tests/browser-pause-audit.cjs`; all replace the entire selected workspace and restore the starting state in `finally`. Use a **separate disposable database/server**, never the real planning service. Create `millplan_browser_test` using the same `createdb` command as above with that database name. Copy `.env` to ignored `.env.browser-test`; change only its DATABASE_URL database path to `/millplan_browser_test`, keep HOST=127.0.0.1 and set PORT=8091. Build `dist` first.
+`npm run test:browser` runs `tests/browser.cjs`, `tests/browser-efficiency.cjs`, `tests/browser-pause-audit.cjs` and `tests/browser-ui.cjs`; all replace the entire selected workspace and restore the starting state in `finally`. Use a **separate disposable database/server**, never the real planning service. Create `millplan_browser_test` using the same `createdb` command as above with that database name. Copy `.env` to ignored `.env.browser-test`; change only its DATABASE_URL database path to `/millplan_browser_test`, keep HOST=127.0.0.1 and set PORT=8091. Build `dist` first.
 
 ```powershell
 npx playwright install chromium
@@ -44,7 +44,7 @@ npm run test:browser
 Remove-Item Env:BROWSER_BASE_URL, Env:BROWSER_ALLOW_REPLACE
 ```
 
-Installed Chrome is a fallback if the bundled Chromium is absent. `PLAYWRIGHT_CHANNEL=chrome` can select it explicitly. The suite closes its browser and saves ignored evidence under `output/playwright/database/`.
+Installed Chrome is a fallback if the bundled Chromium is absent. `PLAYWRIGHT_CHANNEL=chrome` can select it explicitly. Each suite closes its browser and saves ignored evidence under `output/playwright/database/` or `output/playwright/redesign/`.
 
 Its **12 workflow groups** cover:
 
@@ -65,7 +65,9 @@ The efficiency suite adds catalog management/defaults/manual input and snapshot 
 
 The pause/audit suite covers required pause reasons, trusted time, locked plans and reload persistence; multiple pauses/resume; lost pause/resume replies with request deduplication; Done closing an open interval; stale drafts and explicit review; paused filtering and reason search; before/after quantities, moves, Undo, settings and catalog snapshots; legacy activity; cross-day downtime independent of planned segments; Excel numeric readback, daily clipping, complete range stops, print/PDF and responsive layouts; copying paused cards clears execution data; offline Undo appends reverse structured changes. Unit/API tests additionally reject invalid transitions, overlapping imported intervals, clock regression, duplicate/open intervals, stale revisions and command-ID misuse. Optional fields preserve legacy JSON/recovery compatibility.
 
-CI runs all three suites on Ubuntu with PostgreSQL 16, Node 24 and Playwright Chromium. Browser tests use the CI-only database after the API suite.
+The UI regression suite adds four-line board fit at 1366 × 768, first-screen Overview hierarchy, all four pages at 320/390/768/1440px, calendar/export/dialog/drawer bounds, keyboard focus and Escape, primary/status text contrast (4.5:1), and print visibility. It uses explicit demo fixtures and blocks browser writes after setup.
+
+CI runs all four suites on Ubuntu with PostgreSQL 16, Node 24 and Playwright Chromium. Browser tests use the CI-only database after the API suite.
 
 ## Release checks
 

@@ -82,7 +82,7 @@ export function Planning() {
 
   return <div className={`page planning-page hplan-page ${activeId?'is-dragging':''}`}>
     <div className="page-heading hplan-heading">
-      <div><h1>Planning board<span className="heading-dot">.</span></h1><p>Drag a not-started card to another line. Click for details.</p></div>
+      <div><h1>Planning board</h1><p>Drag a not-started card to another line. Click for details.</p></div>
       <div className="hplan-actions">
         <button type="button" className="button secondary" disabled={mutationLocked || hasConflict} onClick={openCopy}><Copy size={15}/>Copy planning</button>
         <button type="button" className="button secondary" disabled={!canUndo} onClick={undo}><Undo2 size={15}/>Undo</button>

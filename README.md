@@ -38,6 +38,8 @@ The default setup serves only this PC. It has no login or user roles. Company-wi
 | Reports | Daily or up to 31 days; optional line selection; numeric Excel output with production-stop intervals; A4 landscape print/Save as PDF |
 | Settings and backup | Product catalog with deactivate/reactivate; calendar, rates, bag weight and downtime; version 2 JSON backup and legacy import; workspace recovery; PostgreSQL dumps |
 
+The bright workbench keeps the planning date, Export and Add production together in the top toolbar. Overview puts daily totals and the four-line timeline first, followed by a compact line-capacity table, attention list and output/downtime details. The horizontal board fits all four mills on a 1366 × 768 display; forms and production details open over the current page. Navigation collapses to icons on tablets and a drawer on phones. Status colours always have text or accessible descriptions.
+
 Card colours: **gray** not started, **blue** running, **yellow** paused, **green** completed, **red** issue. Yellow stripes indicate changeover. Started/completed plans stay locked, and each line can have only one running production.
 
 Database saves are confirmed before cards/forms show success. Concurrent stale changes keep the draft and require an explicit Reload latest before resubmitting. Uncertain saves keep the originating form open and offer Retry connection; retrying an acknowledged command cannot create a duplicate. Other changes refresh approximately every 15 seconds when no editor/details/settings draft is open.

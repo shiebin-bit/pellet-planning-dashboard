@@ -45,7 +45,7 @@ export function HistoryPage() {
   const changeFilter = (change: () => void) => { change(); setPage(1); };
 
   return <div className="page history-page">
-    <div className="page-heading"><div><span className="eyebrow">A RECORD OF THE WORK</span><h1>Production history<span className="heading-dot">.</span></h1><p>Review production records and the changes behind the plan.</p></div><span className="outline-badge"><Clock3 size={13}/>{storageMode === 'database' ? 'PostgreSQL records' : 'Offline records'}</span></div>
+    <div className="page-heading"><div><h1>Production history</h1><p>Review production records and the changes behind the plan.</p></div><span className="outline-badge"><Clock3 size={13}/>{storageMode === 'database' ? 'PostgreSQL records' : 'Offline records'}</span></div>
     {tab === 'records' ? <div className="history-stats" aria-label="Filtered production summary">
       <div><span>MATCHING RECORDS</span><strong data-summary="records">{records.length}</strong></div>
       <div><span>COMPLETED TASKS</span><strong data-summary="completed">{completed.length}</strong></div>
