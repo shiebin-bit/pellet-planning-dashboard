@@ -31,7 +31,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - run: npm ci --no-audit --fetch-timeout=30000 --fetch-retries=1 --fetch-retry-mintimeout=2000
       - run: npm test
       - run: npm run build
       - run: npm audit --omit=dev --audit-level=moderate --fetch-timeout=30000 --fetch-retries=1 --fetch-retry-mintimeout=2000
