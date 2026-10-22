@@ -19,6 +19,7 @@ import {
 } from "./engine";
 import { validateWorkspaceBackup } from "./backup";
 import type { AppState, JobInput, LineId, Settings } from "./types";
+import type { CreateJobFromSourceInput, PortableWorkspaceBackupV3, SourceImportInput } from "./sourceTypes";
 
 export type CopyBatchQuantity =
   | { mode: "bags"; bagCount: number }
@@ -42,7 +43,8 @@ export type Command =
   | { type: "job.create"; input: JobInput }
   | { type: "job.update"; jobId: string; patch: Partial<JobInput> }
   | { type: "job.move"; jobId: string; toLineId: LineId; beforeJobId?: string }
-  | { type: "job.start"; jobId: string; actualStart: string }
+  | { type: "job.start"; jobId: string }
+  | { type: "job.createFromSource"; input: CreateJobFromSourceInput }
   | { type: "job.complete"; jobId: string; actualQuantityMt: number; completionNote?: string }
   | { type: "job.recordActual"; jobId: string; actualQuantityMt: number; completionNote?: string }
   | { type: "job.cancel"; jobId: string }
@@ -56,7 +58,10 @@ export type Command =
   | { type: "catalog.update"; productId: string; patch: CatalogUpdatePatch }
   | { type: "catalog.setActive"; productId: string; active: boolean }
   | { type: "settings.update"; settings: Settings }
-  | { type: "workspace.restore"; backup: AppState }
+  | { type: "settings.activateCalendar"; effectiveFrom: string; dayStart: string; availableHours: number }
+  | { type: "data.import"; input: SourceImportInput }
+  | { type: "data.setDeliveryStatus"; sourceOrderId: string; delivered: boolean; reason?: string }
+  | { type: "workspace.restore"; backup: AppState | PortableWorkspaceBackupV3 }
   | { type: "workspace.resetDemo"; date: string }
   | { type: "workspace.undoLastMove" };
 
@@ -87,7 +92,7 @@ export function executeCommand(
     case "job.create": return createJob(state, command.input);
     case "job.update": return updateJob(state, command.jobId, command.patch);
     case "job.move": return moveJob(state, command.jobId, command.toLineId, command.beforeJobId);
-    case "job.start": return startJob(state, command.jobId, command.actualStart);
+    case "job.start": return startJob(state, command.jobId, context.nowIso ?? new Date().toISOString());
     case "job.complete":
       return completeJob(
         state,
@@ -121,6 +126,10 @@ export function executeCommand(
     case "catalog.setActive":
       return setCatalogProductActive(state, command.productId, command.active, context.nowIso ?? new Date().toISOString());
     case "settings.update": return updateSettings(state, command.settings);
+    case "job.createFromSource":
+    case "settings.activateCalendar":
+    case "data.import":
+    case "data.setDeliveryStatus":
     case "workspace.restore":
     case "workspace.resetDemo":
     case "workspace.undoLastMove":
@@ -149,8 +158,23 @@ export function parseCommand(value: unknown): Command {
       return result;
     }
     case "job.start":
-      exact(source, ["type", "jobId", "actualStart"], "command");
-      return { type, jobId: id(source.jobId, "command.jobId"), actualStart: timestamp(source.actualStart, "command.actualStart") };
+      exact(source, ["type", "jobId"], "command");
+      return { type, jobId: id(source.jobId, "command.jobId") };
+    case "job.createFromSource": {
+      exact(source, ["type", "input"], "command");
+      const input = object(source.input, "command.input");
+      exact(input, ["sourceOrderId", "sourceOrderVersion", "date", "lineId", "bin", "remarks", "mode"], "command.input", true);
+      const result: CreateJobFromSourceInput = {
+        sourceOrderId: reference(input.sourceOrderId, "command.input.sourceOrderId"),
+        sourceOrderVersion: integer(input.sourceOrderVersion, "command.input.sourceOrderVersion", 1),
+        date: date(input.date, "command.input.date"),
+        lineId: lineId(input.lineId, "command.input.lineId"),
+        bin: string(input.bin, "command.input.bin", 200),
+        remarks: string(input.remarks, "command.input.remarks", 1_000),
+      };
+      if (has(input, "mode")) result.mode = quantityMode(input.mode, "command.input.mode");
+      return { type, input: result };
+    }
     case "job.complete":
     case "job.recordActual": {
       exact(source, ["type", "jobId", "actualQuantityMt", "completionNote"], "command", true);
@@ -208,8 +232,31 @@ export function parseCommand(value: unknown): Command {
       const settings = validateWorkspaceBackup({ schemaVersion: 2, catalog: [], jobs: [], settings: source.settings, events: [] }).settings;
       return { type, settings };
     }
+    case "settings.activateCalendar":
+      exact(source, ["type", "effectiveFrom", "dayStart", "availableHours"], "command");
+      return {
+        type,
+        effectiveFrom: date(source.effectiveFrom, "command.effectiveFrom"),
+        dayStart: clock(source.dayStart, "command.dayStart"),
+        availableHours: finite(source.availableHours, "command.availableHours", 0),
+      };
+    case "data.import":
+      exact(source, ["type", "input"], "command");
+      return { type, input: sourceImportInput(source.input, "command.input") };
+    case "data.setDeliveryStatus": {
+      exact(source, ["type", "sourceOrderId", "delivered", "reason"], "command", true);
+      const result: Extract<Command, { type: "data.setDeliveryStatus" }> = {
+        type,
+        sourceOrderId: reference(source.sourceOrderId, "command.sourceOrderId"),
+        delivered: boolean(source.delivered, "command.delivered"),
+      };
+      if (has(source, "reason")) result.reason = text(source.reason, "command.reason", 1_000);
+      if (!result.delivered && !result.reason) throw new Error("command.reason is required when reopening delivery.");
+      return result;
+    }
     case "workspace.restore":
       exact(source, ["type", "backup"], "command");
+      if (plainPortableV3(source.backup)) return { type, backup: source.backup as unknown as PortableWorkspaceBackupV3 };
       return { type, backup: validateWorkspaceBackup(source.backup) };
     case "workspace.resetDemo":
       exact(source, ["type", "date"], "command");
@@ -339,9 +386,85 @@ function quantityMode(value: unknown, path: string): "bags" | "bulk" {
   return value;
 }
 
+function sourceImportInput(value: unknown, path: string): SourceImportInput {
+  const source = object(value, path);
+  exact(source, ["fileName", "sheetName", "digest", "asOfDate", "rows"], path);
+  const rows = array(source.rows, `${path}.rows`, 2_000).map((value, index) => {
+    const rowPath = `${path}.rows[${index}]`;
+    const row = object(value, rowPath);
+    const keys = ["doNo", "deliveryDate", "soldToParty", "shipToParty", "materialCode", "description", "quantity", "unit", "deliveryLeadDays", "remark", "daysOutstanding", "medication", "fmrOmed"] as const;
+    exact(row, keys, rowPath);
+    const nullableNumber = (value: unknown, field: string): number | null => value === null ? null : finiteSigned(value, field);
+    return {
+      doNo: trimmedText(row.doNo, `${rowPath}.doNo`, 120),
+      deliveryDate: date(row.deliveryDate, `${rowPath}.deliveryDate`),
+      soldToParty: string(row.soldToParty, `${rowPath}.soldToParty`, 1_000),
+      shipToParty: string(row.shipToParty, `${rowPath}.shipToParty`, 1_000),
+      materialCode: trimmedText(row.materialCode, `${rowPath}.materialCode`, 80),
+      description: string(row.description, `${rowPath}.description`, 200),
+      quantity: finite(row.quantity, `${rowPath}.quantity`, 0),
+      unit: sourceUnit(row.unit, `${rowPath}.unit`),
+      deliveryLeadDays: nullableNumber(row.deliveryLeadDays, `${rowPath}.deliveryLeadDays`),
+      remark: string(row.remark, `${rowPath}.remark`, 1_000),
+      daysOutstanding: nullableNumber(row.daysOutstanding, `${rowPath}.daysOutstanding`),
+      medication: string(row.medication, `${rowPath}.medication`, 1_000),
+      fmrOmed: string(row.fmrOmed, `${rowPath}.fmrOmed`, 1_000),
+    };
+  });
+  if (!rows.length) throw new Error(`${path}.rows must contain at least one row.`);
+  const keys = new Set<string>();
+  for (const [index, row] of rows.entries()) {
+    const key = `${row.doNo.toLocaleUpperCase("en-US")}\u0000${row.materialCode.toLocaleUpperCase("en-US")}`;
+    if (keys.has(key)) throw new Error(`${path}.rows[${index}] duplicates a DO no and material code in this import.`);
+    keys.add(key);
+  }
+  return {
+    fileName: trimmedText(source.fileName, `${path}.fileName`, 255),
+    sheetName: trimmedText(source.sheetName, `${path}.sheetName`, 120),
+    digest: sha256(source.digest, `${path}.digest`),
+    asOfDate: date(source.asOfDate, `${path}.asOfDate`),
+    rows,
+  };
+}
+
 function finite(value: unknown, path: string, min: number): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value < min) throw new Error(`${path} must be a finite number ${min} or greater.`);
   return value;
+}
+
+function finiteSigned(value: unknown, path: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${path} must be a finite number.`);
+  return value;
+}
+
+function integer(value: unknown, path: string, min: number): number {
+  if (!Number.isSafeInteger(value) || (value as number) < min) throw new Error(`${path} must be an integer ${min} or greater.`);
+  return value as number;
+}
+
+function sourceUnit(value: unknown, path: string): "MT" | "Bags" {
+  if (value !== "MT" && value !== "Bags") throw new Error(`${path} must be MT or Bags.`);
+  return value;
+}
+
+function clock(value: unknown, path: string): string {
+  const result = string(value, path, 5);
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(result)) throw new Error(`${path} must use HH:MM.`);
+  return result;
+}
+
+function sha256(value: unknown, path: string): string {
+  const result = trimmedText(value, path, 64).toLocaleLowerCase("en-US");
+  if (!/^[a-f0-9]{64}$/.test(result)) throw new Error(`${path} must be a SHA-256 hex digest.`);
+  return result;
+}
+
+function plainPortableV3(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const source = value as Record<string, unknown>;
+  if (source.schemaVersion !== 3) return false;
+  exact(source, ["schemaVersion", "exportedAt", "planning", "sourceData"], "command.backup");
+  return true;
 }
 
 function lineId(value: unknown, path: string): LineId {

@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import type { ReactNode } from 'react';
+import type { SourceOrderSummary, PortableWorkspaceBackupV3 } from '../domain/sourceTypes';
 import type { AppState, Board, ScheduledJob, LineId } from '../domain/types';
 import type { Command, WorkspaceEnvelope } from '../domain/commands';
 import { executeCommand } from '../domain/commands';
@@ -13,9 +14,9 @@ import { PREVIOUS_WORKSPACE_KEY, storeRestoredWorkspace } from './restore';
 import { ApiError, readDatabaseWorkspace, sendCommand } from './api';
 import type { CommandRequest } from './api';
 
-export type Page = 'overview' | 'planning' | 'history' | 'settings';
+export type Page = 'overview' | 'planning' | 'data' | 'history' | 'settings';
 const STORAGE_KEY = 'millplan.workspace.v1';
-const PAGES: Page[] = ['overview', 'planning', 'history', 'settings'];
+const PAGES: Page[] = ['overview', 'planning', 'data', 'history', 'settings'];
 const databaseMode = window.location.protocol !== 'file:';
 function readPage(): Page {
   const candidate = window.location.hash.replace('#/', '').split('?')[0];
@@ -42,13 +43,15 @@ interface Workspace {
   openJob: (id: string, goToPlanning?: boolean) => void; closeJob: () => void;
   editor: { jobId: string | null; lineId: LineId } | null;
   openInput: (lineId?: LineId) => void; closeInput: () => void; editJob: (id: string) => void;
+  importOpen: boolean; openImport: () => void; closeImport: () => void;
+  sourceDialog: { order: SourceOrderSummary | null } | null; openSource: (order?: SourceOrderSummary) => void; closeSource: () => void;
   copyDialog: { id: string; targetDate: string } | null;
   openCopy: () => void; closeCopy: () => void;
   commit: (command: Command, message: string, undoable?: boolean) => Promise<boolean>;
   undo: () => Promise<void>; canUndo: boolean; toast: { message: string; error: boolean } | null;
   notify: (message: string, error?: boolean) => void;
   resetDemo: () => Promise<boolean>; isDemo: boolean; savedAt: string | null; storageWarning: string;
-  restoreBackup: (backup: AppState) => Promise<boolean>; previousBackup: AppState | null;
+  restoreBackup: (backup: AppState | PortableWorkspaceBackupV3) => Promise<boolean>; previousBackup: AppState | null;
   storageMode: 'database' | 'offline'; busy: boolean; refresh: () => Promise<void>;
   hasConflict: boolean; resolveConflict: () => void; mutationLocked: boolean;
   confirmedRetry: { nonce: number; type: Command['type'] } | null;
@@ -63,6 +66,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedSnapshot = useRef<ScheduledJob | null>(null);
   const [editor, setEditor] = useState<Workspace['editor']>(() => window.location.hash === '#/input' ? { jobId: null, lineId: 'PM1' } : null);
+  const [importOpen, setImportOpen] = useState(false);
+  const [sourceDialog, setSourceDialog] = useState<Workspace['sourceDialog']>(null);
   const [copyDialog, setCopyDialog] = useState<Workspace['copyDialog']>(null);
   const [toast, setToast] = useState<Workspace['toast']>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
@@ -85,7 +90,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [loaded, setLoaded] = useState(!databaseMode);
   const [loadError, setLoadError] = useState('');
   const interaction = useRef(false);
-  interaction.current = Boolean(editor || selectedId || copyDialog || page === 'settings');
+  interaction.current = Boolean(editor || selectedId || copyDialog || importOpen || sourceDialog || page === 'settings');
   const editorRef = useRef(editor); editorRef.current = editor;
   const copyRef = useRef(copyDialog); copyRef.current = copyDialog;
   const selectedRef = useRef(selectedId); selectedRef.current = selectedId;
@@ -237,7 +242,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       } else {
         const previous = stateRef.current;
         if (command.type === 'workspace.restore') {
-          const restored = storeRestoredWorkspace(localStorage, previous, command.backup);
+          if ('planning' in command.backup && (command.backup.sourceData.orders.length || command.backup.sourceData.imports.length || command.backup.sourceData.versions.length)) throw new Error('Restore this version 3 backup in the PostgreSQL workspace to preserve its order data.');
+          const restored = storeRestoredWorkspace(localStorage, previous, 'planning' in command.backup ? command.backup.planning : command.backup);
           stateRef.current = restored.state; setState(restored.state); setPreviousBackup(restored.previous);
           setIsDemo(false); setSavedAt(new Date().toISOString()); setStorageWarning('');
           try { localStorage.setItem(STORAGE_KEY + '.demo', 'false'); } catch { /* Cosmetic metadata. */ }
@@ -279,14 +285,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const undo = async () => { if (canUndo) await commit({ type: 'workspace.undoLastMove' }, 'Previous schedule restored.'); };
   const resetDemo = async () => {
     const saved = await commit({ type: 'workspace.resetDemo', date }, 'Sample schedule restored.');
-    if (saved) { setSelectedId(null); setEditor(null); setCopyDialog(null); }
+    if (saved) { setSelectedId(null); setEditor(null); setCopyDialog(null); setSourceDialog(null); setImportOpen(false); }
     return saved;
   };
-  const restoreBackup = async (backup: AppState) => {
+  const restoreBackup = async (backup: AppState | PortableWorkspaceBackupV3) => {
     const saved = await commit({ type: 'workspace.restore', backup }, 'Backup restored. Your previous workspace is available to download in Settings.');
     if (saved) {
-      setSelectedId(null); setEditor(null); setCopyDialog(null);
-      const dates = [...new Set(backup.jobs.map(job => job.date))].sort();
+      setSelectedId(null); setEditor(null); setCopyDialog(null); setSourceDialog(null); setImportOpen(false);
+      const dates = [...new Set(('planning' in backup ? backup.planning : backup).jobs.map(job => job.date))].sort();
       if (dates.length && !dates.includes(date)) setDateState(dates[dates.length - 1]);
     }
     return saved;
@@ -309,6 +315,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     closeJob: () => { if (locked()) { blocked(); return; } setSelectedId(null); }, editor,
     openInput: (lineId = 'PM1') => { if (locked()) { blocked(); return; } if (conflict.current) { notify('Reload the latest data before adding another task.', true); return; } setCopyDialog(null); setSelectedId(null); setEditor({ jobId: null, lineId }); },
     closeInput: () => { if (locked()) { blocked(); return; } setEditor(null); },
+    importOpen, openImport: () => { if (locked()) { blocked(); return; } setImportOpen(true); }, closeImport: () => { if (locked()) { blocked(); return; } setImportOpen(false); },
+    sourceDialog, openSource: order => { if (locked()) { blocked(); return; } setSourceDialog({ order: order ?? null }); }, closeSource: () => { if (locked()) { blocked(); return; } setSourceDialog(null); },
     copyDialog,
     openCopy: () => { if (locked()) { blocked(); return; } if (conflict.current) { notify('Reload the latest data before copying a plan.', true); return; } setEditor(null); setSelectedId(null); setCopyDialog({ id: crypto.randomUUID(), targetDate: date }); },
     closeCopy: () => { if (locked()) { blocked(); return; } setCopyDialog(null); },

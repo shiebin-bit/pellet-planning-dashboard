@@ -1,3 +1,4 @@
+import { LegacyCarryoverNotice } from '../components/LegacyCarryoverNotice';
 import { ArrowUpRight, ChevronRight, ChevronDown, AlertTriangle } from 'lucide-react';
 import { useWorkspace } from '../lib/workspace';
 import { dateLabel, downtimeRange, durationLabel, fullDateTime, numberLabel, productColor, timeLabel, STATUS_LABELS } from '../lib/format';
@@ -5,6 +6,7 @@ import type { LineSchedule } from '../domain/types';
 import { SectionHeading, StatusBadge, EmptyState, TextLink } from '../components/Shared';
 import { NeedsAttention,ProductionResults } from '../components/OperationsSummary';
 import { RecordedDowntime } from '../components/RecordedDowntime';
+import { getCalendarForDate } from '../domain/engine';
 import { isJobPaused } from '../domain/production-results';
 
 export function Overview() {
@@ -17,6 +19,7 @@ export function Overview() {
   const completed = uniqueJobs.filter(job => job.status === 'completed').length;
   const overflows = board.lines.filter(line => line.overflowMinutes > 0);
   const queue = uniqueJobs.filter(job => job.status === 'pending' || job.status === 'running').sort((a,b) => (a.plannedStart || Infinity) - (b.plannedStart || Infinity)).slice(0, 6);
+  const calendar = getCalendarForDate(state.settings, board.date);
   const span = board.end - board.start;
   const ticks = Array.from({length: 9}, (_, index) => board.start + span * index / 8);
   return <div className="page overview-page">
@@ -30,14 +33,13 @@ export function Overview() {
     <section className="panel schedule-panel">
       <SectionHeading title="Daily line schedule" description="Select a product to view its production details." action={<TextLink onClick={() => navigate('planning')}>Open planning board</TextLink>} />
       <div className="timeline-scroll"><div className="overview-timeline">
-        <div className="timeline-axis"><span className="axis-label">LINE / PRODUCT</span><div className="axis-ticks">{ticks.map((tick,index) => <span key={tick} style={{left: index / 8 * 100 + '%'}}>{timeLabel(tick)}{index === 8 && <small>+1 day</small>}</span>)}</div><span className="axis-total">PLANNED</span></div>
+        <div className="timeline-axis"><span className="axis-label">LINE / PRODUCT</span><div className="axis-ticks">{ticks.map((tick,index) => <span key={tick} style={{left: index / 8 * 100 + '%'}}>{timeLabel(tick)}{index === 8 && span >= 86400000 && <small>+1 day</small>}</span>)}</div><span className="axis-total">PLANNED</span></div>
         {board.lines.map(line => <div className="timeline-row" key={line.lineId}>
           <button className="timeline-line-label" onClick={() => navigate('planning')}><span className="line-id">{line.lineId}</span><small>{numberLabel(line.plannedMt)} MT</small></button>
           <div className="timeline-track">
             {ticks.map(tick => <span className="timeline-gridline" key={tick} style={{left:(tick-board.start)/span*100+'%'}} />)}
-            <span className="downtime-block regular-off-hours" style={{left:state.settings.availableHours/24*100+'%',width:(24-state.settings.availableHours)/24*100+'%'}} title="Outside daily available hours" />
             {state.settings.downtime.filter(item => item.lineId === line.lineId || item.lineId === 'all').map(item => {
-              const {start,end} = downtimeRange(item,state.settings.dayStart);
+              const {start,end} = downtimeRange(item,calendar.dayStart);
               const left = Math.max(start, board.start), right = Math.min(end, board.end);
               return right > left && <span key={item.id} className="downtime-block" style={{left:(left-board.start)/span*100+'%',width:(right-left)/span*100+'%'}} title={'Unavailable: ' + item.reason} />;
             })}
@@ -53,10 +55,11 @@ export function Overview() {
           </div>
           <div className="timeline-total"><strong>{line.utilisation === null ? '—' : numberLabel((line.utilisation || 0)*100,0)+'%'}</strong><small>{durationLabel(line.productionMinutes,true)}</small></div>
         </div>)}
-        <div className="timeline-date-label"><span>{dateLabel(board.date, true)}</span><span>{timeLabel(board.start)} — {timeLabel(board.end)} next day · MYT</span></div>
+        <div className="timeline-date-label"><span>{dateLabel(board.date, true)}</span><span>{timeLabel(board.start)} — {timeLabel(board.end)}{span >= 86400000 ? ' next day' : ''} · MYT</span></div>
       </div></div>
-      <div className="schedule-legend"><span><i className="legend-pending" />Not started</span><span><i className="legend-running" />Running</span><span><i className="legend-paused" />Paused</span><span><i className="legend-completed" />Completed</span><span><i className="legend-issue" />Issue</span><span><i className="legend-changeover" />Changeover / line clean-up</span><span><i className="legend-downtime" />Unavailable</span><span className="legend-note">Time scale · 24 hours</span></div>
+      <div className="schedule-legend"><span><i className="legend-pending" />Not started</span><span><i className="legend-running" />Running</span><span><i className="legend-paused" />Paused</span><span><i className="legend-completed" />Completed</span><span><i className="legend-issue" />Issue</span><span><i className="legend-changeover" />Changeover / line clean-up</span><span><i className="legend-downtime" />Unavailable</span><span className="legend-note">Time scale · {numberLabel(span / 3600000, 0)} hours</span></div>
     </section>
+    <LegacyCarryoverNotice/>
     {(overflows.length > 0 || board.backlog.length > 0) && <div className="planning-notice"><AlertTriangle size={17} /><p>{overflows.length > 0 && <><strong>{overflows.map(line => line.lineId).join(', ')}</strong> continues beyond this planning day. </>}{board.backlog.length > 0 && <><strong>{board.backlog.length} tasks</strong> need a quantity before they can be scheduled.</>}</p><button onClick={() => navigate('planning')}>Review<ChevronRight size={15} /></button></div>}
     <div className="overview-analysis">
       <section className="panel capacity-panel" aria-label="Production line summaries">
@@ -69,7 +72,7 @@ export function Overview() {
     </div>
     <div className="overview-results"><ProductionResults jobs={state.jobs.filter(job=>job.date===board.date)}/><RecordedDowntime/></div>
     <details className="panel queue-panel" open><summary className="queue-toggle"><strong>Next production tasks</strong><span>{queue.length} tasks<ChevronDown size={16}/></span></summary>
-      {queue.length ? <div className="table-scroll"><table><thead><tr><th>PRODUCT / ORDER</th><th>LINE</th><th>QUANTITY</th><th>PLANNED TIME</th><th>DESTINATION</th><th>STATUS</th><th /></tr></thead><tbody>{queue.map(job => <tr key={job.id} className="clickable-row" onClick={() => openJob(job.id)}><td><div className="product-cell"><i style={{background:productColor(job.productCode)}} /><div><strong>{job.productCode}</strong><small>{job.orderNo || 'No order reference'}</small></div></div></td><td><span className="line-tag">{job.lineId}</span></td><td className="tabular">{numberLabel(job.quantityMt)} <span className="muted">MT</span></td><td className="tabular">{timeLabel(job.plannedStart)}<span className="time-arrow">→</span>{timeLabel(job.plannedEnd)}{job.overflow && <small className="text-amber"> +1d</small>}</td><td>{job.bin ? 'Bin ' + job.bin : '—'}{job.binNeedsReview && <span className="review-dot" title="Review destination bin" />}</td><td><StatusBadge status={job.status} issue={!!job.issue} paused={isJobPaused(job)} /></td><td><button className="icon-button" aria-label={'View ' + job.productCode + ' details'} onClick={event => {event.stopPropagation();openJob(job.id);}}><ArrowUpRight size={16} /></button></td></tr>)}</tbody></table></div> : <EmptyState title="The queue is clear" text="Add a production task to plan the next run." />}
+      {queue.length ? <div className="table-scroll"><table><thead><tr><th>PRODUCT / ORDER</th><th>LINE</th><th>QUANTITY</th><th>PLANNED TIME</th><th>DESTINATION</th><th>STATUS</th><th /></tr></thead><tbody>{queue.map(job => <tr key={job.id} className="clickable-row" onClick={() => openJob(job.id)}><td><div className="product-cell"><i style={{background:productColor(job.productCode)}} /><div><strong>{job.productCode}</strong><small>{job.orderNo || 'No order reference'}</small></div></div></td><td><span className="line-tag">{job.lineId}</span></td><td className="tabular">{numberLabel(job.quantityMt)} <span className="muted">MT</span></td><td className="tabular">{timeLabel(job.plannedStart)}<span className="time-arrow">→</span>{timeLabel(job.plannedEnd)}{job.overflow && <small className="text-amber"> carry-over</small>}</td><td>{job.bin ? 'Bin ' + job.bin : '—'}{job.binNeedsReview && <span className="review-dot" title="Review destination bin" />}</td><td><StatusBadge status={job.status} issue={!!job.issue} paused={isJobPaused(job)} /></td><td><button className="icon-button" aria-label={'View ' + job.productCode + ' details'} onClick={event => {event.stopPropagation();openJob(job.id);}}><ArrowUpRight size={16} /></button></td></tr>)}</tbody></table></div> : <EmptyState title="The queue is clear" text="Add a production task to plan the next run." />}
     </details>
   </div>;
 }

@@ -10,6 +10,13 @@ function saveBlob(blob: Blob, filename: string) {
   anchor.href = url; anchor.download = filename; anchor.click();
   setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
+export async function exportDatabaseBackup(previous = false) {
+  const response = await fetch(previous ? '/api/backup/previous' : '/api/backup', { cache: 'no-store' });
+  if (!response.ok) throw new Error('The database backup could not be downloaded.');
+  const backup = await response.json();
+  if (!backup || backup.schemaVersion !== 3) throw new Error('No database recovery backup is available.');
+  saveBlob(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }), previous ? 'millplan-workspace-before-restore.json' : 'millplan-workspace-backup.json');
+}
 export function exportBackup(state: AppState,filename='millplan-workspace-backup.json') {
   saveBlob(new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' }), filename);
 }

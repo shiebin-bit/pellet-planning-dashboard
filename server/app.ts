@@ -37,11 +37,52 @@ export function createApp(options: AppOptions): express.Express {
     response.json(await options.store.getWorkspace());
   }));
 
+  app.get("/api/data", asyncRoute(async (request, response) => {
+    const query = new URL(request.originalUrl, "http://localhost").searchParams;
+    response.json(await options.store.listSourceOrders(query));
+  }));
+
+  app.get("/api/data/imports", asyncRoute(async (_request, response) => {
+    response.json(await options.store.listSourceImports());
+  }));
+
+  app.get("/api/backup", asyncRoute(async (_request, response) => {
+    response.setHeader("Content-Disposition", `attachment; filename="millplan-backup-v3.json"`);
+    response.json(await options.store.getPortableBackup());
+  }));
+
+  app.get("/api/backup/previous", asyncRoute(async (_request, response) => {
+    const backup = await options.store.getPreviousPortableBackup();
+    if (!backup) throw new ApiError(404, "PREVIOUS_BACKUP_NOT_FOUND", "No recovery backup is available.");
+    response.setHeader("Content-Disposition", `attachment; filename="millplan-previous-backup-v3.json"`);
+    response.json(backup);
+  }));
+
+  app.get("/api/data/:id", asyncRoute(async (request, response) => {
+    const id = request.params.id;
+    if (typeof id !== "string" || !id || id.length > 200) throw badRequest("Source order id is invalid.");
+    const order = await options.store.getSourceOrder(id);
+    if (!order) throw new ApiError(404, "SOURCE_NOT_FOUND", "Source order not found.");
+    response.json(order);
+  }));
+
+  app.post(
+    "/api/data/preview",
+    mutationBoundary(options.allowedOrigins),
+    requireJson,
+    express.json({ limit: "10mb", strict: true }),
+    asyncRoute(async (request, response) => {
+      const parsed = parseApiCommand({ type: "data.import", input: request.body });
+      if (parsed.type !== "data.import") throw badRequest("Import preview is invalid.");
+      response.json(await options.store.previewSourceImport(parsed.input));
+    }),
+  );
+
   app.post(
     "/api/commands",
     mutationBoundary(options.allowedOrigins),
     requireJson,
-    express.json({ limit: "10mb", strict: true }),
+    express.json({ limit: "66mb", strict: true }),
     asyncRoute(async (request, response) => {
       const body = commandRequest(request.body);
       const command = parseApiCommand(body.command);
@@ -130,7 +171,7 @@ function asyncRoute(handler: (request: Request, response: Response) => Promise<v
   };
 }
 
-const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
+const errorHandler: ErrorRequestHandler = (error, request, response, _next) => {
   const requestId = String(response.locals.requestId ?? "unknown");
   let apiError: ApiError;
   if (error instanceof ApiError) {
@@ -138,7 +179,8 @@ const errorHandler: ErrorRequestHandler = (error, _request, response, _next) => 
   } else if (error instanceof SyntaxError && "status" in error && error.status === 400) {
     apiError = badRequest("Request body contains malformed JSON.", "MALFORMED_JSON");
   } else if (error && typeof error === "object" && "type" in error && error.type === "entity.too.large") {
-    apiError = new ApiError(413, "PAYLOAD_TOO_LARGE", "Request body exceeds the 10 MB limit.");
+    const limit = request.path === "/api/commands" ? "66 MB" : "10 MB";
+    apiError = new ApiError(413, "PAYLOAD_TOO_LARGE", `Request body exceeds the ${limit} limit.`);
   } else if (isDatabaseUnavailable(error)) {
     apiError = new ApiError(503, "DATABASE_UNAVAILABLE", "The database is temporarily unavailable.");
   } else {

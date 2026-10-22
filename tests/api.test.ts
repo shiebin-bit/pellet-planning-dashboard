@@ -8,7 +8,8 @@ import { WorkspaceStore } from "../server/store";
 import { createDefaultSettings } from "../src/domain/defaults";
 import { createSampleState } from "../src/domain/sample";
 import type { Command, WorkspaceEnvelope } from "../src/domain/commands";
-import type { JobInput, LineId } from "../src/domain/types";
+import type { AppState, JobInput, LineId } from "../src/domain/types";
+import type { SourceImportInput, SourceOrderPage } from "../src/domain/sourceTypes";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integration = databaseUrl ? describe : describe.skip;
@@ -66,7 +67,7 @@ integration("PostgreSQL workspace API", () => {
 
   it("rolls back invalid commands without changing the revision", async () => {
     const invalid = await postCommand(0, "invalid-start", {
-      type: "job.start", jobId: "missing", actualStart: "2026-10-16T01:00:00.000Z",
+      type: "job.start", jobId: "missing",
     });
     assert.equal(invalid.status, 400);
     assert.equal((await invalid.json()).error.code, "INVALID_COMMAND");
@@ -99,7 +100,7 @@ integration("PostgreSQL workspace API", () => {
     const created = await createdResponse.json() as WorkspaceEnvelope;
     const jobId = created.state.jobs[0].id;
     const startedResponse = await postCommand(1, "start-timed", {
-      type: "job.start", jobId, actualStart: "2026-10-16T01:00:00.000Z",
+      type: "job.start", jobId,
     });
     assert.equal(startedResponse.status, 200);
     const earliest = Date.now();
@@ -123,7 +124,7 @@ integration("PostgreSQL workspace API", () => {
     const created = await createdResponse.json() as WorkspaceEnvelope;
     const jobId = created.state.jobs[0].id;
     const startedResponse = await postCommand(1, "pause-start", {
-      type: "job.start", jobId, actualStart: "2026-10-16T01:00:00.000Z",
+      type: "job.start", jobId,
     });
     assert.equal(startedResponse.status, 200);
 
@@ -364,11 +365,231 @@ integration("PostgreSQL workspace API", () => {
     assert.equal((await undoResponse.json()).error.code, "UNDO_NOT_AVAILABLE");
   });
 
+  it("activates the 07:00-19:00 cutover and freezes legacy completed segments", async () => {
+    const effectiveFrom = malaysiaToday();
+    const legacyDate = addDays(effectiveFrom, -1);
+    const oldSettings = createDefaultSettings();
+    oldSettings.dayStart = "08:30";
+    oldSettings.availableHours = 23;
+    const legacy: AppState = {
+      schemaVersion: 2, catalog: [], settings: oldSettings, events: [], jobs: [{
+        id: "legacy-completed", date: legacyDate, lineId: "PM1", sequence: 1,
+        orderNo: "LEGACY-1", productCode: "6220", description: "Legacy completed", bin: "B01",
+        mode: "bulk", bagCount: null, quantityMt: 10, status: "completed", remarks: "",
+        actualStart: `${legacyDate}T01:00:00.000Z`, actualEnd: `${legacyDate}T02:00:00.000Z`,
+        actualQuantityMt: 10, binNeedsReview: false, createdAt: "2026-10-20T00:00:00.000Z", updatedAt: "2026-10-21T02:00:00.000Z",
+      }],
+    };
+    const restored = await postCommand(0, "calendar-legacy-restore", { type: "workspace.restore", backup: legacy });
+    assert.equal(restored.status, 200);
+    const activated = await postCommand(1, "calendar-activate", {
+      type: "settings.activateCalendar", effectiveFrom, dayStart: "07:00", availableHours: 12,
+    });
+    assert.equal(activated.status, 200);
+    const state = (await activated.json() as WorkspaceEnvelope).state;
+    assert.equal(state.settings.dayStart, "07:00");
+    assert.equal(state.settings.availableHours, 12);
+    assert.deepEqual(state.settings.calendarCutover && {
+      effectiveFrom: state.settings.calendarCutover.effectiveFrom,
+      priorDayStart: state.settings.calendarCutover.priorDayStart,
+      priorAvailableHours: state.settings.calendarCutover.priorAvailableHours,
+    }, { effectiveFrom, priorDayStart: "08:30", priorAvailableHours: 23 });
+    assert.ok(state.jobs[0].lockedSegments?.length);
+  });
+
+  it("imports source orders, plans one card, preserves the bag snapshot, and controls delivery", async () => {
+    const sourceImport: SourceImportInput = {
+      fileName: "sap-export.xlsx", sheetName: "Sheet1", digest: "a".repeat(64), asOfDate: "2026-10-22",
+      rows: [{
+        doNo: "001039192030", deliveryDate: "2026-10-22", soldToParty: "FFM FARMS SDN BHD",
+        shipToParty: "FFM FARMS SDN BHD", materialCode: "7.0313008513800",
+        description: "FS 5138 POULTRY BR PRE-LAY CRUMB IN BULK", quantity: 20, unit: "Bags",
+        deliveryLeadDays: 1, remark: "", daysOutstanding: -2, medication: "", fmrOmed: "",
+      }],
+    };
+    const invalidImport = structuredClone(sourceImport);
+    invalidImport.digest = "b".repeat(64);
+    invalidImport.rows[0].quantity = -1;
+    const invalidResponse = await postCommand(0, "source-import-invalid", { type: "data.import", input: invalidImport } as Command);
+    assert.equal(invalidResponse.status, 400);
+    assert.equal((await getWorkspace()).revision, 0);
+    assert.equal((await (await fetch(`${baseUrl}/api/data/imports`)).json()).length, 0);
+    const preview = await fetch(`${baseUrl}/api/data/preview`, {
+      method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify(sourceImport),
+    });
+    assert.equal(preview.status, 200);
+    assert.deepEqual(await preview.json(), { added: 1, unchanged: 0, changed: 0, rows: [{ key: "001039192030 / 7.0313008513800", disposition: "added", existingOrderId: null, fields: sourceImport.rows[0], changedFields: [] }] });
+
+    const imported = await postCommand(0, "source-import-1", { type: "data.import", input: sourceImport });
+    assert.equal(imported.status, 200);
+    const importRetry = await postCommand(0, "source-import-1", { type: "data.import", input: sourceImport });
+    assert.equal(importRetry.status, 200);
+    assert.equal((await importRetry.json() as WorkspaceEnvelope).revision, 1);
+    const listResponse = await fetch(`${baseUrl}/api/data?search=001039192030`);
+    assert.equal(listResponse.status, 200);
+    const page = await listResponse.json() as SourceOrderPage;
+    assert.equal(page.total, 1);
+    assert.equal(page.items[0].productionStatus, "unplanned");
+    assert.equal(typeof page.items[0].currentDaysOutstanding, "number");
+    let source = page.items[0];
+
+    const laterBaseline = { ...sourceImport, asOfDate: "2026-10-23" };
+    const laterPreview = await fetch(`${baseUrl}/api/data/preview`, {
+      method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify(laterBaseline),
+    });
+    const laterPreviewBody = await laterPreview.json();
+    assert.equal(laterPreviewBody.changed, 1);
+    assert.deepEqual(laterPreviewBody.rows[0].changedFields, ["asOfDate"]);
+    const laterImport = await postCommand(1, "source-import-later-baseline", { type: "data.import", input: laterBaseline });
+    assert.equal(laterImport.status, 200);
+    const laterEnvelope = await laterImport.json() as WorkspaceEnvelope;
+    assert.equal(laterEnvelope.state.events.at(-1)?.type, "data.imported");
+    const importBatches = await (await fetch(`${baseUrl}/api/data/imports`)).json();
+    assert.equal(importBatches.length, 2);
+    const baselineRow = await pool.query<{ as_of_date: string; latest: boolean }>("SELECT i.as_of_date::text AS as_of_date, i.id = o.latest_import_id AS latest FROM source_imports i CROSS JOIN source_orders o WHERE i.workspace_id = 1 ORDER BY i.as_of_date");
+    assert.deepEqual(baselineRow.rows.map(row => ({ date: row.as_of_date, latest: row.latest })), [
+      { date: "2026-10-22", latest: false },
+      { date: "2026-10-23", latest: true },
+    ]);
+    const refreshedPage = await (await fetch(`${baseUrl}/api/data?search=001039192030`)).json() as SourceOrderPage;
+    source = refreshedPage.items[0];
+    assert.equal(source.version, 1);
+    assert.equal(source.importAsOfDate, "2026-10-23");
+
+    const planned = await postCommand(2, "source-plan-1", {
+      type: "job.createFromSource",
+      input: { sourceOrderId: source.id, sourceOrderVersion: source.version, date: "2026-10-23", lineId: "PM2", bin: "B02", remarks: "SAP order" },
+    });
+    assert.equal(planned.status, 200);
+    const plannedState = await planned.json() as WorkspaceEnvelope;
+    const job = plannedState.state.jobs[0];
+    assert.equal(job.sourceOrderId, source.id);
+    assert.equal(job.sourceOrderVersion, 1);
+    assert.equal(job.bagWeightKgSnapshot, plannedState.state.settings.bagWeightKg);
+    assert.equal(job.quantityMt, 20 * plannedState.state.settings.bagWeightKg / 1_000);
+
+    const duplicate = await postCommand(3, "source-plan-duplicate", {
+      type: "job.createFromSource",
+      input: { sourceOrderId: source.id, sourceOrderVersion: 1, date: "2026-10-23", lineId: "PM3", bin: "", remarks: "" },
+    });
+    assert.equal(duplicate.status, 409);
+    assert.equal((await duplicate.json()).error.code, "SOURCE_ALREADY_PLANNED");
+
+    const earliest = Date.now();
+    const started = await postCommand(3, "source-start", { type: "job.start", jobId: job.id });
+    const latest = Date.now();
+    assert.equal(started.status, 200);
+    const startedEnvelope = await started.json() as WorkspaceEnvelope;
+    const startedJob = startedEnvelope.state.jobs[0];
+    assert.ok(Date.parse(startedJob.actualStart!) >= earliest && Date.parse(startedJob.actualStart!) <= latest);
+    assert.equal(startedJob.updatedAt, startedJob.actualStart);
+    const startRetry = await postCommand(3, "source-start", { type: "job.start", jobId: job.id });
+    assert.equal(startRetry.status, 200);
+    const retriedStart = await startRetry.json() as WorkspaceEnvelope;
+    assert.equal(retriedStart.revision, 4);
+    assert.equal(retriedStart.state.jobs[0].actualStart, startedJob.actualStart);
+
+    const earlyDelivery = await postCommand(4, "source-deliver-early", { type: "data.setDeliveryStatus", sourceOrderId: source.id, delivered: true });
+    assert.equal(earlyDelivery.status, 400);
+    assert.equal((await earlyDelivery.json()).error.code, "PRODUCTION_NOT_COMPLETE");
+    const completed = await postCommand(4, "source-complete", { type: "job.complete", jobId: job.id, actualQuantityMt: job.quantityMt });
+    assert.equal(completed.status, 200);
+    const delivered = await postCommand(5, "source-deliver", { type: "data.setDeliveryStatus", sourceOrderId: source.id, delivered: true });
+    assert.equal(delivered.status, 200);
+    const detailResponse = await fetch(`${baseUrl}/api/data/${encodeURIComponent(source.id)}`);
+    const detail = await detailResponse.json();
+    assert.equal(detail.deliveryStatus, "delivered");
+    assert.equal(detail.deliverySource, "manual");
+    assert.equal(detail.productionStatus, "completed");
+    assert.equal(detail.versionTotal, 1);
+
+    const backupResponse = await fetch(`${baseUrl}/api/backup`);
+    const backup = await backupResponse.json();
+    assert.equal(backup.schemaVersion, 3);
+    assert.equal(backup.sourceData.orders.length, 1);
+    assert.equal(backup.planning.jobs[0].sourceOrderId, source.id);
+
+    const reset = await postCommand(6, "source-reset", { type: "workspace.resetDemo", date: "2026-10-24" });
+    assert.equal(reset.status, 200);
+    assert.equal((await (await fetch(`${baseUrl}/api/data`)).json() as SourceOrderPage).total, 0);
+    const previousResponse = await fetch(`${baseUrl}/api/backup/previous`);
+    assert.equal(previousResponse.status, 200);
+    const previous = await previousResponse.json();
+    assert.equal(previous.sourceData.orders.length, 1);
+    const restored = await postCommand(7, "source-restore-v3", { type: "workspace.restore", backup });
+    assert.equal(restored.status, 200);
+    const restoredState = await restored.json() as WorkspaceEnvelope;
+    assert.equal(restoredState.state.jobs.some(item => item.sourceOrderId === source.id), true);
+    assert.equal((await (await fetch(`${baseUrl}/api/data`)).json() as SourceOrderPage).total, 1);
+  });
+
+  it("uses case-insensitive source identity and validates Data query filters", async () => {
+    const base: SourceImportInput = {
+      fileName: "case-a.xlsx", sheetName: "Orders", digest: "c".repeat(64), asOfDate: "2026-10-22",
+      rows: [{
+        doNo: "DO-CASE", deliveryDate: "2026-10-24", soldToParty: "Customer", shipToParty: "Plant",
+        materialCode: "MAT-ONE", description: "Feed", quantity: 5, unit: "MT", deliveryLeadDays: 2,
+        remark: "", daysOutstanding: 3, medication: "", fmrOmed: "",
+      }],
+    };
+    assert.equal((await postCommand(0, "case-import-a", { type: "data.import", input: base })).status, 200);
+    const changed: SourceImportInput = {
+      ...base, fileName: "case-b.xlsx", digest: "d".repeat(64),
+      rows: [{ ...base.rows[0], doNo: "do-case", materialCode: "mat-one" }],
+    };
+    assert.equal((await postCommand(1, "case-import-b", { type: "data.import", input: changed })).status, 200);
+
+    const page = await (await fetch(`${baseUrl}/api/data?page=999`)).json() as SourceOrderPage;
+    assert.equal(page.total, 1);
+    assert.equal(page.page, 1);
+    assert.equal(page.items[0].version, 2);
+    const detail = await (await fetch(`${baseUrl}/api/data/${encodeURIComponent(page.items[0].id)}`)).json();
+    assert.equal(detail.versionTotal, 2);
+    assert.equal(detail.versions.length, 2);
+    assert.equal((await fetch(`${baseUrl}/api/data?deliveryFrom=2026-02-31`)).status, 400);
+    assert.equal((await fetch(`${baseUrl}/api/data?productionStatus=unknown`)).status, 400);
+    assert.equal((await fetch(`${baseUrl}/api/data?page=0`)).status, 400);
+    const backup = await (await fetch(`${baseUrl}/api/backup`)).json();
+    assert.equal(backup.sourceData.orders.length, 1);
+  });
+
+  it("flags linked cards only when imported planning fields change", async () => {
+    const sourceImport: SourceImportInput = {
+      fileName: "review-a.xlsx", sheetName: "Orders", digest: "e".repeat(64), asOfDate: "2026-10-22",
+      rows: [{
+        doNo: "DO-REVIEW", deliveryDate: "2026-10-25", soldToParty: "Customer", shipToParty: "Plant",
+        materialCode: "MAT-REVIEW", description: "Review feed", quantity: 8, unit: "MT",
+        deliveryLeadDays: 3, remark: "", daysOutstanding: 4, medication: "", fmrOmed: "",
+      }],
+    };
+    assert.equal((await postCommand(0, "review-import-a", { type: "data.import", input: sourceImport })).status, 200);
+    let source = ((await (await fetch(`${baseUrl}/api/data?search=DO-REVIEW`)).json()) as SourceOrderPage).items[0];
+    assert.equal((await postCommand(1, "review-plan", { type: "job.createFromSource", input: {
+      sourceOrderId: source.id, sourceOrderVersion: source.version, date: "2026-10-25", lineId: "PM1", bin: "B01", remarks: "",
+    } })).status, 200);
+
+    const operationalUpdate: SourceImportInput = {
+      ...sourceImport, fileName: "review-b.xlsx", digest: "f".repeat(64),
+      rows: [{ ...sourceImport.rows[0], daysOutstanding: 1, deliveryLeadDays: 1 }],
+    };
+    assert.equal((await postCommand(2, "review-import-operational", { type: "data.import", input: operationalUpdate })).status, 200);
+    source = ((await (await fetch(`${baseUrl}/api/data?search=DO-REVIEW`)).json()) as SourceOrderPage).items[0];
+    assert.equal(source.needsReview, false);
+
+    const planningUpdate: SourceImportInput = {
+      ...operationalUpdate, fileName: "review-c.xlsx", digest: "1".repeat(64),
+      rows: [{ ...operationalUpdate.rows[0], quantity: 9 }],
+    };
+    assert.equal((await postCommand(3, "review-import-planning", { type: "data.import", input: planningUpdate })).status, 200);
+    source = ((await (await fetch(`${baseUrl}/api/data?search=DO-REVIEW`)).json()) as SourceOrderPage).items[0];
+    assert.equal(source.needsReview, true);
+  });
+
   it("enforces the loopback request boundary and JSON size/type limits without mutations", async () => {
     const body = JSON.stringify({ expectedRevision: 0, commandId: "boundary-test", command: { type: "job.create", input: input("BOUNDARY") } });
-    const rejected = async (headers: Record<string, string>, payload: string, status: number, code: string) => {
+    const rejected = async (headers: Record<string, string>, payload: string, status: number, code: string, path = "/api/commands") => {
       const response = await new Promise<{ status: number | undefined; body: string }>((resolve, reject) => {
-        const outgoing = httpRequest(`${baseUrl}/api/commands`, { method: "POST", headers }, incoming => {
+        const outgoing = httpRequest(`${baseUrl}${path}`, { method: "POST", headers }, incoming => {
           let data = "";
           incoming.setEncoding("utf8");
           incoming.on("data", chunk => { data += chunk; });
@@ -387,7 +608,7 @@ integration("PostgreSQL workspace API", () => {
     await rejected({ "Content-Type": "application/json", Origin: baseUrl, "Sec-Fetch-Site": "cross-site" }, body, 403, "CROSS_SITE_REQUEST");
     await rejected({ "Content-Type": "text/plain", Origin: baseUrl }, body, 415, "UNSUPPORTED_MEDIA_TYPE");
     await rejected({ "Content-Type": "application/json", Origin: baseUrl }, "{", 400, "MALFORMED_JSON");
-    await rejected({ "Content-Type": "application/json", Origin: baseUrl }, JSON.stringify({ padding: "x".repeat(10 * 1024 * 1024) }), 413, "PAYLOAD_TOO_LARGE");
+    await rejected({ "Content-Type": "application/json", Origin: baseUrl }, JSON.stringify({ padding: "x".repeat(10 * 1024 * 1024) }), 413, "PAYLOAD_TOO_LARGE", "/api/data/preview");
   });
 
   async function postCommand(expectedRevision: number, commandId: string, command: Command): Promise<Response> {
@@ -443,4 +664,16 @@ function databaseIdentity(value: string, label: string): { host: string; port: s
   catch { throw new Error(`${label} contains an invalid encoded database name.`); }
   if (!database || database.includes("/")) throw new Error(`${label} must name exactly one database.`);
   return { host: url.hostname.toLowerCase(), port: url.port || "5432", database };
+}
+
+function malaysiaToday(): string {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuala_Lumpur", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+  const get = (type: string) => parts.find(part => part.type === type)?.value ?? "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+function addDays(date: string, days: number): string {
+  const result = new Date(`${date}T12:00:00.000Z`);
+  result.setUTCDate(result.getUTCDate() + days);
+  return result.toISOString().slice(0, 10);
 }

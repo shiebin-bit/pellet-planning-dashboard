@@ -2,7 +2,7 @@
   "name": "pellet-planning-dashboard",
   "private": true,
   "version": "0.2.0",
-  "description": "Four-line pellet production planning dashboard with drag-and-drop scheduling, PostgreSQL persistence and Excel/PDF reports.",
+  "description": "Four-line pellet planning dashboard with SAP Excel order import, drag-and-drop scheduling, PostgreSQL persistence and Excel/PDF reports.",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
@@ -14,7 +14,7 @@
     "db:migrate": "node --env-file-if-exists=.env --import tsx server/migrate.ts",
     "seed:demo-history": "node --env-file-if-exists=.env --import tsx scripts/seed-demo-history.ts",
     "test:api": "node --env-file-if-exists=.env --import tsx --test tests/api.test.ts",
-    "test:browser": "node tests/browser.cjs && node tests/browser-efficiency.cjs && node tests/browser-pause-audit.cjs && node tests/browser-ui.cjs",
+    "test:browser": "node tests/browser.cjs && node tests/browser-efficiency.cjs && node tests/browser-pause-audit.cjs && node tests/browser-ui.cjs && node tests/browser-data.cjs",
     "check": "npm test && npm run build"
   },
   "engines": {

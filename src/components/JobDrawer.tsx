@@ -4,15 +4,14 @@ import { useWorkspace } from '../lib/workspace';
 import { getProductionResult } from '../domain/production-results';
 import { LINE_IDS } from '../domain/types';
 import type { LineId } from '../domain/types';
-import { durationLabel, fullDateTime, fromDateTimeInput, numberLabel, productColor, toDateTimeInput, dateLabel, timeLabel } from '../lib/format';
+import { durationLabel, fullDateTime, numberLabel, productColor, toDateTimeInput, dateLabel, timeLabel } from '../lib/format';
 import { StatusBadge } from './Shared';
 import { ActualOutputForm,ActualOutputResult } from './ActualOutput';
 import { ProductionStops } from './ProductionStops';
 import { useCurrentTime } from '../lib/useCurrentTime';
 
 export function JobDrawer() {
-  const {selectedJob:job,closeJob,editJob,state,board,commit,notify,busy,storageWarning,storageMode,refresh,hasConflict,resolveConflict,mutationLocked}=useWorkspace();
-  const [actualStart,setActualStart]=useState('');
+  const {selectedJob:job,closeJob,editJob,state,board,commit,busy,storageWarning,storageMode,refresh,hasConflict,resolveConflict,mutationLocked}=useWorkspace();
   const [toLine,setToLine]=useState<LineId>('PM1');
   const [beforeId,setBeforeId]=useState('');
   const [showMove,setShowMove]=useState(false);
@@ -27,7 +26,6 @@ export function JobDrawer() {
   const now=useCurrentTime(job?.status==='running');
   useEffect(()=>{
     if(!job)return;
-    setActualStart(job.actualStart?toDateTimeInput(job.actualStart):'');
     setToLine(job.lineId);setBeforeId('');setShowMove(false);setConfirmCancel(false);
     setShowIssue(false);setIssueReason('');setShowOutput(false);
   },[job?.id]);
@@ -51,19 +49,13 @@ export function JobDrawer() {
   if(!job)return null;
   const pending=job.status==='pending';
   const movableJobs=board.lines.find(line=>line.lineId===toLine)?.jobs.filter(item=>item.id!==job.id&&item.date===job.date&&item.status==='pending')||[];
-  function start(){
-    if(!actualStart){document.getElementById('actual-start')?.focus();return;}
-    const timestamp=fromDateTimeInput(actualStart);
-    if(new Date(timestamp).getTime()>Date.now()){notify('Actual start must be in the past or the current time.',true);return;}
-    void commit({type:'job.start',jobId:job!.id,actualStart:timestamp},'Actual start recorded. Production is running.');
-  }
+  function start(){ void commit({type:'job.start',jobId:job!.id},'Actual start recorded. Production is running.'); }
   const result=getProductionResult(job,now);
   const elapsed=result.elapsedMinutes;
   const missing=!state.jobs.some(item=>item.id===job.id);
   const closeOutput=()=>{setShowOutput(false);requestAnimationFrame(()=>outputToggle.current?.focus());};
   const reloadLatest=()=>{
     if(missing){resolveConflict();closeJob();return;}
-    setActualStart(job.actualStart?toDateTimeInput(job.actualStart):'');
     setToLine(job.lineId);setBeforeId('');setShowMove(false);setConfirmCancel(false);
     setShowIssue(false);setIssueReason('');setShowOutput(false);resolveConflict();
   };
@@ -82,7 +74,7 @@ export function JobDrawer() {
         {job.plannedStart?<><div className="planned-time-range"><div><span>START</span><strong>{timeLabel(job.plannedStart)}</strong><small>{dateLabel(toDateTimeInput(job.plannedStart).slice(0,10),true)}</small></div><ArrowRight size={20}/><div><span>END</span><strong>{timeLabel(job.plannedEnd)}</strong><small>{dateLabel(toDateTimeInput(job.plannedEnd).slice(0,10),true)}</small></div></div><div className="schedule-breakdown"><span>Changeover before this task</span><strong>{durationLabel(job.changeoverMinutes,true)}</strong></div>{job.segments.filter(segment=>segment.kind==='production').length>1&&<p className="field-help">Production is split around unavailable time. All segments belong to this task.</p>}</>:<p className="subtle-empty">Add a quantity to calculate the planned time.</p>}
       </section>
       <section className="drawer-section" inert={missing&&hasConflict}><div className="drawer-section-title"><Clock3 size={16}/><h3>Actual production</h3><span className="muted small">MYT</span></div>
-        {pending?<><label className="field">Actual start time<input id="actual-start" disabled={mutationLocked||hasConflict} type="datetime-local" value={actualStart} max={toDateTimeInput(new Date().toISOString())} onChange={e=>setActualStart(e.target.value)}/><small>Enter the time production actually started, then select Start production.</small></label><button className="button primary full-width" disabled={mutationLocked||hasConflict||!actualStart||!job.quantityMt} onClick={start}><Play size={15}/>Start production</button></>:
+        {pending?<><p className="field-help">Start production records the current time automatically.</p><button className="button primary full-width" disabled={mutationLocked||hasConflict||!job.quantityMt} onClick={start}><Play size={15}/>Start production</button></>:
         <><div className="actual-time-row"><span>Actual start</span><strong>{fullDateTime(job.actualStart)}</strong></div><div className="actual-time-row"><span>Actual end</span><strong>{fullDateTime(job.actualEnd)}</strong></div>{elapsed!==null&&<div className="actual-time-row"><span>Elapsed time</span><strong>{durationLabel(elapsed)}</strong></div>}
         {job.status==='completed'&&<><ActualOutputResult job={job}/><p className="field-help">Elapsed time includes any stops. It is separate from planned production time.</p></>}
         {(job.status==='running'||job.status==='completed')&&(showOutput?<ActualOutputForm key={job.id} job={job} completing={job.status==='running'} onCancel={closeOutput} onSaved={closeOutput}/>:<button ref={outputToggle} disabled={mutationLocked||hasConflict} className={'button full-width '+(job.status==='running'?'primary':'secondary')} onClick={()=>setShowOutput(true)} aria-expanded={false}><CheckCheck size={17}/>{job.status==='running'?'Mark as done':result.actualQuantityMt===null?'Record actual output':'Edit actual output'}</button>)}
@@ -90,6 +82,7 @@ export function JobDrawer() {
       </section>
       <ProductionStops key={job.id} job={job}/>
       {(job.status==='pending'||job.status==='running')&&!job.issue&&<section className="drawer-section issue-actions" inert={mutationLocked||hasConflict}><button className="text-link danger-text" onClick={()=>setShowIssue(!showIssue)} aria-expanded={showIssue}><AlertTriangle size={16}/>Report a problem</button>{showIssue&&<div className="issue-form"><label className="field">Problem details<textarea value={issueReason} onChange={event=>setIssueReason(event.target.value)} placeholder="Describe the problem for the team…" maxLength={1000}/><small>The card turns red until the problem is resolved or production is completed.</small></label><button className="button danger full-width" disabled={busy||!issueReason.trim()} onClick={async()=>{if(await commit({type:'job.reportIssue',jobId:job.id,reason:issueReason},'Problem recorded. The card is now marked red.')){setShowIssue(false);setIssueReason('');}}}><AlertTriangle size={16}/>Mark as issue</button></div>}</section>}
+      {job.sourceOrderId&&<section className="drawer-section"><h3>Excel source order</h3><p className="field-help">DO {job.orderNo} · source version {job.sourceOrderVersion}. This card retains its imported material and quantity. Production Done and delivery confirmation are separate.</p>{job.bagWeightKgSnapshot&&<p className="field-help">Saved bag weight: {job.bagWeightKgSnapshot} kg</p>}</section>}
       {job.remarks&&<section className="drawer-section"><h3>Remarks</h3><p className="drawer-remarks">{job.remarks}</p></section>}
       {pending&&<section className="drawer-section" inert={mutationLocked||hasConflict}><button className="drawer-move-toggle" onClick={()=>setShowMove(!showMove)} aria-expanded={showMove}><MoveRight size={16}/><span>Move to another line or position</span><ArrowRight size={15}/></button>{showMove&&<div className="drawer-move-form"><div className="field-grid"><label className="field">Line<select value={toLine} onChange={e=>{setToLine(e.target.value as LineId);setBeforeId('');}}>{LINE_IDS.map(line=><option key={line}>{line}</option>)}</select></label><label className="field">Position<select value={beforeId} onChange={e=>setBeforeId(e.target.value)}><option value="">After the last task</option>{movableJobs.map(item=><option value={item.id} key={item.id}>Before {item.productCode} · {numberLabel(item.quantityMt)} MT</option>)}</select></label></div><button className="button secondary full-width" disabled={busy} onClick={async()=>{if(await commit({type:'job.move',jobId:job.id,toLineId:toLine,...(beforeId?{beforeJobId:beforeId}:{})},'Task moved. Check the destination bin.',true))setShowMove(false);}}>Apply move<ArrowRight size={15}/></button></div>}</section>}
       <div className="drawer-created">Created {fullDateTime(job.createdAt)}<br/>Last updated {fullDateTime(job.updatedAt)}</div>

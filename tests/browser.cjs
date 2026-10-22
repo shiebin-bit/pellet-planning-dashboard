@@ -93,10 +93,11 @@ const wait=async(fn)=>{
     await wait(async()=>(await job('QA-DB-A')).binNeedsReview===false);
     pass('Whole-card line changes, bin confirmation and server-held Undo persist through the API');
 
-    const startValue=new Date(Date.now()-120_000+8*3_600_000).toISOString().slice(0,16);
-    await page.getByLabel('Actual start time',{exact:false}).fill(startValue);
+    assert.equal(await page.getByLabel('Actual start time',{exact:false}).count(),0);
+    const beforeStart=Date.now();
     await page.getByRole('button',{name:'Start production',exact:true}).click();
     await wait(async()=>(await job('QA-DB-A')).status==='running');
+    assert.ok(Date.parse((await job('QA-DB-A')).actualStart)>=beforeStart-1000);
     await page.getByRole('button',{name:'Report a problem',exact:true}).click();
     await page.getByLabel('Problem details',{exact:false}).fill('QA stopped material feed');
     await page.getByRole('button',{name:'Mark as issue',exact:true}).click();
@@ -112,7 +113,7 @@ const wait=async(fn)=>{
     assert.ok(new Date(a.actualEnd).getTime()>=before-1000&&new Date(a.actualEnd).getTime()<=Date.now()+1000);
     await page.locator('.actual-output-form').waitFor({state:'hidden'});
     await page.keyboard.press('Escape');
-    pass('Manual start, issue/resolve and Done save actual output with the server end timestamp');
+    pass('Current-time Start, issue/resolve and Done save actual output with the server end timestamp');
 
     modal=await add('QA-B200','QA-DB-B','160','PM2');await modal.getByRole('button',{name:'Add to planning',exact:true}).click();
     await wait(async()=>Boolean(await job('QA-DB-B')));

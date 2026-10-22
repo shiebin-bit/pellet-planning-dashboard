@@ -23,7 +23,7 @@ interface WorkspaceEnvelope {
 }
 ```
 
-POST requires `Content-Type: application/json`. The maximum body size is 10 MB; unknown request/command fields are rejected.
+POST requires `Content-Type: application/json`. The command body limit is 66 MB (portable backup payloads are capped at 64 MB); import preview is capped at 10 MB; unknown request/command fields are rejected.
 
 ```json
 {
@@ -56,7 +56,7 @@ Read the current revision first. Use a new command ID for a new action; retain t
 | `job.create` | `input: JobInput` (all fields in the example required) |
 | `job.update` | `jobId`, `patch: Partial<JobInput>` |
 | `job.move` | `jobId`, `toLineId`, optional `beforeJobId`; omitted means append |
-| `job.start` | `jobId`, `actualStart`: ISO timestamp with an explicit offset |
+| `job.start` | `jobId`; start time is server-generated |
 | `job.pause` | `jobId`, nonblank `reason` (trimmed, at most 1,000 characters); time is server-generated |
 | `job.resume` | `jobId`; time is server-generated |
 | `job.complete` | `jobId`, `actualQuantityMt`, optional `completionNote`; end time is server-generated |
@@ -80,7 +80,7 @@ Copy quantity is a discriminated object: `{mode: "bags", bagCount: 200}` or `{mo
 
 Catalog codes are trimmed and unique ignoring case, including inactive products. Code length is at most 80, description at most 200; both are required. Create defaults to active; setActive controls availability. Stored products have `{id, code, description, defaultMode, active}`. Catalog changes do not rewrite existing job fields. Empty ordinary workspaces have no products; explicitly reset Demo workspaces include eight fictional products.
 
-Workspace exports are version 2. `workspace.restore` also accepts strict version 1 JSON, normalizes it to version 2 with an empty catalog, and preserves a recovery copy of the replaced workspace.
+Database portable exports are version 3; offline planning exports remain version 2. `workspace.restore` also accepts strict version 1 JSON, normalizes its planning state to version 2 with an empty catalog, clears source links/Data, and preserves a recovery copy of the replaced workspace.
 
 ## Pause intervals and change history
 
@@ -116,3 +116,26 @@ Existing jobs/events may omit these optional fields and remain readable in versi
 | 500 | `INTERNAL_ERROR` | Preserve the draft and retain request ID for diagnostics |
 
 Do not infer a failed commit from a disconnected response: the database may have committed before the client lost the reply. Use the idempotent retry contract. Logs and public error responses do not expose connection URLs or SQL details.
+
+
+## Source order data
+
+- `GET /api/data`: `search`, `deliveryFrom`, `deliveryTo`, `unit` (`MT|Bags`), `productionStatus`, `deliveryStatus`, `overdue` (`production|pickup`), `importId`, `page`. Returns 50-row `items`, `page`, `total` and filtered `stats` across all matches. Current lead/pickup days are derived in MYT from the import as-of date.
+- `GET /api/data/imports`: batch options (ID, file name, as-of date, import timestamp and row count).
+- `GET /api/data/:id`: current fields, production/delivery status, linked card ID, deadline counts, review flag and immutable versions.
+- `POST /api/data/preview`: `SourceImportInput` (`fileName`, `sheetName`, `digest`, `asOfDate`, normalized `rows`). Read-only validation/comparison; response has added/changed/unchanged totals and changed field names per row.
+- `GET /api/backup`, `GET /api/backup/previous`: current or recovery portable version 3 backup. Data is fetched on demand, not in the live workspace response or Undo snapshot.
+
+All source mutations use the existing `POST /api/commands` revision/command-ID envelope:
+
+```ts
+{ type: 'data.import', input: SourceImportInput }
+{ type: 'job.createFromSource', input: { sourceOrderId, sourceOrderVersion, date, lineId, bin, remarks } }
+{ type: 'data.setDeliveryStatus', sourceOrderId, delivered, reason? }
+{ type: 'settings.activateCalendar', effectiveFrom, dayStart, availableHours }
+{ type: 'job.start', jobId }
+```
+
+`job.start` rejects a client-supplied `actualStart`; the server timestamp is retained on retry. Import accepts up to 2,000 orders per transaction, validates every row before writes, and retains existing orders absent from the file. A partial unique index permits at most one noncancelled card per source order, including completed cards. Source fields on linked cards cannot be changed through ordinary `job.update`; cancelled cards can be replanned. Delivery reopen requires a reason. Imported Done never invents actual production timestamps.
+
+Database portable backup v3 is `{schemaVersion:3, exportedAt, planning:AppState, sourceData:{imports,orders,versions}}`. Restore validates the complete graph inside the transaction and retains both planning and source data as a recovery copy. Version 1/2 planning backups remain accepted and replace Data with an empty set. Live `AppState.schemaVersion` remains 2 for planning compatibility.

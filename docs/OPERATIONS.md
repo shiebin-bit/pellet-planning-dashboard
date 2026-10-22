@@ -40,7 +40,7 @@ The named volume is `millplan_postgres_data` with the default project name. It s
 
 ## Backups
 
-Portable workspace: Settings → Download backup. Version 2 includes the product catalog, records, settings and activity. Import requires a preview and replaces the active workspace; version 1 is accepted with an explicit missing-catalog warning and an empty restored catalog. The preceding workspace is retained once. Download that recovery copy if it must be kept permanently.
+Portable workspace: Settings → Download backup. The database application exports version 3, including planning, catalog, activity, imported orders and their source versions. Offline exports remain planning-only version 2. Import requires a preview and replaces the active workspace. Legacy versions 1/2 omit Data and trigger a warning; version 1 also restores an empty catalog. The preceding complete workspace is retained once. Download that recovery copy if it must be kept permanently.
 
 Full database:
 
@@ -93,3 +93,12 @@ Useful checks: `GET /api/health`, `GET /api/workspace`, `docker compose logs --t
 ## Before company-wide adoption
 
 Confirm actual calendar/rates/changeover with the planner; agree backup ownership and retention; add login/roles, named audit actors and TLS; separate migration/runtime database roles; benchmark retained history; define data retention and SAP/stock integration requirements. Current Docker configuration is a loopback-only pilot, not an unattended company-server deployment.
+
+
+## Excel Data / shift rollout
+
+Before upgrading, save a PostgreSQL dump and current workspace JSON. Record the latest production count, IDs/payloads, catalog and execution timestamps; use the fresh count rather than an older demonstration count. Migrations 004–007 add source tables, source links/recovery and canonical identity indexes. These migrations do not reset jobs or activate a new calendar. Intermediate development databases from unreleased 004–006 builds are disposable; use a clean test database if semantic-digest backfill finds collisions.
+
+After independent tests pass, rebuild only the app with the existing Compose project and volume. Retain `compose.dev.yml` / localhost **5434** for DataGrip. Call the revision-checked `settings.activateCalendar` command once with `effectiveFrom` equal to the server's current MYT date, `dayStart: "07:00"`, `availableHours: 12`. The server verifies the date, freezes missing legacy execution segments, records the prior calendar and validates the entire candidate schedule atomically. Repeat identical activation is safe; different activation values are rejected. Shift controls are locked afterward. If validation fails, leave existing data intact and resolve the reported schedule before retrying.
+
+Re-read the workspace and compare every pre-existing job. Status, actual times/quantities, source values and record IDs must be unchanged; only missing locked segments on already-started/completed legacy jobs may be added. Pending computed times may change for today/future dates. Check Data and its empty initial state without inserting fictional company records, then verify health and the 5434 mapping. Portable version 3 backups include source data and full recovery; generated JSON is bounded to 64 MB and larger workspaces require the PostgreSQL dump path. Restore must use a matching application version.

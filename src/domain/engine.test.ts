@@ -125,7 +125,7 @@ describe("scheduling", () => {
     const board = getBoard(state(), DATE);
     expect(board.start).toBe(Date.parse("2026-10-15T08:30:00+08:00"));
     expect(board.start).toBe(Date.parse("2026-10-15T00:30:00Z"));
-    expect(board.end).toBe(Date.parse("2026-10-16T00:30:00Z"));
+    expect(board.end).toBe(Date.parse("2026-10-15T23:30:00Z"));
   });
 
   it("computes durations and inserts changeover only when the first four characters change", () => {
@@ -542,14 +542,17 @@ describe("validation and sample data", () => {
     expect(() => completeJob(running, "a", 8.5, undefined, "2026-10-15T00:00:00Z")).toThrow(/earlier/i);
   });
 
-  it("rejects a mutation whose overflow reaches an existing future-day job", () => {
+  it("carries backlog forward without rejecting a later assigned-date job", () => {
     const future = job("future", 1, { date: "2026-10-16" });
-    expect(() =>
-      createJob(
-        state([future], settings({ availableHours: 24 })),
-        input({ quantityMt: 300 }),
-      ),
-    ).toThrow(/collides with an existing job/i);
+    const created = createJob(
+      state([future], settings({ availableHours: 24 })),
+      input({ quantityMt: 300 }),
+    );
+    const jobs = getBoard(created, "2026-10-16").lines[0].jobs;
+    expect(jobs.some(item => item.id === "future")).toBe(true);
+    expect(jobs.find(item => item.id === "future")!.plannedStart).toBe(
+      jobs.find(item => item.orderNo === "ORD-NEW")!.plannedEnd,
+    );
   });
 
   it("creates the documented demo mix, totals, completed jobs, and backlog", () => {

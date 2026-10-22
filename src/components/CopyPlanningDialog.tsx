@@ -13,7 +13,7 @@ import './CopyPlanningDialog.css';
 
 interface Draft { selected: boolean; orderNo: string; quantity: string; mode: Job['mode'] }
 function sourceJobs(state: AppState, date: string) {
-  return state.jobs.filter(job => job.date === date && job.status !== 'cancelled')
+  return state.jobs.filter(job => job.date === date && job.status !== 'cancelled' && !job.sourceOrderId)
     .sort((a, b) => a.lineId.localeCompare(b.lineId) || a.sequence - b.sequence);
 }
 function newDraft(job: Job, selected = true): Draft {
@@ -83,7 +83,7 @@ export function CopyPlanningDialog() {
         else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
       }
     }}>
-      <header className="editor-header"><div><h2 id="copy-title">Copy planning</h2><p id="copy-description">Choose cards, enter new order references and review the target day before saving.</p></div><button type="button" className="icon-button" disabled={mutationLocked} aria-label="Close copy planning" onClick={closeCopy}><X size={21}/></button></header>
+      <header className="editor-header"><div><h2 id="copy-title">Copy planning</h2><p id="copy-description">Choose manual cards and enter new order references. Linked Excel orders are excluded.</p></div><button type="button" className="icon-button" disabled={mutationLocked} aria-label="Close copy planning" onClick={closeCopy}><X size={21}/></button></header>
       <form onSubmit={submit}>
         <div className="editor-body" inert={mutationLocked || hasConflict}>
           <div className="copy-controls">

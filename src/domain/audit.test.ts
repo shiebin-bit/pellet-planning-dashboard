@@ -37,8 +37,8 @@ describe("structured audit changes", () => {
     const created = executeCommand(createEmptyState(), { type: "job.create", input: input("RUN") });
     const id = created.jobs[0].id;
     const started = executeCommand(created, {
-      type: "job.start", jobId: id, actualStart: "2026-10-15T01:00:00.000Z",
-    });
+      type: "job.start", jobId: id,
+    }, { nowIso: "2026-10-15T01:00:00.000Z" });
     expect(started.events.at(-1)?.changes).toEqual([
       { field: "status", before: "pending", after: "running" },
       { field: "actualStart", before: null, after: "2026-10-15T01:00:00.000Z" },

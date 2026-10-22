@@ -62,8 +62,9 @@ export function getBoard(state: AppState, date: string): Board {
   assertDate(date, "Board date");
   validateSettings(state.settings);
 
-  const start = businessDayStart(date, state.settings.dayStart);
-  const end = start + DAY_MS;
+  const calendar = getCalendarForDate(state.settings, date);
+  const start = businessDayStart(date, calendar.dayStart);
+  const end = start + calendar.availableHours * 60 * MINUTE_MS;
   const scheduled = scheduleState(state);
 
   const lines = LINE_IDS.map((lineId): LineSchedule => {
@@ -89,7 +90,7 @@ export function getBoard(state: AppState, date: string): Board {
     const productionMinutes = minutesForKind(boardSegments, "production");
     const changeoverMinutes = minutesForKind(boardSegments, "changeover");
     const availableMinutes = getAvailableIntervals(
-      state.settings,
+      calendar,
       lineId,
       date,
     ).reduce(
@@ -197,7 +198,16 @@ export function updateJob(
 ): AppState {
   const current = requireJob(state, id);
   requirePending(current, "edit");
-  const normalized = normalizeInput({ ...toInput(current), ...patch }, state.settings);
+  if (current.sourceOrderId) {
+    const protectedFields: Array<keyof JobInput> = ["orderNo", "productCode", "description", "mode", "bagCount", "quantityMt"];
+    if (protectedFields.some(field => Object.prototype.hasOwnProperty.call(patch, field))) {
+      throw new Error("Imported order, product, unit, and quantity fields cannot be edited on the production card.");
+    }
+  }
+  const normalizationSettings = current.sourceOrderId && current.bagWeightKgSnapshot
+    ? { ...state.settings, bagWeightKg: current.bagWeightKgSnapshot }
+    : state.settings;
+  const normalized = normalizeInput({ ...toInput(current), ...patch }, normalizationSettings);
   const now = new Date().toISOString();
   let jobs = state.jobs.map((job) =>
     job.id === id
@@ -291,6 +301,7 @@ export function startJob(
   const current = requireJob(state, id);
   requirePending(current, "start");
   assertIsoDateTime(actualStartIso, "Actual start");
+  const startedAt = new Date(actualStartIso).toISOString();
   const alreadyRunning = state.jobs.find(
     (job) => job.lineId === current.lineId && job.status === "running",
   );
@@ -306,13 +317,13 @@ export function startJob(
   if (!scheduled || scheduled.segments.length === 0) {
     throw new Error("The job cannot start because no production capacity is available.");
   }
-  const now = new Date().toISOString();
+  const now = startedAt;
   const jobs = state.jobs.map((job) =>
     job.id === id
       ? {
           ...job,
           status: "running" as const,
-          actualStart: new Date(actualStartIso).toISOString(),
+          actualStart: startedAt,
           actualEnd: null,
           lockedSegments: scheduled.segments.map((segment) => ({ ...segment })),
           updatedAt: now,
@@ -633,10 +644,19 @@ export function resumeJob(
 
 export function updateSettings(state: AppState, settings: Settings): AppState {
   validateSettings(settings);
+  if (!state.settings.calendarCutover && settings.calendarCutover) {
+    throw new Error("Use calendar activation to create production calendar cutover metadata.");
+  }
+  if (state.settings.calendarCutover && JSON.stringify(settings.calendarCutover) !== JSON.stringify(state.settings.calendarCutover)) {
+    throw new Error("Production calendar cutover metadata cannot be edited in ordinary settings.");
+  }
+  if (state.settings.calendarCutover && (settings.dayStart !== state.settings.dayStart || settings.availableHours !== state.settings.availableHours)) {
+    throw new Error("Production hours cannot be changed after the calendar cutover is activated.");
+  }
   const now = new Date().toISOString();
   const copiedSettings = cloneSettings(settings);
   const jobs = state.jobs.map((job) => {
-    if (job.mode !== "bags" || job.status !== "pending") return job;
+    if (job.mode !== "bags" || job.status !== "pending" || job.sourceOrderId) return job;
     return {
       ...job,
       quantityMt: quantityFromBags(job.bagCount ?? 0, copiedSettings.bagWeightKg),
@@ -772,6 +792,7 @@ export function copyJobBatch(
     const source = requireJob(state, sourceJobId);
     if (source.date !== sourceDate) throw new Error(`Source job ${sourceJobId} is not on ${sourceDate}.`);
     if (source.status === "cancelled") throw new Error(`Cancelled source job ${sourceJobId} cannot be copied.`);
+    if (source.sourceOrderId) throw new Error(`Imported source job ${sourceJobId} cannot be copied.`);
     if (!item.quantity || item.quantity.mode !== source.mode) {
       throw new Error(`Copy quantity mode for source job ${sourceJobId} must match ${source.mode}.`);
     }
@@ -908,13 +929,16 @@ function scheduleState(state: AppState): ScheduleResult {
       .map((segment) => ({ start: segment.start, end: segment.end }))
       .sort(compareIntervals);
     let cursor: number | null = null;
-    let previousProduct: string | null = null;
+    let previousJob: Job | null = null;
 
     for (const job of jobs) {
       const rate = getRate(state.settings, lineId, job.productCode);
       const durationMinutes = (job.quantityMt / rate) * 60;
-      const needsChangeover =
-        previousProduct !== null && productFamily(previousProduct) !== productFamily(job.productCode);
+      const needsChangeover = previousJob !== null && (
+        previousJob.sourceOrderId || job.sourceOrderId
+          ? normalizedProduct(previousJob.productCode) !== normalizedProduct(job.productCode)
+          : productFamily(previousJob.productCode) !== productFamily(job.productCode)
+      );
       let segments: ScheduleSegment[] = [];
       let changeoverMinutes = needsChangeover
         ? state.settings.changeoverMinutes
@@ -926,14 +950,25 @@ function scheduleState(state: AppState): ScheduleResult {
           .map((segment) => ({ ...segment, jobId: job.id }))
           .sort(compareSegments);
         changeoverMinutes = minutesForKind(segments, "changeover");
-      } else if (state.settings.availableHours > 0) {
+      } else {
+        const calendar = getCalendarForDate(state.settings, job.date);
+        if (calendar.availableHours <= 0) {
+          const scheduledJob: ScheduledJob = {
+            ...cloneJob(job), plannedStart: null, plannedEnd: null, durationMinutes, rate,
+            changeoverMinutes, segments: [], overflow: false,
+          };
+          byLine[lineId].push(scheduledJob);
+          byId.set(job.id, scheduledJob);
+          previousJob = job;
+          continue;
+        }
         let phaseCursor = Math.max(
           cursor ?? Number.NEGATIVE_INFINITY,
-          businessDayStart(job.date, state.settings.dayStart),
+          businessDayStart(job.date, calendar.dayStart),
         );
         if (changeoverMinutes > 0) {
           const changeover = allocateWork(
-            state.settings,
+            calendar,
             lineId,
             job.id,
             "changeover",
@@ -949,7 +984,7 @@ function scheduleState(state: AppState): ScheduleResult {
           }
         }
         const production = allocateWork(
-          state.settings,
+          calendar,
           lineId,
           job.id,
           "production",
@@ -963,7 +998,8 @@ function scheduleState(state: AppState): ScheduleResult {
       const plannedStart = minOrNull(segments.map((segment) => segment.start));
       const plannedEnd = maxOrNull(segments.map((segment) => segment.end));
       if (plannedEnd !== null) cursor = Math.max(cursor ?? plannedEnd, plannedEnd);
-      const businessEnd = businessDayStart(job.date, state.settings.dayStart) + DAY_MS;
+      const jobCalendar = getCalendarForDate(state.settings, job.date);
+      const businessEnd = businessDayStart(job.date, jobCalendar.dayStart) + jobCalendar.availableHours * 60 * MINUTE_MS;
       const scheduledJob: ScheduledJob = {
         ...cloneJob(job),
         plannedStart,
@@ -976,7 +1012,13 @@ function scheduleState(state: AppState): ScheduleResult {
       };
       byLine[lineId].push(scheduledJob);
       byId.set(job.id, scheduledJob);
-      previousProduct = job.productCode;
+      previousJob = job;
+    }
+    const lineSegments = byLine[lineId].flatMap(job => job.segments).sort(compareSegments);
+    for (let index = 1; index < lineSegments.length; index += 1) {
+      if (lineSegments[index].start < lineSegments[index - 1].end - 0.001) {
+        throw new Error(`Schedule on ${lineId} contains overlapping production time.`);
+      }
     }
   }
 
@@ -1089,24 +1131,23 @@ function finalizeMutation(
 function validateFutureDayCollisions(state: AppState): void {
   const scheduled = scheduleState(state);
   for (const lineId of LINE_IDS) {
-    const jobs = scheduled.byLine[lineId];
-    const dates = [...new Set(jobs.map((job) => job.date))].sort();
-    for (let index = 1; index < dates.length; index += 1) {
-      const date = dates[index];
-      const dateStart = businessDayStart(date, state.settings.dayStart);
-      const earlierEnd = maxOrNull(
-        jobs
-          .filter((job) => job.date < date)
-          .map((job) => job.plannedEnd)
-          .filter((value): value is number => value !== null),
-      );
-      if (earlierEnd !== null && earlierEnd > dateStart) {
-        throw new Error(
-          `Schedule overflow on ${lineId} collides with an existing job on ${date}.`,
-        );
+    const segments = scheduled.byLine[lineId].flatMap(job => job.segments).sort(compareSegments);
+    for (let index = 1; index < segments.length; index += 1) {
+      if (segments[index].start < segments[index - 1].end - 0.001) {
+        throw new Error(`Schedule on ${lineId} contains overlapping production time.`);
       }
     }
   }
+}
+
+export function getCalendarForDate(settings: Settings, assignedDate: string): Settings {
+  const cutover = settings.calendarCutover;
+  if (!cutover || assignedDate >= cutover.effectiveFrom) return settings;
+  return { ...settings, dayStart: cutover.priorDayStart, availableHours: cutover.priorAvailableHours };
+}
+
+function normalizedProduct(value: string): string {
+  return value.trim().toLocaleUpperCase("en-US");
 }
 
 function normalizeInput(input: JobInput, settings: Settings): JobInput {
@@ -1173,6 +1214,14 @@ function validateSettings(settings: Settings): void {
     if (downtime.lineId !== "all") assertLineId(downtime.lineId);
     timeToMinutes(downtime.start, "Downtime start");
     timeToMinutes(downtime.end, "Downtime end");
+  }
+  if (settings.calendarCutover) {
+    assertDate(settings.calendarCutover.effectiveFrom, "Calendar cutover date");
+    timeToMinutes(settings.calendarCutover.priorDayStart, "Prior day start");
+    if (!Number.isFinite(settings.calendarCutover.priorAvailableHours) || settings.calendarCutover.priorAvailableHours < 0 || settings.calendarCutover.priorAvailableHours > 24) {
+      throw new Error("Prior available hours must be between 0 and 24.");
+    }
+    assertIsoDateTime(settings.calendarCutover.activatedAt, "Calendar activation time");
   }
 }
 
@@ -1264,6 +1313,7 @@ function cloneJob(job: Job): Job {
     lockedSegments: job.lockedSegments?.map((segment) => ({ ...segment })),
     ...(job.issue ? { issue: { ...job.issue } } : {}),
     ...(job.pauseIntervals ? { pauseIntervals: job.pauseIntervals.map((pause) => ({ ...pause })) } : {}),
+    ...(job.sourceSnapshot ? { sourceSnapshot: { ...job.sourceSnapshot } } : {}),
   };
 }
 
@@ -1273,6 +1323,7 @@ function cloneSettings(settings: Settings): Settings {
     rates: { ...settings.rates },
     slowProductPrefixes: [...settings.slowProductPrefixes],
     downtime: settings.downtime.map((item) => ({ ...item })),
+    ...(settings.calendarCutover ? { calendarCutover: { ...settings.calendarCutover } } : {}),
   };
 }
 

@@ -15,7 +15,7 @@ import {
 } from "./types";
 import { getRate, getScheduledJobs } from "./engine";
 
-const MAX_BACKUP_CHARACTERS = 10_000_000;
+const MAX_BACKUP_CHARACTERS = 64 * 1024 * 1024;
 const MAX_JOBS = 10_000;
 const MAX_CATALOG_PRODUCTS = 10_000;
 const MAX_EVENTS = 50_000;
@@ -38,6 +38,7 @@ const JOB_KEYS = [
   "completionNote", "binNeedsReview", "createdAt", "updatedAt",
   "lockedSegments", "issue",
   "pauseIntervals",
+  "sourceOrderId", "sourceOrderVersion", "sourceSnapshot", "bagWeightKgSnapshot",
 ] as const;
 
 const JOB_CHANGE_FIELDS = new Set([
@@ -283,6 +284,24 @@ function validateJob(value: unknown, path: string): Job {
     validateProductionPauses(pauses, status, actualStart, actualEnd, `${path}.pauseIntervals`);
     result.pauseIntervals = pauses;
   }
+  if (hasOwn(source, "sourceOrderId")) {
+    result.sourceOrderId = nonEmptyString(source.sourceOrderId, `${path}.sourceOrderId`, MAX_ID_LENGTH);
+    result.sourceOrderVersion = numberValue(required(source, "sourceOrderVersion", path), `${path}.sourceOrderVersion`, { min: 1, integer: true });
+    const snapshot = objectValue(required(source, "sourceSnapshot", path), `${path}.sourceSnapshot`);
+    onlyKeys(snapshot, ["doNo", "materialCode", "description", "quantity", "unit"], `${path}.sourceSnapshot`);
+    result.sourceSnapshot = {
+      doNo: nonEmptyString(required(snapshot, "doNo", `${path}.sourceSnapshot`), `${path}.sourceSnapshot.doNo`, 120),
+      materialCode: nonEmptyString(required(snapshot, "materialCode", `${path}.sourceSnapshot`), `${path}.sourceSnapshot.materialCode`, 80),
+      description: stringValue(required(snapshot, "description", `${path}.sourceSnapshot`), `${path}.sourceSnapshot.description`, 200),
+      quantity: numberValue(required(snapshot, "quantity", `${path}.sourceSnapshot`), `${path}.sourceSnapshot.quantity`, { min: 0 }),
+      unit: enumValue(required(snapshot, "unit", `${path}.sourceSnapshot`), ["MT", "Bags"], `${path}.sourceSnapshot.unit`),
+    };
+    if (hasOwn(source, "bagWeightKgSnapshot")) {
+      result.bagWeightKgSnapshot = numberValue(source.bagWeightKgSnapshot, `${path}.bagWeightKgSnapshot`, { exclusiveMin: 0 });
+    }
+  } else if (hasOwn(source, "sourceOrderVersion") || hasOwn(source, "sourceSnapshot") || hasOwn(source, "bagWeightKgSnapshot")) {
+    throw invalid(path, "source metadata requires sourceOrderId");
+  }
 
   return result;
 }
@@ -406,7 +425,7 @@ function validateSettings(value: unknown, path: string): Settings {
   const source = objectValue(value, path);
   onlyKeys(source, [
     "siteName", "timeZone", "dayStart", "availableHours", "changeoverMinutes",
-    "bagWeightKg", "rates", "slowProductPrefixes", "slowRatePM2", "downtime",
+    "bagWeightKg", "rates", "slowProductPrefixes", "slowRatePM2", "downtime", "calendarCutover",
   ], path);
 
   const ratesValue = objectValue(required(source, "rates", path), `${path}.rates`);
@@ -431,7 +450,7 @@ function validateSettings(value: unknown, path: string): Settings {
   const downtime = downtimeValue.map((item, index) => validateDowntime(item, `${path}.downtime[${index}]`));
   uniqueIds(downtime, `${path}.downtime`);
 
-  return {
+  const result: Settings = {
     siteName: nonEmptyString(required(source, "siteName", path), `${path}.siteName`, MAX_TEXT_LENGTH),
     timeZone: nonEmptyString(required(source, "timeZone", path), `${path}.timeZone`, MAX_TEXT_LENGTH),
     dayStart: timeValue(required(source, "dayStart", path), `${path}.dayStart`),
@@ -443,6 +462,17 @@ function validateSettings(value: unknown, path: string): Settings {
     slowRatePM2: numberValue(required(source, "slowRatePM2", path), `${path}.slowRatePM2`, { exclusiveMin: 0 }),
     downtime,
   };
+  if (hasOwn(source, "calendarCutover")) {
+    const cutover = objectValue(source.calendarCutover, `${path}.calendarCutover`);
+    onlyKeys(cutover, ["effectiveFrom", "priorDayStart", "priorAvailableHours", "activatedAt"], `${path}.calendarCutover`);
+    result.calendarCutover = {
+      effectiveFrom: dateValue(required(cutover, "effectiveFrom", `${path}.calendarCutover`), `${path}.calendarCutover.effectiveFrom`),
+      priorDayStart: timeValue(required(cutover, "priorDayStart", `${path}.calendarCutover`), `${path}.calendarCutover.priorDayStart`),
+      priorAvailableHours: numberValue(required(cutover, "priorAvailableHours", `${path}.calendarCutover`), `${path}.calendarCutover.priorAvailableHours`, { min: 0, max: 24 }),
+      activatedAt: timestampValue(required(cutover, "activatedAt", `${path}.calendarCutover`), `${path}.calendarCutover.activatedAt`),
+    };
+  }
+  return result;
 }
 
 function validateDowntime(value: unknown, path: string): Downtime {

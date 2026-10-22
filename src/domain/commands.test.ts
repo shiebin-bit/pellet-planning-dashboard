@@ -21,8 +21,8 @@ describe("shared workspace commands", () => {
     const sample = createSampleState("2026-10-15");
     const pending = sample.jobs.find(job => job.status === "pending" && job.quantityMt > 0)!;
     const started = executeCommand(sample, {
-      type: "job.start", jobId: pending.id, actualStart: "2026-10-15T00:00:00.000Z",
-    });
+      type: "job.start", jobId: pending.id,
+    }, { nowIso: "2026-10-15T00:00:00.000Z" });
     const completed = executeCommand(started, {
       type: "job.complete", jobId: pending.id, actualQuantityMt: pending.quantityMt, completionNote: "Server confirmation",
     }, { nowIso: "2026-10-15T04:00:00.000Z" });

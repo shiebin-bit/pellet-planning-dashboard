@@ -94,7 +94,7 @@ describe("workspace backup validation", () => {
   it("rejects empty, truncated, oversized, and unsupported JSON", () => {
     expect(() => parseWorkspaceBackup("   ")).toThrow(/empty/i);
     expect(() => parseWorkspaceBackup('{"schemaVersion":1')).toThrow(/valid JSON/i);
-    expect(() => parseWorkspaceBackup(" ".repeat(10_000_001))).toThrow(/exceeds/i);
+    expect(() => parseWorkspaceBackup(" ".repeat(64 * 1024 * 1024 + 1))).toThrow(/exceeds/i);
     expect(() => parseWorkspaceBackup('{"schemaVersion":2,"jobs":[],"settings":{},"events":[]}')).toThrow(/catalog.*required/i);
     expect(() => parseWorkspaceBackup('{"schemaVersion":3,"catalog":[],"jobs":[],"settings":{},"events":[]}')).toThrow(/schemaVersion.*unsupported/i);
   });
@@ -206,8 +206,8 @@ describe("workspace backup validation", () => {
       id: "next-day-maintenance",
       date: "2026-10-16",
       lineId: pending.lineId,
-      start: "08:30",
-      end: "20:30",
+      start: "07:00",
+      end: "19:00",
       reason: "Cross-date maintenance",
     });
     const completed = completedJob(crossDate);
@@ -217,7 +217,7 @@ describe("workspace backup validation", () => {
     expect(restored.jobs.find((job) => job.id === pending.id)?.date).toBe("2026-10-16");
     expect(restored.jobs.find((job) => job.id === completed.id)?.lockedSegments).toEqual(locked);
     expect(getScheduledJobs(restored).find((job) => job.id === pending.id)?.plannedStart).toBe(
-      Date.parse("2026-10-16T20:30:00+08:00"),
+      Date.parse("2026-10-17T07:00:00+08:00"),
     );
     expect(crossDate.jobs.find((job: any) => job.id === pending.id).date).toBe("2026-10-16");
   });

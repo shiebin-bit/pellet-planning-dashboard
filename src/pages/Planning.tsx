@@ -1,3 +1,4 @@
+import { LegacyCarryoverNotice } from '../components/LegacyCarryoverNotice';
 import { useEffect, useRef, useState } from 'react';
 import {
   DndContext, DragOverlay, KeyboardSensor, MouseSensor, TouchSensor, pointerWithin,
@@ -6,6 +7,7 @@ import {
 import type { Active, CollisionDetection, DragEndEvent, Over } from '@dnd-kit/core';
 import { AlertTriangle, ArrowUpRight, ChevronDown, Copy, GripVertical, LockKeyhole, Plus, Undo2 } from 'lucide-react';
 import { StatusLegend } from '../components/Shared';
+import { getCalendarForDate } from '../domain/engine';
 import { isJobPaused } from '../domain/production-results';
 import type { Downtime, LineId, LineSchedule, ScheduledJob, ScheduleSegment } from '../domain/types';
 import { downtimeRange, durationLabel, numberLabel, timeLabel } from '../lib/format';
@@ -24,7 +26,7 @@ const collision: CollisionDetection = args => {
 };
 
 export function Planning() {
-  const { board, state, openJob, openInput, openCopy, selectedId, commit, canUndo, undo, mutationLocked, hasConflict } = useWorkspace();
+  const { board, state, openJob, openInput, openCopy, openSource, storageMode, selectedId, commit, canUndo, undo, mutationLocked, hasConflict } = useWorkspace();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [range, setRange] = useState<PlanRange>('day');
   const sensors = useSensors(
@@ -32,12 +34,14 @@ export function Planning() {
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
     useSensor(KeyboardSensor, { keyboardCodes: { start: ['Space'], end: ['Space', 'Enter'], cancel: ['Escape'] } }),
   );
+  const calendar = getCalendarForDate(state.settings, board.date);
   const jobs = board.lines.flatMap(line => line.jobs);
   const previousPlan = useRef({ boardStart: board.start, ends: plannedEnds(jobs) });
   const active = jobs.find(job => job.id === activeId);
   const latestEnd = Math.max(board.end, ...jobs.map(job => job.plannedEnd ?? board.end));
-  const fullHours = Math.min(72, Math.max(24, Math.ceil((latestEnd - board.start) / 3_600_000)));
-  const hours = range === 'full' ? fullHours : 24;
+  const dayHours = (board.end - board.start) / 3_600_000;
+  const fullHours = Math.min(168, Math.max(dayHours, Math.ceil((latestEnd - board.start) / 3_600_000)));
+  const hours = range === 'full' ? fullHours : dayHours;
   const windowEnd = board.start + hours * 3_600_000;
   const ticks = getTicks(hours);
 
@@ -84,9 +88,10 @@ export function Planning() {
     <div className="page-heading hplan-heading">
       <div><h1>Planning board</h1><p>Drag a not-started card to another line. Click for details.</p></div>
       <div className="hplan-actions">
+        {storageMode === 'database' && <button type="button" className="button secondary" disabled={mutationLocked || hasConflict} onClick={() => openSource()}><Plus size={15}/>Plan from Data</button>}
         <button type="button" className="button secondary" disabled={mutationLocked || hasConflict} onClick={openCopy}><Copy size={15}/>Copy planning</button>
         <button type="button" className="button secondary" disabled={!canUndo} onClick={undo}><Undo2 size={15}/>Undo</button>
-        {fullHours > 24 && <div className="hplan-range" aria-label="Planning range">
+        {fullHours > dayHours && <div className="hplan-range" aria-label="Planning range">
           <button type="button" className={range === 'day' ? 'active' : ''} aria-pressed={range === 'day'} onClick={() => setRange('day')}>Day</button>
           <button type="button" className={range === 'full' ? 'active' : ''} aria-pressed={range === 'full'} onClick={() => setRange('full')}>Full plan</button>
         </div>}
@@ -105,12 +110,13 @@ export function Planning() {
       <section className="hplan-board" data-board-range={range} aria-label={`${hours}-hour production plan`}>
         <div className="hplan-axis-label"><strong>MYT</strong><span>UTC+8</span></div>
         <div className="hplan-axis" aria-hidden="true">{ticks.map(hour => <div key={hour} className="hplan-axis-tick" style={{ left: `${hour / hours * 100}%` }}><span>{timeLabel(board.start + hour * 3_600_000)}</span>{hour >= 24 && hour % 24 === 0 && <small>+{hour / 24}d</small>}</div>)}</div>
-        {board.lines.map(line => <LineRow key={line.lineId} line={line} start={board.start} end={windowEnd} hours={hours} downtime={state.settings.downtime} dayStart={state.settings.dayStart} availableHours={state.settings.availableHours} activeId={activeId} selectedId={selectedId} onOpen={openJob} onAdd={openInput}/>) }
+        {board.lines.map(line => <LineRow key={line.lineId} line={line} start={board.start} end={windowEnd} hours={hours} downtime={state.settings.downtime} dayStart={calendar.dayStart} availableHours={calendar.availableHours} activeId={activeId} selectedId={selectedId} onOpen={openJob} onAdd={openInput}/>) }
       </section>
       <DragOverlay dropAnimation={null}>{active ? <div className={`hplan-drag-card ${active.issue ? 'issue' : active.status}`}><GripVertical size={17}/><div><strong>{active.productCode}</strong><span>{numberLabel(active.quantityMt)} MT</span></div><small>{active.lineId}</small></div> : null}</DragOverlay>
     </DndContext>
 
-    <div className="hplan-below"><div className="hplan-legend"><StatusLegend/>{state.settings.changeoverMinutes>0&&<span className="hplan-interval-key"><i className="changeover-key"/>Changeover / line clean-up · {durationLabel(state.settings.changeoverMinutes)}</span>}<span className="hplan-interval-key"><i className="unavailable-key"/>Unavailable</span></div>{fullHours > 24 && range === 'day' && <span className="hplan-carry-note">Carry-over continues for up to {fullHours} hours. Use Full plan to view it.</span>}</div>
+    <div className="hplan-below"><div className="hplan-legend"><StatusLegend/>{state.settings.changeoverMinutes>0&&<span className="hplan-interval-key"><i className="changeover-key"/>Changeover / line clean-up · {durationLabel(state.settings.changeoverMinutes)}</span>}<span className="hplan-interval-key"><i className="unavailable-key"/>Unavailable</span></div>{fullHours > dayHours && range === 'day' && <span className="hplan-carry-note">Carry-over continues for up to {fullHours} hours. Use Full plan to view it.</span>}</div>
+    <LegacyCarryoverNotice/>
     {board.backlog.length > 0 && <details className="hplan-backlog"><summary><span><AlertTriangle size={16}/>Awaiting quantity</span><strong>{board.backlog.length}</strong><ChevronDown size={16}/></summary><div className="hplan-backlog-grid">{board.backlog.map(job => <button type="button" key={job.id} className={job.issue ? 'issue' : ''} onClick={() => openJob(job.id)}><div><strong>{job.productCode}</strong><span>{job.lineId} · {job.orderNo || 'No order reference'}</span></div><small>{job.issue ? 'Issue' : 'Add quantity'}</small><ArrowUpRight size={15}/></button>)}</div></details>}
   </div>;
 }

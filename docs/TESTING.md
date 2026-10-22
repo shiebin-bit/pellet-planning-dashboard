@@ -28,7 +28,7 @@ The API tests exercise concurrent revisions, invalid-command rollback, duplicate
 
 ## Browser integration
 
-`npm run test:browser` runs `tests/browser.cjs`, `tests/browser-efficiency.cjs`, `tests/browser-pause-audit.cjs` and `tests/browser-ui.cjs`; all replace the entire selected workspace and restore the starting state in `finally`. Use a **separate disposable database/server**, never the real planning service. Create `millplan_browser_test` using the same `createdb` command as above with that database name. Copy `.env` to ignored `.env.browser-test`; change only its DATABASE_URL database path to `/millplan_browser_test`, keep HOST=127.0.0.1 and set PORT=8091. Build `dist` first.
+`npm run test:browser` runs `tests/browser.cjs`, `tests/browser-efficiency.cjs`, `tests/browser-pause-audit.cjs` , `tests/browser-ui.cjs` and `tests/browser-data.cjs`; all replace the entire selected workspace and restore the starting state in `finally`. Use a **separate disposable database/server**, never the real planning service. Create `millplan_browser_test` using the same `createdb` command as above with that database name. Copy `.env` to ignored `.env.browser-test`; change only its DATABASE_URL database path to `/millplan_browser_test`, keep HOST=127.0.0.1 and set PORT=8091. Build `dist` first.
 
 ```powershell
 npx playwright install chromium
@@ -44,14 +44,14 @@ npm run test:browser
 Remove-Item Env:BROWSER_BASE_URL, Env:BROWSER_ALLOW_REPLACE
 ```
 
-Installed Chrome is a fallback if the bundled Chromium is absent. `PLAYWRIGHT_CHANNEL=chrome` can select it explicitly. Each suite closes its browser and saves ignored evidence under `output/playwright/database/` or `output/playwright/redesign/`.
+Installed Chrome is a fallback if the bundled Chromium is absent. `PLAYWRIGHT_CHANNEL=chrome` can select it explicitly. Each suite closes its browser and saves ignored evidence under `output/playwright/database/`, `output/playwright/redesign/` or `output/playwright/data/`.
 
-Its **12 workflow groups** cover:
+The original suite's **12 workflow groups** cover:
 
 1. Empty database loading and ignoring pre-existing browser-only records.
 2. Add/edit confirmation and persistence across reload.
 3. Whole-card movement, bin confirmation and server Undo.
-4. Manual start, issue/resolve and Done with actual output/server time.
+4. Current-time Start, issue/resolve and Done with actual output/server time.
 5. Stale edits require explicit reload and never recreate a remotely removed task.
 6. Actual-output conflicts retain draft values until explicit reload and preserve completed timestamps.
 7. Explicit reconnection cannot advance a draft's revision without a reload gate.
@@ -65,12 +65,19 @@ The efficiency suite adds catalog management/defaults/manual input and snapshot 
 
 The pause/audit suite covers required pause reasons, trusted time, locked plans and reload persistence; multiple pauses/resume; lost pause/resume replies with request deduplication; Done closing an open interval; stale drafts and explicit review; paused filtering and reason search; before/after quantities, moves, Undo, settings and catalog snapshots; legacy activity; cross-day downtime independent of planned segments; Excel numeric readback, daily clipping, complete range stops, print/PDF and responsive layouts; copying paused cards clears execution data; offline Undo appends reverse structured changes. Unit/API tests additionally reject invalid transitions, overlapping imported intervals, clock regression, duplicate/open intervals, stale revisions and command-ID misuse. Optional fields preserve legacy JSON/recovery compatibility.
 
-The UI regression suite adds four-line board fit at 1366 × 768, first-screen Overview hierarchy, all four pages at 320/390/768/1440px, calendar/export/dialog/drawer bounds, keyboard focus and Escape, primary/status text contrast (4.5:1), and print visibility. It uses explicit demo fixtures and blocks browser writes after setup.
+The UI regression suite adds four-line board fit at 1366 × 768, first-screen Overview hierarchy, all five pages at 320/390/768/1440px, calendar/export/dialog/drawer bounds, keyboard focus and Escape, primary/status text contrast (4.5:1), and print visibility. It uses explicit demo fixtures and blocks browser writes after setup.
 
-CI runs all four suites on Ubuntu with PostgreSQL 16, Node 24 and Playwright Chromium. Browser tests use the CI-only database after the API suite.
+CI runs all five suites on Ubuntu with PostgreSQL 16, Node 24 and Playwright Chromium. Browser tests use the CI-only database after the API suite.
 
 ## Release checks
 
 Alongside the automated suites, verify the full Compose image starts healthy; records/revision persist after app and DB restarts; a real stopped DB returns 503 and recovers; and a custom-format dump restores to another database with matching records and metadata. Never use the application's actual data for destructive outage or fixture testing.
 
 For the offline compatibility build, check four fitted horizontal lines at 1366×768, direct drag/insertion/Undo, retained input drafts, Done, report downloads, restore recovery, and 390px touch layouts. The delivery verification retained the existing 9 horizontal, 10 drag and 5 report/restore workflow groups. These local historical QA scripts/evidence are excluded from source because they use machine-specific paths; the portable database suite is committed.
+
+
+The Data suite uploads fictional `.xlsx` files with all 13 screenshot fields, detects the header, validates the import preview and lost-response retry, checks 50-row paging and filtered statistics, creates whole-order MT/Bags cards from Data and the board, verifies immutable source fields and bag-weight snapshots, reimports changed quantities without overwriting production, separates Done from delivery, reads back backup v3 and checks mobile/dialog focus. Numeric identifier/date/formula/parser edge cases are covered by unit tests. No real SAP workbook was available, so real-file compatibility remains a first-import verification step.
+
+Calendar/source tests cover 07:00–19:00 carry-over, cross-assigned-date queues, historical calendar selection, locked overlap rejection, source edit/copy protection, atomic import failure, revision conflict, command retry, delivery provenance, source-version compatibility and portable recovery. Test setup remains isolated from the deployed workspace.
+
+The Excel Data release passes 96 unit tests across 17 files, 15 PostgreSQL API tests and 35 browser workflow groups across the five suites. Deployment also rehearses calendar activation against a copy of the latest workspace and compares every original job payload, catalog item and execution timestamp before and after activation.

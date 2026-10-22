@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { LayoutDashboard, CalendarRange, Plus, History, Settings2, Download, Menu, X, ChevronDown, FileSpreadsheet, Printer, Check, HardDrive, PanelLeftClose, Undo2 } from 'lucide-react';
+import { Database, LayoutDashboard, CalendarRange, Plus, History, Settings2, Download, Menu, X, ChevronDown, FileSpreadsheet, Printer, Check, HardDrive, PanelLeftClose, Undo2 } from 'lucide-react';
 import { WorkspaceProvider, useWorkspace } from './lib/workspace';
 import type { Page } from './lib/workspace';
 import { dateLabel, localDate } from './lib/format';
-import { exportExcel, exportBackup, printReport } from './lib/export';
+import { exportExcel, exportBackup, exportDatabaseBackup, printReport } from './lib/export';
+import logo from './assets/ffm-logo.jpg';
+import { DataPage } from './pages/Data';
+import { ImportDialog } from './components/ImportDialog';
+import { SourcePlanningDialog } from './components/SourcePlanningDialog';
 import { Overview } from './pages/Overview';
 import { Planning } from './pages/Planning';
 import { ProductionEditor } from './components/ProductionEditor';
@@ -19,20 +23,21 @@ import type { ProductionReport } from './domain/reports';
 const navigation = [
   { id: 'overview' as Page, label: 'Overview', icon: LayoutDashboard },
   { id: 'planning' as Page, label: 'Planning board', icon: CalendarRange },
+  { id: 'data' as Page, label: 'Data', icon: Database },
   { id: 'history' as Page, label: 'History', icon: History },
   { id: 'settings' as Page, label: 'Settings', icon: Settings2 },
 ];
 export function App() { return <WorkspaceProvider><Dashboard /></WorkspaceProvider>; }
 
 function Dashboard() {
-  const { state, board, date, setDate, page, navigate, openInput, editor, copyDialog, selectedId, toast, savedAt, storageWarning, notify, canUndo, undo,isDemo,storageMode,busy,refresh,hasConflict,resolveConflict,mutationLocked } = useWorkspace();
+  const { state, board, date, setDate, page, navigate, openInput, editor, copyDialog, importOpen, sourceDialog, selectedId, toast, savedAt, storageWarning, notify, canUndo, undo,isDemo,storageMode,busy,refresh,hasConflict,resolveConflict,mutationLocked } = useWorkspace();
   const [mobileNav, setMobileNav] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [exportsOpen, setExportsOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [reportOpen,setReportOpen]=useState(false);
   const [printJob,setPrintJob]=useState<{report:ProductionReport|null}|null>(null);
-  const modalOpen=!!editor||!!copyDialog||reportOpen;
+  const modalOpen=!!editor||!!copyDialog||reportOpen||importOpen||!!sourceDialog;
   const [smallScreen, setSmallScreen] = useState(() => window.matchMedia('(max-width: 600px)').matches);
   const navigationRef = useRef<HTMLElement>(null);
   const menuRef = useRef<HTMLButtonElement>(null);
@@ -78,7 +83,7 @@ function Dashboard() {
     {mobileNav && <button className="nav-scrim" tabIndex={-1} aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
     <aside className="sidebar" id="workspace-navigation" ref={navigationRef} role={smallScreen ? 'dialog' : undefined} aria-modal={smallScreen && mobileNav ? true : undefined} aria-label={smallScreen ? 'Workspace navigation' : undefined} inert={modalOpen || (smallScreen && !mobileNav)} aria-hidden={modalOpen || (smallScreen && !mobileNav)}>
       <button className="brand" disabled={mutationLocked} onClick={() => { navigate('overview'); setMobileNav(false); }} aria-label="Millplan overview">
-        <span className="brand-mark" aria-hidden="true"><i /><i /><i /><i /></span><span className="brand-name">millplan</span>
+        <img className="brand-logo" src={logo} alt="FFM"/><span className="brand-name">millplan</span>
       </button>
       <button ref={closeNavigationRef} className="mobile-close icon-button" onClick={() => setMobileNav(false)} aria-label="Close navigation"><X size={20} /></button>
       <div className="site-switch"><strong>{state.settings.siteName}</strong><span>Production planning</span></div>
@@ -98,7 +103,7 @@ function Dashboard() {
           <div className="toolbar-spacer" />
           <span className="save-indicator"><Check size={14} />{busy?'Saving…':storageWarning?'Connection / storage issue':hasConflict?'Review latest changes':savedAt?'All changes saved':storageMode==='database'?'Database connected':'Local workspace'}</span>
           <div className="export-container" onKeyDown={event => { if (event.key === 'Escape') { setExportsOpen(false); exportRef.current?.focus(); } }}><button ref={exportRef} className="button secondary" aria-label={exporting ? 'Exporting report' : 'Export'} onClick={() => setExportsOpen(!exportsOpen)} aria-expanded={exportsOpen} disabled={exporting}><Download size={15} /><span>{exporting ? 'Exporting…' : 'Export'}</span><ChevronDown size={13} /></button>
-            {exportsOpen && <><button className="menu-scrim" tabIndex={-1} onClick={() => setExportsOpen(false)} aria-label="Close export menu" /><div className="dropdown export-menu"><span className="dropdown-label">REPORT FOR {dateLabel(date, true)}</span><button onClick={excel}><FileSpreadsheet size={17} /><div><strong>Excel report</strong><small>Four lines + actual timestamps</small></div></button><button onClick={() => { setExportsOpen(false); setPrintJob({report:null}); }}><Printer size={17} /><div><strong>Print / save as PDF</strong><small>Daily planning report</small></div></button><button disabled={mutationLocked} onClick={()=>{setExportsOpen(false);setReportOpen(true);}}><CalendarRange size={17}/><div><strong>Date range report</strong><small>Day, week or custom dates · line filter</small></div></button><button onClick={() => { exportBackup(state); setExportsOpen(false); }}><HardDrive size={17} /><div><strong>Workspace backup</strong><small>All records as JSON</small></div></button></div></>}
+            {exportsOpen && <><button className="menu-scrim" tabIndex={-1} onClick={() => setExportsOpen(false)} aria-label="Close export menu" /><div className="dropdown export-menu"><span className="dropdown-label">REPORT FOR {dateLabel(date, true)}</span><button onClick={excel}><FileSpreadsheet size={17} /><div><strong>Excel report</strong><small>Four lines + actual timestamps</small></div></button><button onClick={() => { setExportsOpen(false); setPrintJob({report:null}); }}><Printer size={17} /><div><strong>Print / save as PDF</strong><small>Daily planning report</small></div></button><button disabled={mutationLocked} onClick={()=>{setExportsOpen(false);setReportOpen(true);}}><CalendarRange size={17}/><div><strong>Date range report</strong><small>Day, week or custom dates · line filter</small></div></button><button onClick={() => { setExportsOpen(false); if(storageMode==='database')void exportDatabaseBackup().catch(error=>notify(error.message,true)); else exportBackup(state); }}><HardDrive size={17} /><div><strong>Workspace backup</strong><small>Planning + imported orders as JSON</small></div></button></div></>}
           </div>
           <button className="button primary add-production-button" disabled={mutationLocked||hasConflict} onClick={()=>openInput()}><Plus size={17} /><span>Add production</span></button>
         </div>
@@ -108,12 +113,15 @@ function Dashboard() {
         {hasConflict&&!editor&&!selectedId&&page!=='settings'&&<div className="notice warning" role="alert">Another planner updated this workspace. Review the latest data before making another change. <button type="button" className="text-link" onClick={resolveConflict}>Reload latest workspace</button></div>}
         {page === 'overview' && <Overview />}
         {page === 'planning' && <Planning />}
+        {page === 'data' && <DataPage />}
         {page === 'history' && <HistoryPage />}
         {page === 'settings' && <SettingsPage />}
         <footer className="page-footer"><span>{state.settings.siteName}</span><span>{storageMode==='database'?'Database workspace · MYT (UTC+8)':'Offline · Browser storage · MYT (UTC+8)'}</span></footer>
       </main>
     </div>
     <JobDrawer />
+    {importOpen && <ImportDialog/>}
+    {sourceDialog && <SourcePlanningDialog/>}
     {editor && <ProductionEditor/>}
     {copyDialog && <CopyPlanningDialog key={copyDialog.id}/>}
     {reportOpen&&<ReportDialog onClose={()=>setReportOpen(false)} onPrint={report=>{setReportOpen(false);setPrintJob({report});}}/>}

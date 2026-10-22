@@ -163,17 +163,18 @@ describe("job copy batch command", () => {
     }, { nowIso: NOW })).toThrow(/must match bags/i);
   });
 
-  it("rejects the entire batch when its computed schedule collides with an existing future day", () => {
+  it("allows copied backlog to carry forward before an existing future-day job", () => {
     let state = withJob(createEmptyState(), "SOURCE", "bulk", "2026-10-15", "PM1");
     state = withJob(state, "FUTURE", "bulk", "2026-10-17", "PM1");
     const source = state.jobs.find(job => job.productCode === "SOURCE")!;
     const snapshot = JSON.stringify(state);
-    expect(() => executeCommand(state, {
+    const copied = executeCommand(state, {
       type: "job.copyBatch",
       sourceDate: "2026-10-15",
       targetDate: "2026-10-16",
       items: [{ sourceJobId: source.id, orderNo: "OVERFLOW", quantity: { mode: "bulk", quantityMt: 200 } }],
-    }, { nowIso: NOW })).toThrow(/collides with an existing job/i);
+    }, { nowIso: NOW });
+    expect(copied.jobs).toHaveLength(state.jobs.length + 1);
     expect(JSON.stringify(state)).toBe(snapshot);
   });
 

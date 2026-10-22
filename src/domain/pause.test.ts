@@ -29,8 +29,8 @@ describe("production pause and resume", () => {
     const withSecond = executeCommand(paused, { type: "job.create", input: input("SECOND") });
     const second = withSecond.jobs.find(candidate => candidate.productCode === "SECOND")!;
     expect(() => executeCommand(withSecond, {
-      type: "job.start", jobId: second.id, actualStart: "2026-10-15T02:00:00.000Z",
-    })).toThrow(/finish the current running job/i);
+      type: "job.start", jobId: second.id,
+    }, { nowIso: "2026-10-15T02:00:00.000Z" })).toThrow(/finish the current running job/i);
     expect(() => executeCommand(paused, {
       type: "job.pause", jobId: source.id, reason: "Again",
     }, { nowIso: RESUME })).toThrow(/already paused/i);
@@ -105,8 +105,8 @@ describe("production pause and resume", () => {
 function runningState(): AppState {
   const created = executeCommand(createEmptyState(), { type: "job.create", input: input("SOURCE") });
   return executeCommand(created, {
-    type: "job.start", jobId: created.jobs[0].id, actualStart: START,
-  });
+    type: "job.start", jobId: created.jobs[0].id,
+  }, { nowIso: START });
 }
 
 function input(productCode: string): JobInput {

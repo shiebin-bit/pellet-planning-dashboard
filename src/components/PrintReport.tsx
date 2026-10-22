@@ -8,7 +8,7 @@ export function PrintReport({report}:{report?:ProductionReport|null}){
   const asOf=Date.now();
   if(report)return <RangePrintReport report={report} siteName={state.settings.siteName}/>;
   return <div className="print-report">
-    <div className="print-header"><div><strong>millplan.</strong><h1>Daily production planning</h1><p>{state.settings.siteName} · {dateLabel(board.date)} · MYT (UTC+8)</p></div><span>PLANNING REPORT<br/>{timeLabel(board.start)} — {timeLabel(board.end)} next day</span></div>
+    <div className="print-header"><div><strong>millplan.</strong><h1>Daily production planning</h1><p>{state.settings.siteName} · {dateLabel(board.date)} · MYT (UTC+8)</p></div><span>PLANNING REPORT<br/>{timeLabel(board.start)} — {timeLabel(board.end)}{board.end-board.start>=86400000?' next day':''}</span></div>
     <div className="print-summary">{board.lines.map(line=><div key={line.lineId}><strong>{line.lineId}</strong><span>{numberLabel(line.plannedMt)} MT planned</span><span>{line.utilisation===null?'—':numberLabel(line.utilisation*100,0)+'%'} planned utilisation</span><small>{durationLabel(line.productionMinutes)} production / {durationLabel(line.availableMinutes)} available</small><small>{stopDurationLabel(getDowntimeMinutesForWindow(state.jobs,board.start,board.end,asOf,line.lineId))} recorded downtime in this planning day</small></div>)}</div>
     {board.lines.map(line=><section className="print-line" key={line.lineId}>
       <h2>{line.lineId}<span>{line.jobs.length} tasks · {numberLabel(line.plannedMt)} MT planned</span></h2>

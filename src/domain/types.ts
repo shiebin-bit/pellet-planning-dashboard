@@ -53,6 +53,16 @@ export interface Job {
     reportedAt: string;
   };
   pauseIntervals?: ProductionPause[];
+  sourceOrderId?: string;
+  sourceOrderVersion?: number;
+  sourceSnapshot?: {
+    doNo: string;
+    materialCode: string;
+    description: string;
+    quantity: number;
+    unit: "MT" | "Bags";
+  };
+  bagWeightKgSnapshot?: number;
 }
 
 export interface JobInput {
@@ -88,6 +98,12 @@ export interface Settings {
   slowProductPrefixes: string[];
   slowRatePM2: number;
   downtime: Downtime[];
+  calendarCutover?: {
+    effectiveFrom: string;
+    priorDayStart: string;
+    priorAvailableHours: number;
+    activatedAt: string;
+  };
 }
 
 export interface HistoryEvent {

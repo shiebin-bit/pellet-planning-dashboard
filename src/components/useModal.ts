@@ -1,0 +1,26 @@
+import { useEffect, useRef } from 'react';
+
+/** Shared keyboard/focus behaviour for the Data dialogs. */
+export function useModal(onClose: () => void) {
+  const dialog = useRef<HTMLElement>(null);
+  const close = useRef(onClose); close.current = onClose;
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null;
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    dialog.current?.querySelector<HTMLElement>('[data-autofocus],button,input,select')?.focus();
+    const key = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close.current(); }
+      if (event.key === 'Tab') {
+        const controls = Array.from(dialog.current?.querySelectorAll<HTMLElement>('button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex="0"]') ?? []).filter(element => element.offsetParent !== null && !element.closest('[inert]'));
+        if (!controls.length) { event.preventDefault(); dialog.current?.focus(); return; }
+        const first = controls[0], last = controls.at(-1)!;
+        if (event.shiftKey && (document.activeElement === first || !dialog.current?.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+      }
+    };
+    window.addEventListener('keydown', key);
+    return () => { document.body.style.overflow = overflow; window.removeEventListener('keydown', key); if (previous?.isConnected && !previous.closest('[inert]')) previous.focus(); };
+  }, []);
+  return dialog;
+}

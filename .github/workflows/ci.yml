@@ -65,4 +65,5 @@ jobs:
           path: |
             output/playwright/database/
             output/playwright/redesign/
+            output/playwright/data/
           if-no-files-found: ignore

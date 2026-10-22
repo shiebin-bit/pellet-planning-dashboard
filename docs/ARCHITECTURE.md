@@ -24,7 +24,7 @@ HTTP(S) always uses the API, even if browser records exist. Its in-memory loadin
 | `src/domain/audit.ts`, `production-results.ts` | Normalized before/after snapshots and recorded pause-duration calculations |
 | `src/domain/backup.ts`, `reports.ts` | Workspace validation and report selection |
 | `src/lib/workspace.tsx`, `api.ts` | Frontend persistence provider, revisions, drafts and request retries |
-| `src/pages/`, `src/components/` | Overview, board, history, settings, dialogs and reports |
+| `src/pages/`, `src/components/` | Overview, board, Data, history, settings, dialogs and reports |
 | `src/lib/export.ts` | Client-side Excel and JSON generation |
 | `server/app.ts`, `index.ts` | HTTP boundary, static files, startup and shutdown |
 | `server/store.ts` | Transactions, revision checks, command receipts and recovery |
@@ -52,7 +52,7 @@ Do not edit tables directly: commands validate scheduling across lines/dates and
 1. A mutation opens a transaction on one database client and locks the singleton workspace row.
 2. An existing command receipt is checked before its expected revision. Identical content returns the current workspace without reapplying the action; conflicting content returns 409.
 3. A new command must match the current revision. A stale action returns 409 plus the latest workspace and makes no change.
-4. The server runs the shared planning rules and validates the complete resulting workspace. Completion, pause and resume use the server's clock.
+4. The server runs the shared planning rules and validates the complete resulting workspace. Start, completion, pause and resume use the server's clock.
 5. Jobs, history, metadata and receipt are persisted atomically; the revision advances once. Failure rolls the transaction back.
 
 Reads use a repeatable-read, read-only transaction so metadata, jobs and history belong to one snapshot. Changes are serialized at workspace level, deliberately favouring simple correctness over concurrent independent line writes. This follows node-postgres' requirement that a transaction use the [same client throughout](https://node-postgres.com/features/transactions).
@@ -91,3 +91,12 @@ The activity log has no authenticated actor and is replaced when a backup is res
 The deployed dependency audit passed on 16 October 2026 with `npm audit --omit=dev`. ExcelJS uses a tested `uuid` override to avoid its older vulnerable transitive version.
 
 The build-only `vite-plugin-singlefile → micromatch → braces` chain currently reports [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm), a deeply nested pattern denial of service. The build uses fixed local patterns rather than user-supplied patterns; these packages are removed from the runtime image. Track an upstream fix or replace that build plugin. Do not use `npm audit fix --force` without reviewing its proposed plugin downgrade and rerunning the build/offline tests. Audits reflect their run date, not a permanent guarantee.
+
+
+## Excel source orders and calendar cutover
+
+ExcelJS parses `.xlsx` in the browser; a shared normalized row contract is revalidated by the server. Import preview compares business keys (DO + material), then a revision-checked command stores the whole confirmed batch in one PostgreSQL transaction. `source_imports` retains provenance and as-of dates; `source_orders` has stable identity/delivery state; `source_order_versions` retains immutable imported payloads. Source data is queried independently of the 15-second planning workspace refresh. File formulas are not evaluated.
+
+`jobs.source_order_id` projects the nullable link from the JSON payload. A partial unique index enforces one noncancelled card per order. Jobs retain source version, source quantity/code snapshot and Bags weight snapshot. Source changes flag review; existing card data is never overwritten. Planning Undo excludes source tables. Restore/reset captures a full source recovery copy; portable backup v3 downloads source data on demand.
+
+The calendar cutover command records its effective MYT date and prior calendar. Past pending tasks use that prior calendar for all segments, including overflow. Started/completed tasks use locked absolute segments; any legacy unlocked execution plan is frozen before cutover. Pending work allocates around locked segments and downtime and may delay later assigned dates. Validation rejects actual overlaps, not legitimate queue spill into another assigned day. Start uses the transaction's server timestamp and existing command receipts preserve that timestamp on retries.

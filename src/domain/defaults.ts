@@ -4,8 +4,8 @@ export function createDefaultSettings(): Settings {
   return {
     siteName: "Pellet Plant",
     timeZone: "Asia/Kuala_Lumpur",
-    dayStart: "08:30",
-    availableHours: 23,
+    dayStart: "07:00",
+    availableHours: 12,
     changeoverMinutes: 30,
     bagWeightKg: 50,
     rates: { PM1: 8.5, PM2: 7.5, PM3: 6.5, PM4: 7 },
