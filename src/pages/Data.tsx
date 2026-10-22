@@ -58,7 +58,7 @@ export function DataBrowser({ onChoose, compact = false }: { onChoose?: (order: 
     }).catch(reason => { if (version === request.current) setError(reason instanceof Error ? reason.message : 'Orders could not be loaded.'); }).finally(() => { if (version === request.current) setLoading(false); });
     return () => { request.current++; };
   }, [query, filters, page, savedAt, reload, today]);
-  useEffect(() => { if (detail) void showDetail(detail.id); }, [savedAt]);
+  useEffect(() => { if (detail) void showDetail(detail.id); }, [savedAt, today, reload]);
   useEffect(() => () => { detailRequest.current++; }, []);
   const change = (key: keyof typeof filters, value: string) => { setFilters(previous => ({ ...previous, [key]: value })); setPage(1); detailRequest.current++; setDetail(null); };
   async function showDetail(id: string) {
