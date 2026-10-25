@@ -50,6 +50,14 @@ History 可以同时按日期、产线、状态和关键字筛选。Export 可�
 
 History 顶部显示全部匹配记录的记录数、完成数、计划 MT（排除取消）以及已记录的实际 MT 和覆盖数。生产记录和活动日志每页 50 条；换筛选或标签会回到第一页。活动日志按自己的关键字及日期统计。新操作会显示 FIELD／BEFORE／AFTER，包含数量、产线、开始／完成、暂停／恢复、产品清单和 Settings 的修改；旧记录保留原来的文字。关键字也能搜索修改前的值。分页只影响画面，报表仍包含所选日期／产线范围的全部记录。
 
+History、Stock 和 Daily stock 在列表上方及下方都能翻页。长表格在列表区域内上下滚动，表头保持可见；窄屏可用 Left／Right 查看其他栏位，右侧操作栏保持可见。换页或筛选会回到表格开头。
+
+顶部 **Planning date** 用于排程及快捷生产报表。History 的日期输入筛选生产日期（Activity log 则筛选操作日期）；Data 的日期筛选交货日期，交期天数按今天的马来西亚日期计算。Stock 的 Snapshot date 是当前台账快照生成日期，台账包含所有已入账变动；Inventory baseline 和 Last verified stock count 分别显示基准和最近盘点日期。Daily stock 使用自己的 **Stock date**。这些范围独立，页面会显示当前日期用途。
+
+Export 的 **Excel report** 和 **Print / save as PDF** 使用顶部 Planning date 及全部四条产线，页面搜索、状态、日期筛选和分页不会套用。菜单会列出该日期；**Date range report** 使用弹窗内选定的日期及产线，也不套用页面搜索／状态。Workspace backup 包含所有日期的资料，数据库版包括订单及库存台账，离线版包含排程、产品清单和 Settings。
+
+Daily stock 的 **Enter physical count** 会立即打开盘点弹窗，载入所选产品、库存日期及 Medication／FMR 组合。填写实盘数量及调整原因，再确认差异；原台账保留。关闭后回到原记录和滚动位置；未保存的表单会关闭，已经确认的盘点不会撤回。断线时保留弹窗并使用 Retry connection 确认同一次调整。
+
 ## 断线或同时修改
 
 出现 Saving 时等待确认。若提示保存无法确认，保留表单，恢复 Docker/数据库连接后按 Retry connection。同一个请求会重复确认，避免新增两份任务。

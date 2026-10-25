@@ -227,7 +227,7 @@ const wait=async(fn)=>{
     assert.ok((await page.locator('.history-page tbody').textContent()).includes('QA-DB-A'));
     await page.getByRole('button',{name:'Export',exact:true}).click();
     const downloadEvent=page.waitForEvent('download');
-    await page.getByRole('button',{name:'Excel report Four lines + actual timestamps',exact:true}).click();
+    await page.getByRole('button',{name:/^Excel report/}).click();
     const download=await downloadEvent;const xlsx=path.join(output,'database-report.xlsx');await download.saveAs(xlsx);
     const ExcelJS=require('exceljs');const book=new ExcelJS.Workbook();await book.xlsx.readFile(xlsx);
     const actualRows=book.getWorksheet('Actual production').getSheetValues();

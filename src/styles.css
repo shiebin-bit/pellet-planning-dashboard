@@ -2086,6 +2086,10 @@ tbody tr:last-child td {
 .date-picker-trigger>svg:first-child {
   color: #6c7b86;
 }
+.date-picker-trigger { padding-block: 5px; }
+.date-picker-value { display: flex; flex-direction: column; gap: 2px; text-align: left; }
+.date-picker-value>small { font-size: 10px; font-weight: 400; color: var(--muted); line-height: 1.1; }
+.export-scope-note { margin: 5px 10px 8px; border-top: 1px solid var(--border); padding-top: 10px; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .date-picker-trigger>svg:last-child {
   margin-left: auto;
   color: var(--muted);

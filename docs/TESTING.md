@@ -2,6 +2,8 @@
 
 Use Node 24.x. `npm ci` installs the lockfile exactly.
 
+`tests/browser-table-ux.cjs` adds fictional 57-row stock/history fixtures in the isolated test database. It checks synchronized top/bottom pagination, empty-filter recovery, bounded scrolling/sticky headers, horizontal controls at desktop/390/320px, bottom-row physical-count modal focus/scroll restoration, close-before-load cancellation, retained drafts and idempotent retry after a lost adjustment response. It also verifies independent planning/stock/history date labels and reads the downloaded quick Excel to prove empty History filters do not truncate a planning-day report. All fixtures/screenshots stay in ignored `output/playwright/table-ux`; the original test workspace is restored in `finally`.
+
 ```powershell
 npm test
 npm run build

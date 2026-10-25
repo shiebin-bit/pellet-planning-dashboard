@@ -10,3 +10,10 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
+.stock-date-context { display: flex; flex-wrap: wrap; gap: 16px 32px; padding: 14px 0; border-block: 1px solid var(--border); margin: 16px 0 10px; }
+.stock-date-context dt { color: var(--muted); font-size: 12px; margin-bottom: 5px; }
+.stock-date-context dd { margin: 0; font-size: 14px; font-weight: 600; }
+.stock-balance-help { color: var(--muted); font-size: 12px; }
+.daily-stock-browser td small { display: block; }
+.daily-stock-browser>.date-scope { padding-inline: 0; border-bottom: 0; }
+.detail-dialog .inventory-inline-form>div:first-child { flex-basis: 100%; overflow-wrap: anywhere; }

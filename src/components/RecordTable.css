@@ -1,0 +1,24 @@
+.record-table { min-width: 0; }
+.record-table-scroll { max-height: min(62dvh, 640px); overscroll-behavior: contain; scrollbar-gutter: stable; }
+.record-table-scroll:focus-visible { outline: 2px solid var(--action); outline-offset: -2px; }
+.record-table-scroll th { position: sticky; top: 0; z-index: 2; background: #f5f7f8; }
+.record-table-scroll th:last-child,.record-table-scroll td:last-child { position: sticky; right: 0; background: #fff; box-shadow: -5px 0 8px -6px #17354b70; }
+.record-table-scroll td:last-child { z-index: 1; }
+.record-table-scroll th:last-child { z-index: 3; background: #f5f7f8; }
+.record-table-tools { display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: #f5f7f8; border-bottom: 1px solid var(--border); }
+.record-table-tools>span { flex: 1; font-size: 12px; color: var(--muted); }
+.record-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 12px 16px; font-size: 12px; }
+.record-pagination-top { border-bottom: 1px solid var(--border); }
+.record-pagination-bottom { border-top: 1px solid var(--border); }
+.record-pagination nav { display: flex; align-items: center; gap: 10px; }
+.record-pagination nav>span { color: var(--muted); white-space: nowrap; }
+.record-pagination .button { min-height: 36px; padding: 7px 10px; font-size: 12px; }
+.date-scope { padding: 12px 18px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; line-height: 1.6; }
+.date-scope strong { color: var(--text); font-weight: 600; }
+@media(max-width: 600px) {
+  .record-pagination { padding: 10px 12px; gap: 8px; }
+  .record-pagination nav { width: 100%; justify-content: space-between; gap: 6px; }
+  .record-pagination .button,.record-table-tools .button { min-height: 44px; }
+  .record-pagination nav>span { font-size: 11px; }
+  .date-scope { padding-inline: 12px; }
+}

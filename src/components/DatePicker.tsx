@@ -76,7 +76,7 @@ export function DatePicker({ value, onChange }: { value: string; onChange: (valu
         setView(monthStart(value)); setFocused(value); setOpen(true);
         requestAnimationFrame(() => root.current?.querySelector<HTMLButtonElement>('[data-date="' + value + '"]')?.focus());
       }}>
-      <CalendarDays size={18}/><span>{dateLabel(value)}</span><ChevronDown size={16}/>
+      <CalendarDays size={18}/><span className="date-picker-value"><small>Planning date</small><span>{dateLabel(value)}</span></span><ChevronDown size={16}/>
     </button>
     {open && <div className="calendar-popover" role="dialog" aria-label="Choose planning date">
       <div className="calendar-heading">

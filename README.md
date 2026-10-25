@@ -34,10 +34,11 @@ The default setup serves only this PC. It has no login or user roles. Company-wi
 | Production details | Add/edit in a dialog; searchable product catalog with description/default delivery; manual products; bags or bulk, orders, bins, remarks and issues |
 | Copy planning | Select manual cards by source date/line (linked Excel orders are excluded), enter fresh order references and adjusted quantities, preview target utilisation/carry-over, then append the batch atomically |
 | Data | Customer orders, Excel worksheet/header mapping, validated import preview, retained order versions, searchable orders and delivery/deadline filters; 50 rows per page |
-| Stock | Separate inventory page with Stock and Daily stock tabs; on-hand/reserved/available balances, stock policies, physical counts and movement history |
+| Stock | Separate Stock and Daily stock tabs; on-hand/reserved/available balances, explicit snapshot/baseline/count dates, stock policies, physical-count dialogs and movement history |
 | Inventory | Separate Bags/bulk stock, exact Medication/FMR compatibility buckets, MTO/MTS policy, reservations, auditable stock movements, daily balances and reviewable planning drafts |
 | Actual production | Start records the current server time; running cards accept daily production receipts; Done asks for the final cumulative output and records the server's end time; later output corrections retain the original timestamps; pause/resume with reasons and recorded stop durations |
 | History | Combined date/line/status/search filters; totals across all matches, actual-output coverage; records and activity in pages of 50; before/after changes for edits, moves, execution, settings and catalog |
+| Table navigation | Stock, daily stock and production history use bounded scrolling, sticky headers/actions, horizontal controls and synchronized top/bottom pagination; date labels distinguish list filters from planning-day exports |
 | Reports | Daily or up to 31 days; optional line selection; numeric Excel output with production-stop intervals; A4 landscape print/Save as PDF |
 | Settings and backup | Product catalog with deactivate/reactivate; calendar, rates, bag weight and downtime; version 4 JSON backup including the source graph and full inventory ledger; workspace recovery; PostgreSQL dumps |
 
