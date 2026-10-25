@@ -18,7 +18,7 @@ async function bounds(locator,width,height){const b=await locator.boundingBox();
  try{
   await command({type:'workspace.resetDemo',date:today()});
   const demo=(await get()).state;
-  Object.assign(demo.jobs[0],{productCode:'7.0312008522050',description:'Fictional finisher pellet product with a deliberately long description for preview wrapping',orderNo:'QA-PREVIEW-LONG-ORDER-REFERENCE'});
+  Object.assign(demo.jobs[0],{productCode:'QA-PREVIEW-MATERIAL-0000001',description:'Fictional finisher pellet product with a deliberately long description for preview wrapping',orderNo:'QA-PREVIEW-LONG-ORDER-REFERENCE'});
   await command({type:'workspace.restore',backup:demo});
   browser=await chromium.launch({headless:true,...(!existsSync(chromium.executablePath())?{channel:'chrome'}:{})});
   const context=await browser.newContext({viewport:{width:1366,height:768},timezoneId:'Asia/Kuala_Lumpur',reducedMotion:'reduce'});
