@@ -45,7 +45,7 @@ async function fixture(file) {
   const bag=stock.items.find(i=>i.unit==='Bags');const order=progress.orders.find(o=>o.unit==='Bags');
   assert.equal(bag.totalOnHand,30); assert.equal(bag.totalReserved,30);assert.equal(order.netToPlan,70);
   console.log('PASS XLSM import establishes closing stock once, preserves item bag weight and reserves physical stock');
-  await page.getByRole('button',{name:'QA-BAG-100',exact:true}).click(); await page.getByRole('region',{name:'Order details'}).waitFor();await page.getByText('Still to plan',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'QA-BAG-100',exact:true}).click(); await page.getByRole('dialog',{name:'Order details'}).waitFor();await page.getByText('Still to plan',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Close order details',exact:true}).click();
   await page.getByRole('button',{name:'Generate planning',exact:true}).click(); const draft=page.getByRole('dialog',{name:'Generate planning draft',exact:true});
   await draft.getByLabel('Plan from',{exact:true}).fill(tomorrow);await draft.getByLabel('Plan through',{exact:true}).fill(tomorrow);await draft.getByRole('button',{name:'Generate draft',exact:true}).click();
@@ -80,9 +80,17 @@ async function fixture(file) {
   assert.ok(await page.locator('.inventory-workspace .source-table tbody tr').evaluateAll(rows=>rows.every(row=>[row.cells[0],row.cells[1]].every(cell=>{const bounds=cell.getBoundingClientRect();return [...cell.querySelectorAll('strong,small')].every(text=>{const range=document.createRange();range.selectNodeContents(text);return [...range.getClientRects()].every(rect=>rect.left>=bounds.left&&rect.right<=bounds.right-8);});}))), 'Long product and variant text stays inside its own table column');
   const stockTab=page.getByRole('tab',{name:'Stock',exact:true});await stockTab.focus();await page.keyboard.press('ArrowRight');
   await page.getByLabel('Stock date',{exact:true}).waitFor();assert.equal(await page.getByRole('tab',{name:'Daily stock',exact:true}).getAttribute('aria-selected'),'true');
-  await page.keyboard.press('Home');await page.getByRole('button',{name:'Manage stock'}).first().click();
+  await page.keyboard.press('Home');const manage=page.getByRole('button',{name:'Manage stock'}).last();await manage.scrollIntoViewIfNeeded();const stockScroll=await page.evaluate(()=>scrollY);await manage.click();
+  const stockDetails=page.getByRole('dialog',{name:'Manage stock',exact:true});await stockDetails.waitFor();
+  assert.ok(await stockDetails.evaluate(el=>el.getBoundingClientRect().bottom<=innerHeight));assert.equal(await page.locator('#root').evaluate(el=>el.inert),true);
+  let stockSummaryReached=false;for(let n=0;n<12;n++){await page.keyboard.press('Tab');assert.ok(await stockDetails.evaluate(el=>el.contains(document.activeElement)));stockSummaryReached ||= await page.evaluate(()=>document.activeElement.tagName==='SUMMARY');}assert.ok(stockSummaryReached,'Stock adjustment disclosure remains keyboard reachable');
+  await stockDetails.getByLabel('Safety stock (Bags)',{exact:true}).fill('25');await stockDetails.getByRole('button',{name:'Save stock policy',exact:true}).click();
+  await wait(async()=>(await json('/api/inventory')).items.find(item=>item.itemId===bag.itemId).targetQuantity===25);await stockDetails.getByRole('status').filter({hasText:'Stock policy saved'}).waitFor();
   await page.getByRole('heading',{name:'Stock movements',exact:true}).waitFor();await page.screenshot({path:path.join(output,'stock-desktop.png'),fullPage:true});
-  await page.getByRole('button',{name:'Close stock details',exact:true}).click();await page.getByRole('tab',{name:'Daily stock',exact:true}).click();await page.getByLabel('Stock date',{exact:true}).fill(yesterday);await wait(async()=>await page.locator('.source-table tbody tr').count()===2);
+  await page.keyboard.press('Escape');await stockDetails.waitFor({state:'hidden'});assert.equal(await manage.evaluate(el=>el===document.activeElement),true);assert.ok(Math.abs((await page.evaluate(()=>scrollY))-stockScroll)<3,'Closing stock details preserves list scroll');
+  for(const viewport of [{width:390,height:844},{width:320,height:760}]){await page.setViewportSize(viewport);await manage.click();await stockDetails.waitFor();assert.ok(await stockDetails.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;}));await page.screenshot({path:path.join(output,'stock-details-'+viewport.width+'.png')});await page.keyboard.press('Escape');await stockDetails.waitFor({state:'hidden'});}
+  await page.setViewportSize({width:1440,height:900});
+  await page.getByRole('tab',{name:'Daily stock',exact:true}).click();await page.getByLabel('Stock date',{exact:true}).fill(yesterday);await wait(async()=>await page.locator('.source-table tbody tr').count()===2);
   const after=await json('/api/backup');assert.equal(after.schemaVersion,4);assert.ok(after.inventory.ledger.length>=3);
   for(const viewport of [{width:390,height:844},{width:320,height:760}]){await page.setViewportSize(viewport);await page.waitForTimeout(350);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(output,`daily-${viewport.width}.png`),fullPage:true});}
   assert.deepEqual(errors,[]);console.log('PASS stock ledger, daily stock, backup v4, desktop/mobile rendering and browser console');
