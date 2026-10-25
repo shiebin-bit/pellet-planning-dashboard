@@ -108,6 +108,8 @@ Data 页面专门查看 Orders；左侧独立的 Stock 页面包含 Stock 和 Da
 
 Orders 分开显示订单量、现货预留、累计生产、已取货、仍需生产和已排未入库数量。历史 DONE 表示已备齐，OUT 表示已取走；它们不会再次增加或扣减基准库存。Medication、FMR／OMED 后续由人工维护，SAP 再导入不会覆盖。
 
+每天重复导入按 DO no + 完整 Material code 对应同一张订单，不会累加订单数量或重复入库。例如订单原为 100 袋，Dashboard 已生产并预留 70 袋，SAP 次日仍显示 100 袋，仍按总订单 100 袋计算，缺口为 30 袋。Excel 的数量或交期改变时，确认导入会更新来源资料并保留旧版本；已发生的生产和取货流水、人工 Medication／FMR 及现有排产不会被清空。文件缺少某张订单也不会自动删除或标记 OUT。当前没有按 SAP 导出时间阻挡旧文件的机制，导入旧快照可能把来源数量／交期改回旧值，确认前须核对文件日期和变更预览。库存默认不随重复订单导入覆盖；盘点对账须另行确认差异。
+
 Stock 可按产品、策略和 Medication／FMR 筛选，修改 25／50kg 袋重、安全库存及固定／百分比超产设置。袋装、散装独立核算。数字安全库存为 Make for stock；PER ADVICE 为 Make for order；空白政策须确认后才自动补库存。安全库存适用于标准版本，药物／FMR 版本按其独立订单排产。
 
 Daily stock 可选日期查看 Opening、Production、Received、Return、Rework、Issue、Adjustment、Closing，并按 Enter physical count 输入盘点数量及原因，预览差异后确认。后续库存 Excel 导入默认只更新订单；如需盘点对账，勾选 Reconcile physical Closing，核对每项差异后确认，不会覆盖原流水。

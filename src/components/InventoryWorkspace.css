@@ -1,1 +1,12 @@
 .inventory-toolbar{display:flex;gap:14px;align-items:end;flex-wrap:wrap;margin:18px 0}.inventory-toolbar .field{min-width:160px;flex:1}.inventory-toolbar .checkbox-label{padding:10px 0}.inventory-detail{padding:22px;margin:18px 0}.inventory-detail>header{display:flex;align-items:center;justify-content:space-between;gap:12px}.inventory-detail h2{font-size:18px}.inventory-inline-form{display:flex;gap:12px;align-items:end;flex-wrap:wrap;padding:18px 0;border-bottom:1px solid var(--border,#dfe4df);margin-bottom:18px}.inventory-inline-form .field{flex:1;min-width:130px}.inventory-metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:15px;padding:18px 0}.inventory-metrics span{display:block;font-size:12px;color:var(--muted,#657166);margin-bottom:7px}.inventory-metrics strong{font-size:18px}.inventory-order-panel{margin:16px 0;border-top:1px solid var(--border,#dfe4df);border-bottom:1px solid var(--border,#dfe4df);padding-bottom:15px}.inventory-tabs{display:flex;gap:5px;border-bottom:1px solid var(--border,#dfe4df);margin-bottom:20px}.inventory-tabs button{padding:13px 20px;border:0;background:transparent;color:#5a675c;cursor:pointer;font:inherit;border-bottom:3px solid transparent}.inventory-tabs button[aria-selected=true]{font-weight:700;color:#17492a;border-bottom-color:#398746}.inventory-workspace details{margin:15px 0}.inventory-workspace summary{cursor:pointer;padding:10px 0;font-weight:600}.inventory-workspace table small{display:block}.draft-edit-table input,.draft-edit-table select{max-width:150px;min-height:36px}.draft-edit-table td{vertical-align:middle}.draft-summary{padding:14px 0;display:flex;gap:24px;flex-wrap:wrap}.draft-summary strong{font-size:22px;display:block}.draft-summary span{font-size:12px;color:#637066}.draft-line-stats{display:flex;gap:10px;flex-wrap:wrap}.draft-line-stats span{padding:8px 12px;background:#edf4ec;border-radius:4px;font-size:13px}@media(max-width:700px){.inventory-detail{padding:15px}.inventory-tabs button{padding:12px}.inventory-inline-form .field{min-width:130px}.inventory-toolbar .field{min-width:140px}.inventory-metrics{grid-template-columns:repeat(2,1fr)}}
+.inventory-workspace .source-table td:first-child {
+  min-width: 240px;
+  max-width: 320px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.inventory-workspace .source-table td:nth-child(2) {
+  min-width: 140px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

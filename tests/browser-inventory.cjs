@@ -23,7 +23,7 @@ async function fixture(file) {
  }
  const d = b.addWorksheet('18th'); d.getCell('R14').value = new Date(yesterday+'T00:00:00Z');
  for (const [n, code, mode, weight, opening, target] of [[18,'7.0000000000025','BAG',25,30,20],[75,'7.0000000000000','BULK',null,0,'PER ADVICE']]) {
-  d.getCell(n,2).value=code; d.getCell(n,3).value='Fictional feed'; if(weight)d.getCell(n,4).value=weight; d.getCell(n,6).value=mode;
+  d.getCell(n,2).value=code; d.getCell(n,3).value='Fictional poultry feed with a long product description for finished-goods stock'; if(weight)d.getCell(n,4).value=weight; d.getCell(n,6).value=mode;
   d.getCell(n,7).value=opening; d.getCell(n,8).value={formula:'0',result:0};d.getCell(n,13).value=opening; d.getCell(n,14).value=target;
  }
  await b.xlsx.writeFile(file);
@@ -76,6 +76,8 @@ async function fixture(file) {
   await page.getByRole('heading',{name:'Stock',exact:true}).waitFor();assert.equal(new URL(page.url()).hash,'#/stock');
   assert.equal(await page.getByLabel('Search order data').count(),0);
   await page.reload();await page.getByRole('heading',{name:'Stock',exact:true}).waitFor();
+  await page.getByRole('button',{name:'Manage stock'}).first().waitFor();
+  assert.ok(await page.locator('.inventory-workspace .source-table tbody tr').evaluateAll(rows=>rows.every(row=>[row.cells[0],row.cells[1]].every(cell=>{const bounds=cell.getBoundingClientRect();return [...cell.querySelectorAll('strong,small')].every(text=>{const range=document.createRange();range.selectNodeContents(text);return [...range.getClientRects()].every(rect=>rect.left>=bounds.left&&rect.right<=bounds.right-8);});}))), 'Long product and variant text stays inside its own table column');
   const stockTab=page.getByRole('tab',{name:'Stock',exact:true});await stockTab.focus();await page.keyboard.press('ArrowRight');
   await page.getByLabel('Stock date',{exact:true}).waitFor();assert.equal(await page.getByRole('tab',{name:'Daily stock',exact:true}).getAttribute('aria-selected'),'true');
   await page.keyboard.press('Home');await page.getByRole('button',{name:'Manage stock'}).first().click();
