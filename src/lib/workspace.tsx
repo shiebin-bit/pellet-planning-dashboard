@@ -15,9 +15,9 @@ import { PREVIOUS_WORKSPACE_KEY, storeRestoredWorkspace } from './restore';
 import { ApiError, readDatabaseWorkspace, sendCommand } from './api';
 import type { CommandRequest } from './api';
 
-export type Page = 'overview' | 'planning' | 'data' | 'history' | 'settings';
+export type Page = 'overview' | 'planning' | 'data' | 'stock' | 'history' | 'settings';
 const STORAGE_KEY = 'millplan.workspace.v1';
-const PAGES: Page[] = ['overview', 'planning', 'data', 'history', 'settings'];
+const PAGES: Page[] = ['overview', 'planning', 'data', 'stock', 'history', 'settings'];
 const databaseMode = window.location.protocol !== 'file:';
 function readPage(): Page {
   const candidate = window.location.hash.replace('#/', '').split('?')[0];

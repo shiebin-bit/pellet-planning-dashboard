@@ -70,7 +70,15 @@ async function fixture(file) {
   await wait(async()=>(await json('/api/inventory/orders')).orders.find(o=>o.sourceOrderId===order.sourceOrderId).delivered===50);
   progress=await json('/api/inventory/orders');assert.equal(progress.orders.find(o=>o.sourceOrderId===order.sourceOrderId).orderNeed,30);
   console.log('PASS automatic draft produces 70 order bags plus 20 safety-stock bags; partial production and collection update remaining quantities');
-  await page.getByRole('button',{name:'Close order details',exact:true}).click(); await page.getByRole('tab',{name:'Stock',exact:true}).click(); await page.getByRole('button',{name:'Manage stock'}).first().click();
+  await page.getByRole('button',{name:'Close order details',exact:true}).click();
+  assert.equal(await page.getByRole('tablist',{name:'Stock sections'}).count(),0);
+  await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Stock',exact:true}).click();
+  await page.getByRole('heading',{name:'Stock',exact:true}).waitFor();assert.equal(new URL(page.url()).hash,'#/stock');
+  assert.equal(await page.getByLabel('Search order data').count(),0);
+  await page.reload();await page.getByRole('heading',{name:'Stock',exact:true}).waitFor();
+  const stockTab=page.getByRole('tab',{name:'Stock',exact:true});await stockTab.focus();await page.keyboard.press('ArrowRight');
+  await page.getByLabel('Stock date',{exact:true}).waitFor();assert.equal(await page.getByRole('tab',{name:'Daily stock',exact:true}).getAttribute('aria-selected'),'true');
+  await page.keyboard.press('Home');await page.getByRole('button',{name:'Manage stock'}).first().click();
   await page.getByRole('heading',{name:'Stock movements',exact:true}).waitFor();await page.screenshot({path:path.join(output,'stock-desktop.png'),fullPage:true});
   await page.getByRole('button',{name:'Close stock details',exact:true}).click();await page.getByRole('tab',{name:'Daily stock',exact:true}).click();await page.getByLabel('Stock date',{exact:true}).fill(yesterday);await wait(async()=>await page.locator('.source-table tbody tr').count()===2);
   const after=await json('/api/backup');assert.equal(after.schemaVersion,4);assert.ok(after.inventory.ledger.length>=3);

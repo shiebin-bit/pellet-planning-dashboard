@@ -7,7 +7,7 @@ import { dateLabel, fullDateTime, localDate, numberLabel } from '../lib/format';
 import { useWorkspace } from '../lib/workspace';
 import { EmptyState } from '../components/Shared';
 import './Data.css';
-import { StockBrowser, DailyStockBrowser, StockOrderPanel } from '../components/InventoryWorkspace';
+import { StockOrderPanel } from '../components/InventoryWorkspace';
 import { AutoPlanningButton } from '../components/InventoryDraftDialog';
 import { readInventoryOrders, readInventory } from '../lib/inventoryApi';
 import type { InventoryOrderProgress } from '../domain/inventoryTypes';
@@ -24,8 +24,7 @@ export function DayCount({ value, stopped, label }: { value: number | null; stop
 }
 export function DataPage() {
   const { storageMode, openImport, mutationLocked, hasConflict } = useWorkspace();
-  const [tab, setTab] = useState('orders');
-  return <div className="page data-page"><div className="page-heading"><div><h1>Orders & stock</h1><p>Match customer demand to available stock, production and collections.</p></div><div className="inventory-toolbar"><AutoPlanningButton/><button className="button primary" disabled={storageMode !== 'database' || mutationLocked || hasConflict} onClick={openImport}><Upload size={16}/>Import Excel</button></div></div>{storageMode === 'database' ? <><div className="inventory-tabs" role="tablist" aria-label="Data sections">{[['orders','Orders'],['stock','Stock'],['daily','Daily stock']].map(([id,label]) => <button key={id} id={`data-tab-${id}`} role="tab" aria-selected={tab === id} aria-controls={`data-panel-${id}`} onClick={() => setTab(id)}>{label}</button>)}</div><div role="tabpanel" id={`data-panel-${tab}`} aria-labelledby={`data-tab-${tab}`}>{tab === 'orders' ? <DataBrowser/> : tab === 'stock' ? <StockBrowser/> : <DailyStockBrowser/>}</div></> : <div className="notice warning">Orders and stock require the PostgreSQL workspace. Manual planning remains available offline.</div>}</div>;
+  return <div className="page data-page"><div className="page-heading"><div><h1>Orders</h1><p>Review customer orders, production progress and collections.</p></div><div className="inventory-toolbar"><AutoPlanningButton/><button className="button primary" disabled={storageMode !== 'database' || mutationLocked || hasConflict} onClick={openImport}><Upload size={16}/>Import Excel</button></div></div>{storageMode === 'database' ? <DataBrowser/> : <div className="notice warning">Orders require the PostgreSQL workspace. Manual planning remains available offline.</div>}</div>;
 }
 
 export function DataBrowser({ onChoose, compact = false }: { onChoose?: (order: SourceOrderSummary) => void; compact?: boolean }) {

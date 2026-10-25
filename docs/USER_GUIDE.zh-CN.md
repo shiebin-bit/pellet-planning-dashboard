@@ -104,7 +104,7 @@ Data 的 Plan production 或 Planning board 的 Plan from Data 使用同一个�
 
 ## 库存与订单进度
 
-Data 分为 Orders、Stock、Daily stock。先导入 daily stock 工作簿：订单取自 bag order、bulk order；首次以日期页 Closing 建立库存基准。系统只读数据，不执行宏；Packing bin 汇总不作为可分配库存。
+Data 页面专门查看 Orders；左侧独立的 Stock 页面包含 Stock 和 Daily stock 两个标签。两个页面都可按 Import Excel 导入 daily stock 工作簿：订单取自 bag order、bulk order；首次以日期页 Closing 建立库存基准。系统只读数据，不执行宏；Packing bin 汇总不作为可分配库存。
 
 Orders 分开显示订单量、现货预留、累计生产、已取货、仍需生产和已排未入库数量。历史 DONE 表示已备齐，OUT 表示已取走；它们不会再次增加或扣减基准库存。Medication、FMR／OMED 后续由人工维护，SAP 再导入不会覆盖。
 

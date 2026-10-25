@@ -38,7 +38,7 @@ async function bounds(locator,width,height){const b=await locator.boundingBox();
     await page.keyboard.press('Escape');await navigation.waitFor({state:'hidden'});assert.ok(await page.getByRole('button',{name:'Open navigation',exact:true}).evaluate(el=>el===document.activeElement),'Menu returns focus to its trigger');
    }
    const navigate=async label=>{if(viewport.width<=600)await page.getByRole('button',{name:'Open navigation',exact:true}).click();await page.getByRole('button',{name:label,exact:true}).click();};
-   for(const label of ['Overview','Data','History','Settings','Planning board']){
+   for(const label of ['Overview','Data','Stock','History','Settings','Planning board']){
     await navigate(label);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${label} has no page overflow at ${viewport.width}px`);
    }
    await page.locator('.date-picker-trigger').click();await bounds(page.getByRole('dialog',{name:'Choose planning date'}),viewport.width,viewport.height);await page.getByLabel('Calendar month').waitFor();await page.getByLabel('Calendar year').waitFor();await page.keyboard.press('Escape');
@@ -50,7 +50,7 @@ async function bounds(locator,width,height){const b=await locator.boundingBox();
    await page.getByRole('button',{name:'Export',exact:true}).click();await bounds(page.locator('.export-menu'),viewport.width,viewport.height);await page.keyboard.press('Tab');assert.ok(await page.getByRole('button',{name:'Excel report',exact:false}).evaluate(el=>el===document.activeElement),'Export skips its pointer-only scrim');await page.keyboard.press('Escape');assert.ok(await page.getByRole('button',{name:'Export',exact:true}).evaluate(el=>el===document.activeElement),'Export returns focus on Escape');await page.getByRole('button',{name:'Export',exact:true}).click();await page.getByRole('button',{name:'Date range report',exact:false}).click();modal=page.getByRole('dialog',{name:'Date range report',exact:true});await bounds(modal,viewport.width,viewport.height);await page.keyboard.press('Escape');await modal.waitFor({state:'hidden'});
    if(viewport.width<=600){await page.screenshot({path:path.join(output,`board-${viewport.width}.png`),animations:'disabled'});await navigate('History');await page.screenshot({path:path.join(output,`history-${viewport.width}.png`),animations:'disabled'});}
   }
-  console.log('PASS All five pages, direct calendar, export menu, production/copy/report dialogs and drawer fit 320/390/768/1440px; keyboard focus and Escape work');
+  console.log('PASS All six pages, direct calendar, export menu, production/copy/report dialogs and drawer fit 320/390/768/1440px; keyboard focus and Escape work');
   await page.setViewportSize({width:1366,height:768});await page.getByRole('button',{name:'Planning board',exact:true}).click();
   const samples=await page.locator('.add-production-button,.status-legend .status-badge').evaluateAll(elements=>elements.map(el=>{const s=getComputedStyle(el);return {label:el.textContent,fg:s.color,bg:s.backgroundColor};}));
   const luminance=color=>{const rgb=color.match(/[\d.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=.04045?v/12.92:((v+.055)/1.055)**2.4;});return rgb[0]*.2126+rgb[1]*.7152+rgb[2]*.0722;};

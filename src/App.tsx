@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Database, LayoutDashboard, CalendarRange, Plus, History, Settings2, Download, Menu, X, ChevronDown, FileSpreadsheet, Printer, Check, HardDrive, PanelLeftClose, Undo2 } from 'lucide-react';
+import { Database, Warehouse, LayoutDashboard, CalendarRange, Plus, History, Settings2, Download, Menu, X, ChevronDown, FileSpreadsheet, Printer, Check, HardDrive, PanelLeftClose, Undo2 } from 'lucide-react';
 import { WorkspaceProvider, useWorkspace } from './lib/workspace';
 import type { Page } from './lib/workspace';
 import { dateLabel, localDate } from './lib/format';
 import { exportExcel, exportBackup, exportDatabaseBackup, printReport } from './lib/export';
 import logo from './assets/ffm-logo.jpg';
 import { DataPage } from './pages/Data';
+import { StockPage } from './pages/Stock';
 import { ImportDialog } from './components/ImportDialog';
 import { SourcePlanningDialog } from './components/SourcePlanningDialog';
 import { Overview } from './pages/Overview';
@@ -24,6 +25,7 @@ const navigation = [
   { id: 'overview' as Page, label: 'Overview', icon: LayoutDashboard },
   { id: 'planning' as Page, label: 'Planning board', icon: CalendarRange },
   { id: 'data' as Page, label: 'Data', icon: Database },
+  { id: 'stock' as Page, label: 'Stock', icon: Warehouse },
   { id: 'history' as Page, label: 'History', icon: History },
   { id: 'settings' as Page, label: 'Settings', icon: Settings2 },
 ];
@@ -114,6 +116,7 @@ function Dashboard() {
         {page === 'overview' && <Overview />}
         {page === 'planning' && <Planning />}
         {page === 'data' && <DataPage />}
+        {page === 'stock' && <StockPage />}
         {page === 'history' && <HistoryPage />}
         {page === 'settings' && <SettingsPage />}
         <footer className="page-footer"><span>{state.settings.siteName}</span><span>{storageMode==='database'?'Database workspace · MYT (UTC+8)':'Offline · Browser storage · MYT (UTC+8)'}</span></footer>

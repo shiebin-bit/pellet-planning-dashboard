@@ -31,7 +31,7 @@ async function fits(locator,width,height){const box=await locator.boundingBox();
   const file=path.join(output,'fictional-sap.xlsx');await workbook(file);
   browser=await chromium.launch({headless:true,...(!existsSync(chromium.executablePath())?{channel:'chrome'}:{})});
   const context=await browser.newContext({viewport:{width:1366,height:768},acceptDownloads:true,timezoneId:'Asia/Kuala_Lumpur'});page=await context.newPage();page.setDefaultTimeout(15000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.goto(base+'/#/data');await page.getByRole('heading',{name:'Orders & stock',exact:true}).waitFor();await page.getByRole('button',{name:'Import Excel',exact:true}).click();
+  await page.goto(base+'/#/data');await page.getByRole('heading',{name:'Orders',exact:true}).waitFor();await page.getByRole('button',{name:'Import Excel',exact:true}).click();
   const modal=page.getByRole('dialog',{name:'Import Excel orders',exact:true});await modal.getByLabel('Excel order file').setInputFiles(file);await modal.getByRole('button',{name:'Review import',exact:true}).waitFor();await wait(()=>modal.getByRole('button',{name:'Review import',exact:true}).isEnabled());
   assert.equal(await modal.getByLabel('Header row', {exact:true}).inputValue(),'3');
   await modal.getByRole('button',{name:'Review import',exact:true}).click();await modal.getByLabel('Import preview summary').waitFor();assert.match(await modal.getByLabel('Import preview summary').innerText(),/54\s+New orders/);

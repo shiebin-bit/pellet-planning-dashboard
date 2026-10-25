@@ -4,13 +4,13 @@ This document is the operational handoff for the inventory upgrade. It describes
 
 ## Scope and operating boundary
 
-Inventory is available in the database workspace. Open **Data** to see three tabs:
+Orders and inventory are available in the database workspace on separate pages. Open **Data** for orders and **Stock** for inventory:
 
-| Tab | Use |
+| Page / tab | Use |
 | --- | --- |
-| **Orders** | Review SAP orders, stock reserved for each order, produced quantity, collected quantity, and quantity still to plan. Open an order to record production/collection and to review its import history. |
-| **Stock** | View on-hand, reserved, and available stock by product and exact compatibility bucket. Manage the product policy, physical-count adjustments, receipts, returns, and rework. |
-| **Daily stock** | Select a date and review the movement and closing balance for each product/bucket. |
+| **Data → Orders** | Review SAP orders, stock reserved for each order, produced quantity, collected quantity, and quantity still to plan. Open an order to record production/collection and to review its import history. |
+| **Stock → Stock** | View on-hand, reserved, and available stock by product and exact compatibility bucket. Manage the product policy, physical-count adjustments, receipts, returns, and rework. |
+| **Stock → Daily stock** | Select a date and review the movement and closing balance for each product/bucket. |
 
 The offline `dist/index.html` remains a planning-only workspace. It does not provide the inventory tabs or PostgreSQL stock ledger.
 
