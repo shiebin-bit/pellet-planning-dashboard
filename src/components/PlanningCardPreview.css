@@ -1,0 +1,81 @@
+.planning-card-preview {
+  position: fixed;
+  z-index: 85;
+  width: 340px;
+  max-width: calc(100vw - 24px);
+  max-height: min(460px,calc(100dvh - 24px));
+  overflow: auto;
+  background: #fff;
+  border: 1px solid #aebcc6;
+  border-top: 3px solid var(--action);
+  border-radius: 4px;
+  box-shadow: 0 8px 25px #23323f26;
+  padding: 17px;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.planning-preview-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.planning-preview-heading strong {
+  font-size: 17px;
+  line-height: 1.4;
+}
+
+.planning-preview-heading span {
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+  background: #eef2f4;
+  padding: 3px 6px;
+}
+
+.planning-card-preview>p {
+  margin: 5px 0 14px;
+  color: var(--muted);
+}
+
+.planning-card-preview dl {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.planning-card-preview dl>div {
+  display: grid;
+  grid-template-columns: 96px minmax(0,1fr);
+  gap: 10px;
+}
+
+.planning-card-preview dt {
+  color: var(--muted);
+}
+
+.planning-card-preview dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 550;
+}
+
+.planning-card-preview>small {
+  display: block;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 10px;
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.planning-card-preview p.planning-preview-issue {
+  background: var(--issue-bg);
+  color: var(--issue-text);
+  padding: 8px;
+  margin: 12px 0 0;
+}

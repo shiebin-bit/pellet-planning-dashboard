@@ -253,14 +253,17 @@ const wait=async(fn)=>{
     const backupPath=path.join(output,'restore-fixture.json');
     await fs.writeFile(backupPath,JSON.stringify({...beforeRestore,settings:{...beforeRestore.settings,siteName:'QA restored database'}}));
     await page.getByLabel('Site name',{exact:true}).fill('Unsaved settings before intentional restore');
+    await page.getByRole('tab',{name:'Backup & recovery',exact:true}).click();
     await page.getByLabel('Backup JSON file',{exact:true}).setInputFiles(backupPath);
     await page.getByRole('button',{name:'Replace workspace with this backup',exact:true}).click();
     await wait(async()=>(await get()).state.settings.siteName==='QA restored database');
     assert.deepEqual((await get()).previousBackup,beforeRestore);
     await wait(async()=>(await page.getByLabel('Site name',{exact:true}).inputValue())==='QA restored database');
-    await page.reload();await page.getByRole('button',{name:'Download previous workspace',exact:true}).waitFor();
+    await page.reload();await page.getByRole('tab',{name:'Backup & recovery',exact:true}).click();await page.getByRole('button',{name:'Download previous workspace',exact:true}).waitFor();
     const beforeDemo=(await get()).state;
+    await page.getByRole('tab',{name:'Workspace',exact:true}).click();
     await page.getByLabel('Site name',{exact:true}).fill('Unsaved settings before intentional demo reset');
+    await page.getByRole('tab',{name:'Backup & recovery',exact:true}).click();
     await page.getByRole('button',{name:'Reset demo',exact:true}).click();
     await page.getByRole('button',{name:'Replace with demo',exact:true}).click();
     await wait(async()=>(await get()).isDemo===true);

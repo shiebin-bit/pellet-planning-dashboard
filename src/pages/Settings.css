@@ -1,0 +1,165 @@
+.settings-controls {
+  position: sticky;
+  top: 8px;
+  z-index: 12;
+  background: var(--page-bg,#f4f6f7);
+  margin-bottom: 20px;
+  box-shadow: 0 4px 0 var(--page-bg,#f4f6f7);
+}
+
+.settings-savebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+}
+
+.settings-save-state {
+  display: grid;
+  grid-template-columns: 8px minmax(0,1fr);
+  align-items: center;
+  gap: 5px 9px;
+  min-width: 0;
+}
+
+.settings-save-state i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #3c7750;
+}
+
+.settings-save-state i.unsaved {
+  background: #b17b1c;
+}
+
+.settings-save-state strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-save-state span {
+  grid-column: 2;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.settings-tabs {
+  display: flex;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  background: white;
+  border: 1px solid var(--border);
+  padding: 0 10px;
+  gap: 4px;
+}
+
+.settings-tabs button {
+  flex: none;
+  padding: 13px 12px;
+  border-bottom: 3px solid transparent;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.settings-tabs button[aria-selected=true] {
+  color: var(--action);
+  border-color: var(--action);
+  font-weight: 650;
+}
+
+.settings-tabs button:hover {
+  background: #f5f7f8;
+}
+
+.settings-page [hidden] {
+  display: none!important;
+}
+
+.settings-rules-layout {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) 250px;
+  align-items: start;
+  gap: 20px;
+}
+
+.settings-backup-layout {
+  display: grid;
+  grid-template-columns: minmax(0,2fr) minmax(220px,1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.settings-backup-layout .reset-area {
+  margin: 0;
+  padding: 24px;
+  border: 1px solid #e1c5be;
+  background: #fffaf8;
+}
+
+.settings-page .catalog-panel {
+  margin-top: 0;
+}
+
+.settings-footnote {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+  margin-top: 18px;
+}
+
+.settings-page>.notice {
+  margin-bottom: 18px;
+}
+
+@media(max-width:1000px) {
+  .settings-rules-layout {
+    grid-template-columns: 1fr;
+  }
+  .settings-rules-layout .settings-info {
+    max-width: none;
+  }
+  .settings-backup-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media(max-width:600px) {
+  .settings-controls {
+    top: 0;
+  }
+  .settings-savebar {
+    align-items: flex-start;
+    padding: 12px;
+    gap: 10px;
+  }
+  .settings-save-state span {
+    display: none;
+  }
+  .settings-savebar .button {
+    padding: 8px;
+    min-height: 36px;
+    font-size: 12px;
+  }
+  .settings-savebar .button svg {
+    display: none;
+  }
+  .settings-tabs {
+    padding: 0 4px;
+  }
+  .settings-tabs button {
+    padding: 12px 9px;
+  }
+  .settings-page .form-panel {
+    padding: 16px;
+  }
+  .settings-backup-layout .reset-area {
+    padding: 18px;
+  }
+}

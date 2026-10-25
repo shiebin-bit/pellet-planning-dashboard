@@ -2887,3 +2887,8 @@ tbody tr:last-child td {
     margin-top: 20px;
   }
 }
+
+.overview-page > .capacity-panel {margin-bottom:20px}
+.overview-page > .capacity-panel .queue-toggle {flex-wrap:wrap;gap:8px}
+.overview-page > .recorded-downtime {margin-bottom:20px}
+.capacity-panel[open] .queue-toggle svg {transform:rotate(180deg)}

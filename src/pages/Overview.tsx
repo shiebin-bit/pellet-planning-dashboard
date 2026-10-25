@@ -7,7 +7,7 @@ import { SectionHeading, StatusBadge, EmptyState, TextLink } from '../components
 import { NeedsAttention,ProductionResults } from '../components/OperationsSummary';
 import { RecordedDowntime } from '../components/RecordedDowntime';
 import { getCalendarForDate } from '../domain/engine';
-import { isJobPaused } from '../domain/production-results';
+import { getProductionResult, isJobPaused } from '../domain/production-results';
 
 export function Overview() {
   const { board, state, navigate, openJob } = useWorkspace();
@@ -17,6 +17,9 @@ export function Overview() {
   const jobs = board.lines.flatMap(line => line.jobs).filter(job => job.status !== 'cancelled');
   const uniqueJobs = [...new Map(jobs.map(job => [job.id, job])).values()];
   const completed = uniqueJobs.filter(job => job.status === 'completed').length;
+  const completedFromDate=state.jobs.filter(job=>job.date===board.date&&job.status==='completed');
+  const actualRecorded=completedFromDate.map(job=>getProductionResult(job)).filter(result=>result.actualQuantityMt!==null);
+  const actualMt=actualRecorded.reduce((sum,result)=>sum+result.actualQuantityMt!,0);
   const overflows = board.lines.filter(line => line.overflowMinutes > 0);
   const queue = uniqueJobs.filter(job => job.status === 'pending' || job.status === 'running').sort((a,b) => (a.plannedStart || Infinity) - (b.plannedStart || Infinity)).slice(0, 6);
   const calendar = getCalendarForDate(state.settings, board.date);
@@ -26,8 +29,8 @@ export function Overview() {
     <div className="page-heading"><div><h1>Production overview</h1><p>Daily volume, capacity and production status.</p></div><span className="context-label">Daily production · 4 lines</span></div>
     <div className="metrics-grid">
       <Metric label="Planned volume" value={numberLabel(totalMt)} unit="MT" caption={uniqueJobs.length + ' scheduled tasks · ' + board.backlog.length + ' awaiting quantity'} />
+      <Metric label="Recorded output" value={actualRecorded.length?numberLabel(actualMt):'—'} unit="MT" caption={actualRecorded.length+' / '+completedFromDate.length+' completed tasks recorded · '+dateLabel(board.date)} />
       <Metric label="Planned utilisation" value={available ? numberLabel(production / available * 100, 0) : '—'} unit="%" caption={numberLabel(production / 60) + ' production hrs / ' + numberLabel(available / 60) + ' available hrs'} />
-      <Metric label="Production load" value={numberLabel(production / 60)} unit="hrs" caption={numberLabel(available / 60) + ' available line hours today'} />
       <Metric label="Tasks completed" value={String(completed)} unit={'/ ' + String(uniqueJobs.length)} caption="Confirmed with the Done action" />
     </div>
     <section className="panel schedule-panel">
@@ -61,17 +64,15 @@ export function Overview() {
     </section>
     <LegacyCarryoverNotice/>
     {(overflows.length > 0 || board.backlog.length > 0) && <div className="planning-notice"><AlertTriangle size={17} /><p>{overflows.length > 0 && <><strong>{overflows.map(line => line.lineId).join(', ')}</strong> continues beyond this planning day. </>}{board.backlog.length > 0 && <><strong>{board.backlog.length} tasks</strong> need a quantity before they can be scheduled.</>}</p><button onClick={() => navigate('planning')}>Review<ChevronRight size={15} /></button></div>}
-    <div className="overview-analysis">
-      <section className="panel capacity-panel" aria-label="Production line summaries">
-        <SectionHeading title="Line capacity" description="Production and open time for the selected planning day."/>
+    <div className="overview-analysis"><NeedsAttention/><ProductionResults jobs={state.jobs.filter(job=>job.date===board.date)}/></div>
+    <details className="panel capacity-panel" aria-label="Production line summaries">
+      <summary className="queue-toggle"><strong>Line capacity details</strong><span>Production, open time & carry-over<ChevronDown size={16}/></span></summary>
         <div className="capacity-scroll"><div className="capacity-ledger">
           <div className="capacity-head" aria-hidden="true"><span>Line / status</span><span>Planned</span><span>Utilisation</span><span>Production / open</span><span>Quantity / carry-over</span><span/></div>
           {board.lines.map(line => <LineSummary key={line.lineId} line={line} backlog={board.backlog.filter(job => job.lineId === line.lineId).length} onOpen={() => navigate('planning')}/>)}</div></div>
-      </section>
-      <NeedsAttention/>
-    </div>
-    <div className="overview-results"><ProductionResults jobs={state.jobs.filter(job=>job.date===board.date)}/><RecordedDowntime/></div>
-    <details className="panel queue-panel" open><summary className="queue-toggle"><strong>Next production tasks</strong><span>{queue.length} tasks<ChevronDown size={16}/></span></summary>
+    </details>
+    <RecordedDowntime/>
+    <details className="panel queue-panel"><summary className="queue-toggle"><strong>Next production tasks</strong><span>{queue.length} tasks<ChevronDown size={16}/></span></summary>
       {queue.length ? <div className="table-scroll"><table><thead><tr><th>PRODUCT / ORDER</th><th>LINE</th><th>QUANTITY</th><th>PLANNED TIME</th><th>DESTINATION</th><th>STATUS</th><th /></tr></thead><tbody>{queue.map(job => <tr key={job.id} className="clickable-row" onClick={() => openJob(job.id)}><td><div className="product-cell"><i style={{background:productColor(job.productCode)}} /><div><strong>{job.productCode}</strong><small>{job.orderNo || 'No order reference'}</small></div></div></td><td><span className="line-tag">{job.lineId}</span></td><td className="tabular">{numberLabel(job.quantityMt)} <span className="muted">MT</span></td><td className="tabular">{timeLabel(job.plannedStart)}<span className="time-arrow">→</span>{timeLabel(job.plannedEnd)}{job.overflow && <small className="text-amber"> carry-over</small>}</td><td>{job.bin ? 'Bin ' + job.bin : '—'}{job.binNeedsReview && <span className="review-dot" title="Review destination bin" />}</td><td><StatusBadge status={job.status} issue={!!job.issue} paused={isJobPaused(job)} /></td><td><button className="icon-button" aria-label={'View ' + job.productCode + ' details'} onClick={event => {event.stopPropagation();openJob(job.id);}}><ArrowUpRight size={16} /></button></td></tr>)}</tbody></table></div> : <EmptyState title="The queue is clear" text="Add a production task to plan the next run." />}
     </details>
   </div>;

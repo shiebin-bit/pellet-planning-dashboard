@@ -10,7 +10,7 @@ Built with React, TypeScript, Express and PostgreSQL 16. Docker Compose runs the
 
 Install and open **Docker Desktop** with Linux containers enabled, then double-click **`OPEN-DASHBOARD.cmd`** (or the equivalent **`START-DASHBOARD.cmd`**). Both launch the Docker application backed by PostgreSQL. The first launch builds the image and creates a private `.env` with a random database password. It may take a few minutes.
 
-Open **[http://127.0.0.1:8080](http://127.0.0.1:8080)**. A new database starts empty. Add your first production, or explicitly load sample records in Settings → Reset demo.
+Open **[http://127.0.0.1:8080](http://127.0.0.1:8080)**. A new database starts empty. Add your first production, or explicitly load sample records in Settings → Backup & recovery → Reset demo.
 
 To stop, double-click **`STOP-DASHBOARD.cmd`**. Stopping or rebuilding containers preserves the PostgreSQL volume. **Do not run `docker compose down -v` against data you need.**
 
@@ -28,7 +28,7 @@ The default setup serves only this PC. It has no login or user roles. Company-wi
 
 | Area | Features |
 | --- | --- |
-| Overview | Planned MT, utilisation, production load, completion, actual-output coverage, four line summaries, working-shift status timelines, recorded downtime by mill and items needing attention |
+| Overview | Planned MT, recorded output with completion coverage, utilisation, completion, four line summaries, working-shift status timelines, recorded downtime by mill and items needing attention |
 | Planning board | Four horizontal lines; card length follows production time; Day/Full plan; carry-over; changeover and downtime; direct date/month/year selection |
 | Card movement | Drag a pending card to another line or sequence; destination-bin review; recalculated line rate; one-step Undo; keyboard and held-touch movement |
 | Production details | Add/edit in a dialog; searchable product catalog with description/default delivery; manual products; bags or bulk, orders, bins, remarks and issues |
@@ -42,7 +42,9 @@ The default setup serves only this PC. It has no login or user roles. Company-wi
 | Reports | Daily or up to 31 days; optional line selection; numeric Excel output with production-stop intervals; A4 landscape print/Save as PDF |
 | Settings and backup | Product catalog with deactivate/reactivate; calendar, rates, bag weight and downtime; version 4 JSON backup including the source graph and full inventory ledger; workspace recovery; PostgreSQL dumps |
 
-The bright workbench keeps the planning date, Export and Add production together in the top toolbar. Overview puts daily totals and the four-line timeline first, followed by a compact line-capacity table, attention list and output/downtime details. The horizontal board fits all four mills on a 1366 × 768 display; forms and production details open over the current page. Navigation collapses to icons on tablets and a drawer on phones. Status colours always have text or accessible descriptions.
+The bright workbench keeps the planning date, Export and Add production together in the top toolbar. Overview puts daily totals and the four-line timeline first, followed by attention and output reconciliation. Line-capacity details and the next-task queue expand on demand; recorded downtime remains visible. The horizontal board fits all four mills on a 1366 × 768 display; forms and production details open over the current page. Navigation collapses to icons on tablets and a drawer on phones. Status colours always have text or accessible descriptions. Narrow planning cards show a full-code, quantity, order and dated-time preview on hover or keyboard focus; Escape dismisses the preview, Enter opens details, and Space retains keyboard dragging.
+
+Settings has Workspace, Production rules, Unavailable periods, Products, Stock policies (database only), and Backup & recovery tabs. Drafts survive tab switches. The sticky Save settings bar applies only to workspace/rate/calendar drafts; catalog and stock changes save separately. Invalid planning settings reveal and focus their section before submitting. Navigating away from Settings still discards unsaved drafts.
 
 Card colours: **gray** not started, **blue** running, **yellow** paused, **green** completed, **red** issue. Yellow stripes indicate changeover. Started/completed plans stay locked, and each line can have only one running production.
 

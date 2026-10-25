@@ -8,9 +8,9 @@
 
 ## 界面布局
 
-顶部工具栏集中日期、Today、Export 和 Add production。左侧保留 Overview、Planning board、History 和 Settings；平板会缩成图标，手机从左上角菜单展开。
+顶部工具栏集中日期、Today、Export 和 Add production。左侧保留 Overview、Planning board、Data、Stock、History 和 Settings；平板会缩成图标，手机从左上角菜单展开。
 
-Overview 先显示四项总数和当日时间轴，点产品段可查看卡片；下方 Line capacity 集中每条线的 MT、任务数、利用率、生产／空闲时间和跨日情况。Needs attention、实际产量、停机时间和待生产任务继续保留。Planning board 四条产线横向排列，电脑 1366 × 768 可完整查看；新增、复制、报表和卡片详情在当前页面弹出。
+Overview 先显示四项总数和当日时间轴，点产品段可查看卡片；四项总数是 Planned volume、Recorded output、Planned utilisation 和 Tasks completed。Recorded output 统计所选排程日期已完成任务的已记录实际产量，并显示覆盖数；不代表该自然日所有入库量。时间轴之后先看 Needs attention 和 Plan vs actual；Line capacity details 与 Next production tasks 可按需展开，停机记录继续保留。Planning board 四条产线横向排列，电脑 1366 × 768 可完整查看；新增、复制、报表和卡片详情在当前页面弹出。
 
 ## 日常 planning
 
@@ -38,7 +38,7 @@ Report a problem 是问题标记；它不会自动暂停。解决问题也不会
 
 ## 产品清单
 
-Settings 下方的 **Product catalog** 可搜索、新增、修改及停用／重新启用产品。Code 不分大小写，不能重复；停用产品仍保留在清单里。
+Settings → **Products** 的 **Product catalog** 可搜索、新增、修改及停用／重新启用产品。Code 不分大小写，不能重复；停用产品仍保留在清单里。
 
 新增生产时，在 Product code 输入 code 或名称，再点选匹配产品，系统填写说明。只有新增且尚未输入数量时，才自动套用默认 Bags／Bulk；已输入的数量及旧卡片包装方式会保留。没有匹配项可直接输入新的产品 code，不必先登记清单。修改清单不会改动旧生产记录。
 
@@ -66,9 +66,9 @@ Daily stock 的 **Enter physical count** 会立即打开盘点弹窗，载入所
 
 ## 备份和旧资料迁移
 
-Settings → Download backup 下载整个 workspace JSON。Restore JSON backup 会先预览，再由 Replace workspace 确认替换；它不会合并资料。替换或数据库版 Reset demo 前的一份 workspace 可以下载恢复，但只保留最近一次。
+Settings → **Backup & recovery** → Download backup 下载整个 workspace JSON。Restore JSON backup 会先预览，再由 Replace workspace 确认替换；它不会合并资料。替换或数据库版 Reset demo 前的一份 workspace 可以下载恢复，但只保留最近一次。
 
-数据库新版备份为 version 3，包含排产和 Data；离线版为 version 2，包含排产及产品清单。旧版 version 1 仍能读取，但没有产品清单，恢复后清单为空；预览会明确提醒。恢复前应下载当前备份。
+数据库新版备份为 version 4，包含排产、Data、库存和完整流水；离线版为 version 2，包含排产及产品清单。旧版 version 1 仍能读取，但没有产品清单，恢复后清单为空；预览会明确提醒。恢复前应下载当前备份。
 
 旧离线资料：在原本浏览器、原本 HTML 路径打开 → 下载 JSON → 在数据库版导入。不会自动迁移。
 
@@ -129,3 +129,9 @@ Daily stock 可选日期查看 Opening、Production、Received、Return、Rework
 开始后，在卡片内 Record production quantity 填本次新增产量及日期，可分次入库。Done 填最终累计产量，包括已入账部分，系统只补差额。订单内 Record collection 填本次取货数量；全部取完才 OUT。Stock 的流水可 Correct output 或 Reverse collection，必须填写原因，原记录保留。
 
 数据库备份现为版本 4，包含订单、库存和完整流水。恢复旧版本前会提示不含库存；恢复前会保留完整副本。原有示范卡片不会自动产生真实库存流水。页面的最近盘点日期仅是库存核对边界，之后实际发生的生产、取货及调整仍须录入。
+
+## Settings 标签与卡片预览
+
+Settings 分为 Workspace、Production rules、Unavailable periods、Products、Stock policies（数据库版）及 Backup & recovery。切换这些标签保留输入草稿，页面上方会固定显示 Save settings 和未保存提示。Save settings 只保存工作区、产能及停机列表；产品清单和库存政策各自保存，互不覆盖。如果其他标签有无效栏位，保存会自动打开对应标签并聚焦栏位。离开 Settings 页面仍会丢弃未保存草稿。
+
+排程卡片太窄时，鼠标悬停或用 Tab 聚焦可预览完整产品编号、说明、数量、订单、完整计划起止日期、状态及 bin。Escape 收起预览，Enter／点击打开完整详情；Space 开始键盘移动，方向键移动，Escape 取消移动。触屏继续点击查看详情，长按拖动。
