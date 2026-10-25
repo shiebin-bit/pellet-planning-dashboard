@@ -15,5 +15,6 @@ playwright-report/
 *.dump
 *.xlsx
 *.xls
+*.xlsm
 *.pdf
 .DS_Store

@@ -14,7 +14,7 @@ export async function exportDatabaseBackup(previous = false) {
   const response = await fetch(previous ? '/api/backup/previous' : '/api/backup', { cache: 'no-store' });
   if (!response.ok) throw new Error('The database backup could not be downloaded.');
   const backup = await response.json();
-  if (!backup || backup.schemaVersion !== 3) throw new Error('No database recovery backup is available.');
+  if (!backup || ![3,4].includes(backup.schemaVersion)) throw new Error('No database recovery backup is available.');
   saveBlob(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }), previous ? 'millplan-workspace-before-restore.json' : 'millplan-workspace-backup.json');
 }
 export function exportBackup(state: AppState,filename='millplan-workspace-backup.json') {

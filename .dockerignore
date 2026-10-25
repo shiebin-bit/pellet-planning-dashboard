@@ -15,6 +15,7 @@ playwright-report
 *.tsbuildinfo
 *.xlsx
 *.xls
+*.xlsm
 *.pdf
 *.dump
 docs

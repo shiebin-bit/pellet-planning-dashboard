@@ -7,9 +7,12 @@ import { createSampleState } from "../src/domain/sample";
 import type { AppState, HistoryEvent, Settings } from "../src/domain/types";
 import { ApiError } from "./errors";
 import { getScheduledJobs } from "../src/domain/engine";
+import { planInventoryDraft } from "../src/domain/inventoryPlanner";
+import type { InventoryCommand, InventoryDraftRequest } from "../src/domain/inventoryTypes";
 import type { SourceImportInput } from "../src/domain/sourceTypes";
 import type { PortableSourceData, PortableWorkspaceBackupV3 } from "../src/domain/sourceTypes";
-import { exportSourceData, portableBackup, restoreSourceData, validatePortableBackupV3 } from "./sourceBackup";
+import type { PortableInventoryData, PortableWorkspaceBackupV4 } from "../src/domain/inventoryTypes";
+import { clearInventoryData, exportInventoryData, exportSourceData, portableBackupV4, restoreInventoryData, restoreSourceData, validatePortableBackupV3, validatePortableBackupV4 } from "./sourceBackup";
 import {
   applySourceImport,
   clearSourceData,
@@ -19,6 +22,18 @@ import {
   previewSourceImport,
   setDeliveryStatus,
 } from "./sourceData";
+import {
+  buildPlanningDemand,
+  jobProductionTotal,
+  validateInventoryJobs,
+  executeInventoryCommand,
+  getInventorySnapshot,
+  getOrderProgress,
+  listDailyStock,
+  listLedger,
+  listOrderJournal,
+  syncInventoryOrders,
+} from "./inventory";
 
 interface WorkspaceRow {
   revision: string;
@@ -27,6 +42,7 @@ interface WorkspaceRow {
   catalog: unknown;
   previous_backup: unknown | null;
   previous_source_backup: unknown | null;
+  previous_inventory_backup: unknown | null;
   undo_state: unknown | null;
   undo_revision: string | null;
   updated_at: Date | string;
@@ -38,6 +54,7 @@ interface LoadedWorkspace {
   isDemo: boolean;
   previousBackup: AppState | null;
   previousSourceBackup: PortableSourceData | null;
+  previousInventoryBackup: PortableInventoryData | null;
   undoState: AppState | null;
   undoRevision: number | null;
   updatedAt: string;
@@ -63,6 +80,44 @@ export class WorkspaceStore {
   async previewSourceImport(input: SourceImportInput) { return previewSourceImport(this.pool, input); }
   async listSourceOrders(query: URLSearchParams) { return listSourceOrders(this.pool, query); }
   async getSourceOrder(id: string) { return getSourceOrder(this.pool, id); }
+  async getInventory() { return getInventorySnapshot(this.pool); }
+  async getJobProduction(jobId:string) {
+    const client=await this.pool.connect();
+    try{
+      await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const current=await loadWorkspace(client,false),job=current.state.jobs.find(row=>row.id===jobId);
+      if(!job)throw new ApiError(404,"JOB_NOT_FOUND","Production card not found.");
+      const total=await jobProductionTotal(client,jobId);
+      await client.query("COMMIT");
+      return {total:job.mode==="bags"?total:total/1000,unit:job.mode==="bags"?"Bags":"MT"};
+    }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
+  }
+  async getInventoryOrders() {
+    const current = await this.getWorkspace();
+    return getOrderProgress(this.pool, current.state);
+  }
+  async getInventoryDaily(date?: string) {
+    return listDailyStock(this.pool,date);
+  }
+  async getInventoryOrderJournal(sourceOrderId: string) {
+    return (await listOrderJournal(this.pool,sourceOrderId)).filter(row => row.sourceOrderId === sourceOrderId);
+  }
+  async getInventoryLedger(limit?: number, itemId?: string) { return listLedger(this.pool, limit, itemId); }
+  async previewInventoryDraft(input: InventoryDraftRequest) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const loaded = await loadWorkspace(client, false);
+      const nowIso = new Date().toISOString();
+      const demand = await buildPlanningDemand(client, loaded.state, input, nowIso);
+      const preview = planInventoryDraft(loaded.state, demand, input, loaded.revision, nowIso);
+      await client.query("COMMIT");
+      return preview;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
+  }
   async listSourceImports() {
     const result = await this.pool.query<{ id: string; file_name: string; as_of_date: string | Date; imported_at: string | Date; row_count: number }>(
       "SELECT id, file_name, as_of_date::text AS as_of_date, imported_at, row_count FROM source_imports WHERE workspace_id = 1 ORDER BY imported_at DESC",
@@ -70,12 +125,13 @@ export class WorkspaceStore {
     return result.rows.map(row => ({ id: row.id, fileName: row.file_name, asOfDate: String(row.as_of_date).slice(0, 10), importedAt: new Date(row.imported_at).toISOString(), rowCount: row.row_count }));
   }
 
-  async getPortableBackup(): Promise<PortableWorkspaceBackupV3> {
+  async getPortableBackup(): Promise<PortableWorkspaceBackupV4> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
       const loaded = await loadWorkspace(client, false);
-      const result = portableBackup(loaded.state, await exportSourceData(client));
+      const sourceData = await exportSourceData(client);
+      const result = portableBackupV4(loaded.state, sourceData, await exportInventoryData(client));
       assertPortableBackupSize(result);
       await client.query("COMMIT");
       return result;
@@ -85,10 +141,10 @@ export class WorkspaceStore {
     } finally { client.release(); }
   }
 
-  async getPreviousPortableBackup(): Promise<PortableWorkspaceBackupV3 | null> {
+  async getPreviousPortableBackup(): Promise<PortableWorkspaceBackupV4 | null> {
     const current = await this.getWorkspaceWithPreviousSource();
     if (!current.previousBackup) return null;
-    const result = portableBackup(current.previousBackup, current.previousSourceBackup ?? emptySourceData());
+    const result = portableBackupV4(current.previousBackup, current.previousSourceBackup ?? emptySourceData(), current.previousInventoryBackup ?? emptyInventoryData());
     assertPortableBackupSize(result);
     return result;
   }
@@ -157,6 +213,7 @@ export class WorkspaceStore {
       let isDemo = current.isDemo;
       let previousBackup = current.previousBackup;
       let previousSourceBackup = current.previousSourceBackup;
+      let previousInventoryBackup = current.previousInventoryBackup;
       let undoState: AppState | null = null;
       let undoRevision: number | null = null;
 
@@ -165,12 +222,17 @@ export class WorkspaceStore {
           case "workspace.restore":
             assertPortableBackupSize(command.backup);
             {
-              const backup = "planning" in command.backup ? validatePortableBackupV3(command.backup) : null;
+              const backup = "planning" in command.backup
+                ? ("inventory" in command.backup ? validatePortableBackupV4(command.backup) : validatePortableBackupV3(command.backup))
+                : null;
               const restoredPlanning = backup?.planning ?? stripSourceLinks(validateWorkspaceBackup(command.backup));
               previousSourceBackup = await exportSourceData(client);
+              previousInventoryBackup = await exportInventoryData(client);
+              await clearInventoryData(client);
               await clearSourceData(client);
               previousBackup = current.state;
               if (backup) await restoreSourceData(client, backup.sourceData);
+              if (backup && "inventory" in backup) await restoreInventoryData(client, backup.inventory);
               nextState = appendEvent(restoredPlanning, {
                 id: `event-${randomUUID()}`,
                 at: nowIso,
@@ -182,6 +244,8 @@ export class WorkspaceStore {
             break;
           case "workspace.resetDemo":
             previousSourceBackup = await exportSourceData(client);
+            previousInventoryBackup = await exportInventoryData(client);
+            await clearInventoryData(client);
             await clearSourceData(client);
             previousBackup = current.state;
             nextState = appendEvent(createSampleState(command.date), {
@@ -205,6 +269,7 @@ export class WorkspaceStore {
             break;
           case "data.import": {
             const result = await applySourceImport(client, current.state, command.input, nowIso);
+            await syncInventoryOrders(client, result.state, command.input, nowIso);
             nextState = result.state;
             break;
           }
@@ -221,14 +286,43 @@ export class WorkspaceStore {
           case "settings.activateCalendar":
             nextState = activateCalendar(current.state, command.effectiveFrom, command.dayStart, command.availableHours, nowIso);
             break;
+          case "inventory.importBaseline":
+          case "inventory.importWorkbook":
+          case "inventory.adjust":
+          case "inventory.receive":
+          case "inventory.configure":
+          case "production.recordReceipt":
+          case "production.correct":
+          case "delivery.record":
+          case "delivery.reverse":
+          case "planning.commitDraft":
+          case "data.updateManualFields":
+            if (command.type === "planning.commitDraft" && command.previewRevision !== current.revision) {
+              throw new ApiError(409, "STALE_DRAFT", "Inventory or capacity changed after this draft was generated. Generate it again.");
+            }
+            nextState = await executeInventoryCommand(client, current.state, command as InventoryCommand, nowIso);
+            if((command.type==="inventory.importBaseline"||command.type==="inventory.importWorkbook")&&command.input.includeBaseline)isDemo=false;
+            break;
           default:
             nextState = executeCommand(current.state, command, { nowIso });
+            if ((command.type === "job.complete" || command.type === "job.recordActual")) {
+              const job = nextState.jobs.find(candidate => candidate.id === command.jobId);
+              if (job?.inventoryItemId && typeof job.actualQuantityMt === "number") {
+                const totalActualQuantity = job.mode === "bags"
+                  ? job.actualQuantityMt * 1_000 / (job.bagWeightKgSnapshot ?? current.state.settings.bagWeightKg)
+                  : job.actualQuantityMt;
+                nextState = await executeInventoryCommand(client, nextState, {
+                  type: "production.recordReceipt", jobId: job.id, totalActualQuantity,
+                }, nowIso);
+              }
+            }
             if (command.type === "job.move") {
               undoState = current.state;
               undoRevision = nextRevision;
             }
         }
         nextState = validateWorkspaceBackup(nextState);
+        await validateInventoryJobs(client,nextState);
       } catch (error) {
         if (error instanceof ApiError) throw error;
         throw new ApiError(400, "INVALID_COMMAND", error instanceof Error ? error.message : "Command is invalid.");
@@ -239,6 +333,7 @@ export class WorkspaceStore {
         isDemo,
         previousBackup,
         previousSourceBackup,
+        previousInventoryBackup,
         undoState,
         undoRevision,
         updatedAt: nowIso,
@@ -270,7 +365,7 @@ export class WorkspaceStore {
 async function loadWorkspace(client: pg.PoolClient, lock: false | "update"): Promise<LoadedWorkspace> {
   const lockClause = lock === "update" ? " FOR UPDATE" : "";
   const workspace = await client.query<WorkspaceRow>(
-    `SELECT revision, is_demo, settings, catalog, previous_backup, previous_source_backup, undo_state, undo_revision, updated_at
+    `SELECT revision, is_demo, settings, catalog, previous_backup, previous_source_backup, previous_inventory_backup, undo_state, undo_revision, updated_at
      FROM workspace WHERE id = 1${lockClause}`,
   );
   if (!workspace.rowCount) throw new Error("Workspace has not been initialized.");
@@ -290,6 +385,7 @@ async function loadWorkspace(client: pg.PoolClient, lock: false | "update"): Pro
     isDemo: row.is_demo,
     previousBackup: row.previous_backup === null ? null : validateWorkspaceBackup(row.previous_backup),
     previousSourceBackup: row.previous_source_backup === null ? null : row.previous_source_backup as PortableSourceData,
+    previousInventoryBackup: row.previous_inventory_backup === null ? null : row.previous_inventory_backup as PortableInventoryData,
     undoState: row.undo_state === null ? null : validateWorkspaceBackup(row.undo_state),
     undoRevision: row.undo_revision === null ? null : safeRevision(row.undo_revision),
     updatedAt: new Date(row.updated_at).toISOString(),
@@ -300,7 +396,7 @@ async function persistWorkspace(client: pg.PoolClient, value: LoadedWorkspace): 
   await client.query(
     `UPDATE workspace SET revision = $1, is_demo = $2, settings = $3::jsonb,
        catalog = $4::jsonb, previous_backup = $5::jsonb, previous_source_backup = $6::jsonb,
-       undo_state = $7::jsonb, undo_revision = $8, updated_at = $9::timestamptz WHERE id = 1`,
+       previous_inventory_backup = $7::jsonb, undo_state = $8::jsonb, undo_revision = $9, updated_at = $10::timestamptz WHERE id = 1`,
     [
       value.revision,
       value.isDemo,
@@ -308,34 +404,45 @@ async function persistWorkspace(client: pg.PoolClient, value: LoadedWorkspace): 
       JSON.stringify(value.state.catalog),
       value.previousBackup === null ? null : JSON.stringify(value.previousBackup),
       value.previousSourceBackup === null ? null : JSON.stringify(value.previousSourceBackup),
+      value.previousInventoryBackup === null ? null : JSON.stringify(value.previousInventoryBackup),
       value.undoState === null ? null : JSON.stringify(value.undoState),
       value.undoRevision,
       value.updatedAt,
     ],
   );
-  await client.query("DELETE FROM jobs WHERE workspace_id = 1");
+  // Preserve row identities and dependent records. Ordinals move out of the way first so swaps
+  // cannot violate the workspace/ordinal unique constraint during the upsert.
+  await client.query("UPDATE jobs SET ordinal = ordinal + 1000000000 WHERE workspace_id = 1");
   if (value.state.jobs.length) {
     await client.query(
       `INSERT INTO jobs(workspace_id, id, ordinal, planning_date, line_id, sequence, status, source_order_id, payload)
        SELECT 1, item->>'id', ordinality - 1, (item->>'date')::date,
               item->>'lineId', (item->>'sequence')::integer, item->>'status', NULLIF(item->>'sourceOrderId', ''), item
-       FROM jsonb_array_elements($1::jsonb) WITH ORDINALITY AS source(item, ordinality)`,
+       FROM jsonb_array_elements($1::jsonb) WITH ORDINALITY AS source(item, ordinality)
+       ON CONFLICT (id) DO UPDATE SET ordinal=EXCLUDED.ordinal,planning_date=EXCLUDED.planning_date,
+         line_id=EXCLUDED.line_id,sequence=EXCLUDED.sequence,status=EXCLUDED.status,
+         source_order_id=EXCLUDED.source_order_id,payload=EXCLUDED.payload`,
       [JSON.stringify(value.state.jobs)],
     );
   }
-  await client.query("DELETE FROM history_events WHERE workspace_id = 1");
+  await client.query("DELETE FROM jobs WHERE workspace_id=1 AND ordinal >= 1000000000");
+  await client.query("UPDATE history_events SET ordinal = ordinal + 1000000000 WHERE workspace_id = 1");
   if (value.state.events.length) {
     await client.query(
       `INSERT INTO history_events(workspace_id, id, ordinal, occurred_at, event_type, job_id, payload)
        SELECT 1, item->>'id', ordinality - 1, (item->>'at')::timestamptz,
               item->>'type', item->>'jobId', item
-       FROM jsonb_array_elements($1::jsonb) WITH ORDINALITY AS source(item, ordinality)`,
+       FROM jsonb_array_elements($1::jsonb) WITH ORDINALITY AS source(item, ordinality)
+       ON CONFLICT (id) DO UPDATE SET ordinal=EXCLUDED.ordinal,occurred_at=EXCLUDED.occurred_at,
+         event_type=EXCLUDED.event_type,job_id=EXCLUDED.job_id,payload=EXCLUDED.payload`,
       [JSON.stringify(value.state.events)],
     );
   }
+  await client.query("DELETE FROM history_events WHERE workspace_id=1 AND ordinal >= 1000000000");
 }
 
 function emptySourceData(): PortableSourceData { return { imports: [], orders: [], versions: [] }; }
+function emptyInventoryData(): PortableInventoryData { return { items: [], imports: [], baselineReports: [], orders: [], ledger: [], reservations: [] }; }
 
 function activateCalendar(state: AppState, effectiveFrom: string, dayStart: string, availableHours: number, nowIso: string): AppState {
   if (availableHours <= 0 || availableHours > 24) throw new Error("Available hours must be greater than zero and no more than 24.");

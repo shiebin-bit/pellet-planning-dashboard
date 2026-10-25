@@ -27,6 +27,11 @@ export interface ProductionPause {
 }
 
 export interface Job {
+  inventoryItemId?: string;
+  medication?: string;
+  fmrOmed?: string;
+  productionPurpose?: "mto" | "mts";
+  notBefore?: string;
   id: string;
   date: string;
   lineId: LineId;
@@ -66,6 +71,12 @@ export interface Job {
 }
 
 export interface JobInput {
+  inventoryItemId?: string;
+  medication?: string;
+  fmrOmed?: string;
+  productionPurpose?: "mto" | "mts";
+  bagWeightKgSnapshot?: number;
+  notBefore?: string;
   date: string;
   lineId: LineId;
   orderNo: string;

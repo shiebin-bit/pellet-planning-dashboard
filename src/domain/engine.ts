@@ -204,7 +204,7 @@ export function updateJob(
       throw new Error("Imported order, product, unit, and quantity fields cannot be edited on the production card.");
     }
   }
-  const normalizationSettings = current.sourceOrderId && current.bagWeightKgSnapshot
+  const normalizationSettings = current.bagWeightKgSnapshot
     ? { ...state.settings, bagWeightKg: current.bagWeightKgSnapshot }
     : state.settings;
   const normalized = normalizeInput({ ...toInput(current), ...patch }, normalizationSettings);
@@ -656,7 +656,7 @@ export function updateSettings(state: AppState, settings: Settings): AppState {
   const now = new Date().toISOString();
   const copiedSettings = cloneSettings(settings);
   const jobs = state.jobs.map((job) => {
-    if (job.mode !== "bags" || job.status !== "pending" || job.sourceOrderId) return job;
+    if (job.mode !== "bags" || job.status !== "pending" || job.sourceOrderId || job.bagWeightKgSnapshot) return job;
     return {
       ...job,
       quantityMt: quantityFromBags(job.bagCount ?? 0, copiedSettings.bagWeightKg),
@@ -821,6 +821,8 @@ export function copyJobBatch(
     nextSequence.set(source.lineId, sequence);
     const bags = quantity.mode === "bags" ? quantity.bagCount : null;
     return {
+      ...(source.inventoryItemId ? { inventoryItemId: source.inventoryItemId, medication: source.medication ?? '', fmrOmed: source.fmrOmed ?? '', productionPurpose: source.productionPurpose ?? 'mts' } : {}),
+      ...(source.bagWeightKgSnapshot ? { bagWeightKgSnapshot: source.bagWeightKgSnapshot } : {}),
       id: makeId("job"),
       date: targetDate,
       lineId: source.lineId,
@@ -832,7 +834,7 @@ export function copyJobBatch(
       mode: quantity.mode,
       bagCount: bags,
       quantityMt: quantity.mode === "bags"
-        ? quantityFromBags(quantity.bagCount, state.settings.bagWeightKg)
+        ? quantityFromBags(quantity.bagCount, source.bagWeightKgSnapshot ?? state.settings.bagWeightKg)
         : quantity.quantityMt,
       status: "pending",
       remarks: source.remarks,
@@ -935,10 +937,10 @@ function scheduleState(state: AppState): ScheduleResult {
       const rate = getRate(state.settings, lineId, job.productCode);
       const durationMinutes = (job.quantityMt / rate) * 60;
       const needsChangeover = previousJob !== null && (
-        previousJob.sourceOrderId || job.sourceOrderId
+        previousJob.sourceOrderId || job.sourceOrderId || previousJob.inventoryItemId || job.inventoryItemId
           ? normalizedProduct(previousJob.productCode) !== normalizedProduct(job.productCode)
           : productFamily(previousJob.productCode) !== productFamily(job.productCode)
-      );
+      ) || (previousJob !== null && ((previousJob.medication ?? '').trim().toLowerCase() !== (job.medication ?? '').trim().toLowerCase() || (previousJob.fmrOmed ?? '').trim().toLowerCase() !== (job.fmrOmed ?? '').trim().toLowerCase()));
       let segments: ScheduleSegment[] = [];
       let changeoverMinutes = needsChangeover
         ? state.settings.changeoverMinutes
@@ -965,6 +967,7 @@ function scheduleState(state: AppState): ScheduleResult {
         let phaseCursor = Math.max(
           cursor ?? Number.NEGATIVE_INFINITY,
           businessDayStart(job.date, calendar.dayStart),
+          job.notBefore ? Date.parse(job.notBefore) : Number.NEGATIVE_INFINITY,
         );
         if (changeoverMinutes > 0) {
           const changeover = allocateWork(
@@ -1171,6 +1174,12 @@ function normalizeInput(input: JobInput, settings: Settings): JobInput {
     throw new Error("Bag count is required for bag quantities.");
   }
   return {
+    ...(input.inventoryItemId ? { inventoryItemId: input.inventoryItemId } : {}),
+    ...(input.productionPurpose ? { productionPurpose: input.productionPurpose } : {}),
+    ...(input.medication !== undefined ? { medication: input.medication.trim() } : {}),
+    ...(input.fmrOmed !== undefined ? { fmrOmed: input.fmrOmed.trim() } : {}),
+    ...(input.bagWeightKgSnapshot ? { bagWeightKgSnapshot: input.bagWeightKgSnapshot } : {}),
+    ...(input.notBefore ? { notBefore: input.notBefore } : {}),
     date: input.date,
     lineId: input.lineId,
     orderNo,
@@ -1181,7 +1190,7 @@ function normalizeInput(input: JobInput, settings: Settings): JobInput {
     bagCount: input.mode === "bags" ? input.bagCount : null,
     quantityMt:
       input.mode === "bags"
-        ? quantityFromBags(input.bagCount ?? 0, settings.bagWeightKg)
+        ? quantityFromBags(input.bagCount ?? 0, input.bagWeightKgSnapshot ?? settings.bagWeightKg)
         : input.quantityMt,
     remarks,
   };
@@ -1294,6 +1303,12 @@ function requirePending(job: Job, action: string): void {
 
 function toInput(job: Job): JobInput {
   return {
+    ...(job.inventoryItemId ? { inventoryItemId: job.inventoryItemId } : {}),
+    ...(job.productionPurpose ? { productionPurpose: job.productionPurpose } : {}),
+    ...(job.medication !== undefined ? { medication: job.medication } : {}),
+    ...(job.fmrOmed !== undefined ? { fmrOmed: job.fmrOmed } : {}),
+    ...(job.bagWeightKgSnapshot ? { bagWeightKgSnapshot: job.bagWeightKgSnapshot } : {}),
+    ...(job.notBefore ? { notBefore: job.notBefore } : {}),
     date: job.date,
     lineId: job.lineId,
     orderNo: job.orderNo,

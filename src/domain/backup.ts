@@ -39,6 +39,7 @@ const JOB_KEYS = [
   "lockedSegments", "issue",
   "pauseIntervals",
   "sourceOrderId", "sourceOrderVersion", "sourceSnapshot", "bagWeightKgSnapshot",
+  "inventoryItemId", "medication", "fmrOmed", "productionPurpose", "notBefore",
 ] as const;
 
 const JOB_CHANGE_FIELDS = new Set([
@@ -299,9 +300,15 @@ function validateJob(value: unknown, path: string): Job {
     if (hasOwn(source, "bagWeightKgSnapshot")) {
       result.bagWeightKgSnapshot = numberValue(source.bagWeightKgSnapshot, `${path}.bagWeightKgSnapshot`, { exclusiveMin: 0 });
     }
-  } else if (hasOwn(source, "sourceOrderVersion") || hasOwn(source, "sourceSnapshot") || hasOwn(source, "bagWeightKgSnapshot")) {
+  } else if (hasOwn(source, "sourceOrderVersion") || hasOwn(source, "sourceSnapshot")) {
     throw invalid(path, "source metadata requires sourceOrderId");
   }
+  if (hasOwn(source, "bagWeightKgSnapshot")) result.bagWeightKgSnapshot = numberValue(source.bagWeightKgSnapshot, `${path}.bagWeightKgSnapshot`, { exclusiveMin: 0 });
+  if (hasOwn(source, "inventoryItemId")) result.inventoryItemId = nonEmptyString(source.inventoryItemId, `${path}.inventoryItemId`, MAX_ID_LENGTH);
+  if (hasOwn(source, "medication")) result.medication = stringValue(source.medication, `${path}.medication`, MAX_NOTE_LENGTH);
+  if (hasOwn(source, "fmrOmed")) result.fmrOmed = stringValue(source.fmrOmed, `${path}.fmrOmed`, MAX_NOTE_LENGTH);
+  if (hasOwn(source, "productionPurpose")) result.productionPurpose = enumValue<"mto" | "mts">(source.productionPurpose, ["mto", "mts"], `${path}.productionPurpose`);
+  if (hasOwn(source, "notBefore")) result.notBefore = timestampValue(source.notBefore, `${path}.notBefore`);
 
   return result;
 }

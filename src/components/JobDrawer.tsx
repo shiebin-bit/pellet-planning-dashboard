@@ -9,6 +9,7 @@ import { StatusBadge } from './Shared';
 import { ActualOutputForm,ActualOutputResult } from './ActualOutput';
 import { ProductionStops } from './ProductionStops';
 import { useCurrentTime } from '../lib/useCurrentTime';
+import { InventoryReceiptForm } from './InventoryWorkspace';
 
 export function JobDrawer() {
   const {selectedJob:job,closeJob,editJob,state,board,commit,busy,storageWarning,storageMode,refresh,hasConflict,resolveConflict,mutationLocked}=useWorkspace();
@@ -81,6 +82,7 @@ export function JobDrawer() {
         </>}
       </section>
       <ProductionStops key={job.id} job={job}/>
+      <InventoryReceiptForm key={`stock-${job.id}`} job={job}/>
       {(job.status==='pending'||job.status==='running')&&!job.issue&&<section className="drawer-section issue-actions" inert={mutationLocked||hasConflict}><button className="text-link danger-text" onClick={()=>setShowIssue(!showIssue)} aria-expanded={showIssue}><AlertTriangle size={16}/>Report a problem</button>{showIssue&&<div className="issue-form"><label className="field">Problem details<textarea value={issueReason} onChange={event=>setIssueReason(event.target.value)} placeholder="Describe the problem for the team…" maxLength={1000}/><small>The card turns red until the problem is resolved or production is completed.</small></label><button className="button danger full-width" disabled={busy||!issueReason.trim()} onClick={async()=>{if(await commit({type:'job.reportIssue',jobId:job.id,reason:issueReason},'Problem recorded. The card is now marked red.')){setShowIssue(false);setIssueReason('');}}}><AlertTriangle size={16}/>Mark as issue</button></div>}</section>}
       {job.sourceOrderId&&<section className="drawer-section"><h3>Excel source order</h3><p className="field-help">DO {job.orderNo} · source version {job.sourceOrderVersion}. This card retains its imported material and quantity. Production Done and delivery confirmation are separate.</p>{job.bagWeightKgSnapshot&&<p className="field-help">Saved bag weight: {job.bagWeightKgSnapshot} kg</p>}</section>}
       {job.remarks&&<section className="drawer-section"><h3>Remarks</h3><p className="drawer-remarks">{job.remarks}</p></section>}

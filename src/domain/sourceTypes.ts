@@ -2,6 +2,9 @@ import type { JobStatus, LineId, QuantityMode } from "./types";
 
 /** Normalized values produced by the Excel import preview. */
 export interface SourceOrderFields {
+  goodsMovementStatus?: string;
+  sourceSheet?: string;
+  sourceRow?: number;
   doNo: string;
   deliveryDate: string;
   soldToParty: string;
@@ -47,6 +50,7 @@ export type DeliverySource = "import" | "manual" | null;
 export type SourceProductionStatus = JobStatus | "unplanned" | "external-complete";
 
 export interface SourceOrderSummary extends SourceOrderFields {
+  netToPlan?: number;
   id: string;
   version: number;
   importId: string;

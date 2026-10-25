@@ -13,6 +13,7 @@ import type { Downtime, LineId, LineSchedule, ScheduledJob, ScheduleSegment } fr
 import { downtimeRange, durationLabel, numberLabel, timeLabel } from '../lib/format';
 import { useWorkspace } from '../lib/workspace';
 import './Planning.css';
+import { AutoPlanningButton } from '../components/InventoryDraftDialog';
 
 type PlanRange = 'day' | 'full';
 
@@ -88,6 +89,7 @@ export function Planning() {
     <div className="page-heading hplan-heading">
       <div><h1>Planning board</h1><p>Drag a not-started card to another line. Click for details.</p></div>
       <div className="hplan-actions">
+        <AutoPlanningButton/>
         {storageMode === 'database' && <button type="button" className="button secondary" disabled={mutationLocked || hasConflict} onClick={() => openSource()}><Plus size={15}/>Plan from Data</button>}
         <button type="button" className="button secondary" disabled={mutationLocked || hasConflict} onClick={openCopy}><Copy size={15}/>Copy planning</button>
         <button type="button" className="button secondary" disabled={!canUndo} onClick={undo}><Undo2 size={15}/>Undo</button>

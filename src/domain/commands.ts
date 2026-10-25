@@ -20,6 +20,7 @@ import {
 import { validateWorkspaceBackup } from "./backup";
 import type { AppState, JobInput, LineId, Settings } from "./types";
 import type { CreateJobFromSourceInput, PortableWorkspaceBackupV3, SourceImportInput } from "./sourceTypes";
+import { parseInventoryCommand, type InventoryCommand, type PortableWorkspaceBackupV4 } from './inventoryTypes';
 
 export type CopyBatchQuantity =
   | { mode: "bags"; bagCount: number }
@@ -40,6 +41,7 @@ export interface CatalogCreateInput {
 export type CatalogUpdatePatch = Partial<CatalogCreateInput>;
 
 export type Command =
+  | InventoryCommand
   | { type: "job.create"; input: JobInput }
   | { type: "job.update"; jobId: string; patch: Partial<JobInput> }
   | { type: "job.move"; jobId: string; toLineId: LineId; beforeJobId?: string }
@@ -61,7 +63,7 @@ export type Command =
   | { type: "settings.activateCalendar"; effectiveFrom: string; dayStart: string; availableHours: number }
   | { type: "data.import"; input: SourceImportInput }
   | { type: "data.setDeliveryStatus"; sourceOrderId: string; delivered: boolean; reason?: string }
-  | { type: "workspace.restore"; backup: AppState | PortableWorkspaceBackupV3 }
+  | { type: "workspace.restore"; backup: AppState | PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 }
   | { type: "workspace.resetDemo"; date: string }
   | { type: "workspace.undoLastMove" };
 
@@ -81,6 +83,7 @@ export interface CommandContext {
 const JOB_INPUT_KEYS = [
   "date", "lineId", "orderNo", "productCode", "description", "bin",
   "mode", "bagCount", "quantityMt", "remarks",
+  "inventoryItemId", "medication", "fmrOmed", "productionPurpose", "bagWeightKgSnapshot", "notBefore",
 ] as const;
 
 export function executeCommand(
@@ -134,6 +137,7 @@ export function executeCommand(
     case "workspace.resetDemo":
     case "workspace.undoLastMove":
       throw new Error(`${command.type} requires a trusted workspace provider.`);
+    default: throw new Error(`${command.type} requires a trusted database workspace.`);
   }
 }
 
@@ -256,7 +260,7 @@ export function parseCommand(value: unknown): Command {
     }
     case "workspace.restore":
       exact(source, ["type", "backup"], "command");
-      if (plainPortableV3(source.backup)) return { type, backup: source.backup as unknown as PortableWorkspaceBackupV3 };
+      if (plainPortableV3(source.backup)) return { type, backup: source.backup as unknown as PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 };
       return { type, backup: validateWorkspaceBackup(source.backup) };
     case "workspace.resetDemo":
       exact(source, ["type", "date"], "command");
@@ -265,7 +269,7 @@ export function parseCommand(value: unknown): Command {
       exact(source, ["type"], "command");
       return { type };
     default:
-      throw new Error("command.type is unsupported.");
+      return parseInventoryCommand(value);
   }
 }
 
@@ -309,7 +313,7 @@ function jobInput(value: unknown, path: string, partial: false): JobInput;
 function jobInput(value: unknown, path: string, partial: boolean): Partial<JobInput> {
   const source = object(value, path);
   rejectUnknown(source, JOB_INPUT_KEYS, path);
-  if (!partial) for (const key of JOB_INPUT_KEYS) if (!has(source, key)) throw new Error(`${path}.${key} is required.`);
+  if (!partial) for (const key of JOB_INPUT_KEYS.slice(0, 10)) if (!has(source, key)) throw new Error(`${path}.${key} is required.`);
   const result: Partial<JobInput> = {};
   if (has(source, "date")) result.date = date(source.date, `${path}.date`);
   if (has(source, "lineId")) result.lineId = lineId(source.lineId, `${path}.lineId`);
@@ -324,6 +328,18 @@ function jobInput(value: unknown, path: string, partial: boolean): Partial<JobIn
   if (has(source, "bagCount")) result.bagCount = source.bagCount === null ? null : finite(source.bagCount, `${path}.bagCount`, 0);
   if (has(source, "quantityMt")) result.quantityMt = finite(source.quantityMt, `${path}.quantityMt`, 0);
   if (has(source, "remarks")) result.remarks = string(source.remarks, `${path}.remarks`, 1_000);
+  if (has(source, "inventoryItemId")) result.inventoryItemId = reference(source.inventoryItemId, `${path}.inventoryItemId`);
+  if (has(source, "medication")) result.medication = string(source.medication, `${path}.medication`, 1_000);
+  if (has(source, "fmrOmed")) result.fmrOmed = string(source.fmrOmed, `${path}.fmrOmed`, 1_000);
+  if (has(source, "productionPurpose")) {
+    if (source.productionPurpose !== 'mto' && source.productionPurpose !== 'mts') throw new Error(`${path}.productionPurpose must be mto or mts.`);
+    result.productionPurpose = source.productionPurpose;
+  }
+  if (has(source, "bagWeightKgSnapshot")) {
+    result.bagWeightKgSnapshot = finite(source.bagWeightKgSnapshot, `${path}.bagWeightKgSnapshot`, 0);
+    if (result.bagWeightKgSnapshot <= 0) throw new Error('Bag weight must be positive.');
+  }
+  if (has(source, "notBefore")) result.notBefore = timestamp(source.notBefore, `${path}.notBefore`);
   return result;
 }
 
@@ -393,9 +409,13 @@ function sourceImportInput(value: unknown, path: string): SourceImportInput {
     const rowPath = `${path}.rows[${index}]`;
     const row = object(value, rowPath);
     const keys = ["doNo", "deliveryDate", "soldToParty", "shipToParty", "materialCode", "description", "quantity", "unit", "deliveryLeadDays", "remark", "daysOutstanding", "medication", "fmrOmed"] as const;
-    exact(row, keys, rowPath);
+    rejectUnknown(row, [...keys, 'goodsMovementStatus', 'sourceSheet', 'sourceRow'], rowPath);
+    for (const key of keys) if (!has(row, key)) throw new Error(`${rowPath}.${key} is required.`);
     const nullableNumber = (value: unknown, field: string): number | null => value === null ? null : finiteSigned(value, field);
     return {
+      ...(has(row, 'goodsMovementStatus') ? { goodsMovementStatus: string(row.goodsMovementStatus, `${rowPath}.goodsMovementStatus`, 100) } : {}),
+      ...(has(row, 'sourceSheet') ? { sourceSheet: string(row.sourceSheet, `${rowPath}.sourceSheet`, 120) } : {}),
+      ...(has(row, 'sourceRow') ? { sourceRow: integer(row.sourceRow, `${rowPath}.sourceRow`, 1) } : {}),
       doNo: trimmedText(row.doNo, `${rowPath}.doNo`, 120),
       deliveryDate: date(row.deliveryDate, `${rowPath}.deliveryDate`),
       soldToParty: string(row.soldToParty, `${rowPath}.soldToParty`, 1_000),
@@ -462,8 +482,8 @@ function sha256(value: unknown, path: string): string {
 function plainPortableV3(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const source = value as Record<string, unknown>;
-  if (source.schemaVersion !== 3) return false;
-  exact(source, ["schemaVersion", "exportedAt", "planning", "sourceData"], "command.backup");
+  if (source.schemaVersion !== 3 && source.schemaVersion !== 4) return false;
+  exact(source, source.schemaVersion === 4 ? ["schemaVersion", "exportedAt", "planning", "sourceData", "inventory"] : ["schemaVersion", "exportedAt", "planning", "sourceData"], "command.backup");
   return true;
 }
 

@@ -31,8 +31,10 @@ const aliases: Record<ImportField, string[]> = {
 function cached(cell: Cell): CellValue {
   const value = cell.value;
   if (value && typeof value === 'object' && ('formula' in value || 'sharedFormula' in value)) {
-    if (!('result' in value) || value.result === undefined || value.result === null) throw new Error('Formula has no cached result');
-    return value.result;
+    // ExcelJS's value getter omits falsy cached results; cell.result retains numeric zero.
+    const result = cell.result;
+    if (result === undefined || result === null) throw new Error('Formula has no cached result');
+    return result;
   }
   return value;
 }
@@ -54,7 +56,7 @@ export function cellText(cell: Cell): string {
   }
   return String(value).trim();
 }
-function identifierText(cell: Cell): string {
+export function identifierText(cell: Cell): string {
   const value = cached(cell);
   if (typeof value === 'number') {
     if (!Number.isSafeInteger(value) || Math.abs(value) >= 1e15) throw new Error('Save this identifier as text in Excel to preserve its exact digits');
@@ -64,7 +66,7 @@ function identifierText(cell: Cell): string {
   return cellText(cell);
 }
 export async function readImportBook(file: File): Promise<ImportBook> {
-  if (!/\.xlsx$/i.test(file.name)) throw new Error('Choose an .xlsx workbook.');
+  if (!/\.xls[xm]$/i.test(file.name)) throw new Error('Choose an .xlsx or .xlsm workbook.');
   if (file.size > 5 * 1024 * 1024) throw new Error('Choose a workbook smaller than 5 MB.');
   const bytes = await file.arrayBuffer();
   const digest = Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)), value => value.toString(16).padStart(2, '0')).join('');
@@ -96,7 +98,7 @@ function validDate(year: number, month: number, day: number): string {
   if (year < 1900 || year > 2200 || date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) throw new Error('Invalid date');
   return date.toISOString().slice(0, 10);
 }
-function parseDate(cell: Cell, order: DateOrder, date1904: boolean): string {
+export function parseDate(cell: Cell, order: DateOrder, date1904: boolean): string {
   const value = cached(cell);
   if (value instanceof Date) return validDate(value.getUTCFullYear(), value.getUTCMonth() + 1, value.getUTCDate());
   if (typeof value === 'number') {

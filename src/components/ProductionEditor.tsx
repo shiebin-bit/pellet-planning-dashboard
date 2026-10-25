@@ -1,3 +1,5 @@
+import { readInventory } from '../lib/inventoryApi';
+import type { InventoryItemSnapshot } from '../domain/inventoryTypes';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Clock3, Layers3, Package, Save, X } from 'lucide-react';
 import { useWorkspace } from '../lib/workspace';
@@ -12,13 +14,17 @@ function blank(date: string, lineId: LineId): JobInput {
   return {date,lineId,orderNo:'',productCode:'',description:'',bin:'',mode:'bags',bagCount:0,quantityMt:0,remarks:''};
 }
 function fromJob(job: Job): JobInput {
-  return {date:job.date,lineId:job.lineId,orderNo:job.orderNo,productCode:job.productCode,description:job.description,bin:job.bin,mode:job.mode,bagCount:job.bagCount,quantityMt:job.quantityMt,remarks:job.remarks};
+  return {inventoryItemId:job.inventoryItemId,productionPurpose:job.productionPurpose,medication:job.medication,fmrOmed:job.fmrOmed,bagWeightKgSnapshot:job.bagWeightKgSnapshot,date:job.date,lineId:job.lineId,orderNo:job.orderNo,productCode:job.productCode,description:job.description,bin:job.bin,mode:job.mode,bagCount:job.bagCount,quantityMt:job.quantityMt,remarks:job.remarks};
 }
 export function ProductionEditor() {
-  const {editor,state,date,setDate,commit,closeInput,toast,busy,storageWarning,storageMode,refresh,hasConflict,resolveConflict,mutationLocked}=useWorkspace();
+  const {editor,state,date,setDate,commit,closeInput,toast,busy,storageWarning,storageMode,refresh,hasConflict,resolveConflict,mutationLocked,openSource}=useWorkspace();
   const editing=editor!.jobId!==null;
   const existing=state.jobs.find(job=>job.id===editor?.jobId);
   const [form,setForm]=useState<JobInput>(()=>existing?fromJob(existing):blank(date,editor!.lineId));
+  const [stockItems,setStockItems]=useState<InventoryItemSnapshot[]>([]);
+  useEffect(()=>{let active=true;if(storageMode==='database')readInventory().then(s=>{if(active)setStockItems(s.items);}).catch(()=>{});return()=>{active=false;};},[storageMode]);
+  const item=stockItems.find(i=>i.materialCode.toLowerCase()===form.productCode.trim().toLowerCase());
+  const bagWeight=existing?.bagWeightKgSnapshot??item?.bagWeightKg??state.settings.bagWeightKg;
   const [another,setAnother]=useState(false);
   const [showFeedback,setShowFeedback]=useState(false);
   const [suggestionsOpen,setSuggestionsOpen]=useState(false);
@@ -40,7 +46,7 @@ export function ProductionEditor() {
   },[]);
   const set=<K extends keyof JobInput>(key:K,value:JobInput[K])=>setForm(previous=>({...previous,[key]:value}));
   const linked=Boolean(existing?.sourceOrderId);
-  const quantity=linked?existing!.quantityMt:form.mode==='bags'?(form.bagCount||0)*state.settings.bagWeightKg/1000:form.quantityMt;
+  const quantity=linked?existing!.quantityMt:form.mode==='bags'?(form.bagCount||0)*bagWeight/1000:form.quantityMt;
   const rate=getRate(state.settings,form.lineId,form.productCode);
   function chooseProduct(selected:CatalogProduct) {
     setForm(previous=>({
@@ -56,7 +62,7 @@ export function ProductionEditor() {
   async function submit(event:React.FormEvent) {
     event.preventDefault();
     if(hasConflict||editing&&!existing)return;
-    const input={...form,bagCount:form.mode==='bags'?(form.bagCount??0):null,quantityMt:quantity};
+    const input={...form,...(item?{inventoryItemId:item.itemId,productionPurpose:form.productionPurpose??item.strategy??'mto',medication:form.medication??'',fmrOmed:form.fmrOmed??'',...(item.bagWeightKg?{bagWeightKgSnapshot:item.bagWeightKg}:{})}:{}),bagCount:form.mode==='bags'?(form.bagCount??0):null,quantityMt:quantity};
     const patch=linked?{date:form.date,lineId:form.lineId,bin:form.bin,remarks:form.remarks}:input;
     const saved=await commit(editing?{type:'job.update',jobId:editor!.jobId!,patch}:{type:'job.create',input},editing?'Production task updated.':'Production task added.');
     setShowFeedback(true);
@@ -90,10 +96,10 @@ export function ProductionEditor() {
             }} placeholder="Search code or product name" role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded={suggestionsOpen} aria-controls="production-product-suggestions" aria-activedescendant={suggestionsOpen&&activeSuggestion>=0?`production-product-option-${activeSuggestion}`:undefined} aria-describedby="production-product-help"/>{suggestionsOpen&&(suggestions.length?<div id="production-product-suggestions" className="product-suggestions" role="listbox" aria-label="Active catalog products">{suggestions.map((item,index)=><button id={`production-product-option-${index}`} key={item.id} type="button" role="option" aria-selected={activeSuggestion===index} className={activeSuggestion===index?'active':''} onMouseDown={event=>event.preventDefault()} onMouseEnter={()=>setActiveSuggestion(index)} onClick={()=>chooseProduct(item)}><strong>{item.code}</strong><span>{item.description}</span><small>{item.defaultMode==='bags'?'Bags':'Bulk'}</small></button>)}</div>:<div id="production-product-suggestions" className="product-suggestions" role="status"><p>No active catalog match. You can keep this manual product code.</p></div>)}</div><small id="production-product-help">Choose a match to fill its name and default delivery, or enter a manual code.</small></div>
             <label className="field">Destination bin<input maxLength={120} value={form.bin} onChange={event=>set('bin',event.target.value)} placeholder="e.g. 86 87"/></label>
             <div className="field" inert={linked}>Delivery mode<div className="segmented-control" role="group" aria-label="Delivery mode"><button type="button" aria-pressed={form.mode==='bags'} className={form.mode==='bags'?'selected':''} onClick={()=>set('mode','bags')}><Package size={15}/>Bags{form.mode==='bags'&&<Check size={13}/>}</button><button type="button" aria-pressed={form.mode==='bulk'} className={form.mode==='bulk'?'selected':''} onClick={()=>set('mode','bulk')}><Layers3 size={15}/>Bulk{form.mode==='bulk'&&<Check size={13}/>}</button></div></div>
-            {form.mode==='bags'?<label className="field">Number of bags<div className="input-with-unit"><input disabled={linked} type="number" min="0" step="1" value={form.bagCount??''} onChange={event=>set('bagCount',event.target.value===''?null:Number(event.target.value))}/><span>bags</span></div><small>{numberLabel((existing?.bagWeightKgSnapshot??state.settings.bagWeightKg),0)} kg per bag</small></label>:<label className="field">Bulk quantity<div className="input-with-unit"><input disabled={linked} type="number" min="0" step="0.01" value={form.quantityMt||''} onChange={event=>set('quantityMt',Number(event.target.value))}/><span>MT</span></div></label>}
+            {form.mode==='bags'?<label className="field">Number of bags<div className="input-with-unit"><input disabled={linked} type="number" min="0" step="1" value={form.bagCount??''} onChange={event=>set('bagCount',event.target.value===''?null:Number(event.target.value))}/><span>bags</span></div><small>{numberLabel(bagWeight,0)} kg per bag</small></label>:<label className="field">Bulk quantity<div className="input-with-unit"><input disabled={linked} type="number" min="0" step="0.01" value={form.quantityMt||''} onChange={event=>set('quantityMt',Number(event.target.value))}/><span>MT</span></div></label>}
             <label className="field span-2"><span>Order reference <span className="required">*</span></span><input disabled={linked} required maxLength={120} value={form.orderNo} onChange={event=>set('orderNo',event.target.value)} placeholder="Order or customer reference"/></label>
           </div>
-          <div className="editor-estimate" aria-live="polite"><Clock3 size={18}/><strong>{numberLabel(quantity,2)} MT</strong><span>{quantity>0?durationLabel(quantity/rate*60)+' production':'Awaiting quantity'}</span><small>{numberLabel(rate)} MT / hr</small></div>
+          <>{item&&!linked&&<div className="field-grid"><label className="field">Production purpose<select value={form.productionPurpose??item.strategy??'mto'} onChange={e=>set('productionPurpose',e.target.value as 'mto'|'mts')}><option value="mto">Make for order</option><option value="mts">Make for stock</option></select></label><div className="field"><span>Link a SAP order</span><button type="button" className="button secondary" onClick={()=>{closeInput();openSource();}}>Choose from order data</button></div><label className="field">Medication<input value={form.medication??''} onChange={e=>set('medication',e.target.value)}/></label><label className="field">FMR / OMED<input value={form.fmrOmed??''} onChange={e=>set('fmrOmed',e.target.value)}/></label></div>}</><div className="editor-estimate" aria-live="polite"><Clock3 size={18}/><strong>{numberLabel(quantity,2)} MT</strong><span>{quantity>0?durationLabel(quantity/rate*60)+' production':'Awaiting quantity'}</span><small>{numberLabel(rate)} MT / hr</small></div>
           <details className="editor-more" key={editor?.jobId||'new'}><summary>More details <span>Description & remarks</span></summary><div className="editor-extra"><label className="field">Product description<input disabled={linked} maxLength={200} value={form.description} onChange={event=>set('description',event.target.value)} placeholder="Product name or specification"/></label><label className="field">Remarks<textarea rows={2} maxLength={1000} value={form.remarks} onChange={event=>set('remarks',event.target.value)} placeholder="Special instructions or packaging notes…"/></label></div></details>
         </div>
         {editing&&!existing&&<div className="editor-feedback error" role="alert">This task is no longer in the latest workspace. Your draft was not converted into a new task. <button type="button" className="text-link" onClick={()=>{resolveConflict();closeInput();}}>Close editor</button></div>}

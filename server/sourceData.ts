@@ -75,14 +75,13 @@ export async function applySourceImport(
     const key = sourceKey(fields.doNo, fields.materialCode);
     const current = existing.get(key);
     const hash = fieldsHash(fields);
-    const isDone = fields.remark.trim().toLocaleLowerCase("en-US") === "done";
     if (!current) {
       const id = `source-${randomUUID()}`;
       await client.query(
         `INSERT INTO source_orders(id, workspace_id, do_no, material_code, latest_version, latest_import_id,
           delivery_status, delivery_source, delivery_recorded_at, needs_review, updated_at)
-         VALUES ($1, 1, $2, $3, 1, $4, $5, $6, $7::timestamptz, false, $8::timestamptz)`,
-        [id, fields.doNo, fields.materialCode, importId, isDone ? "delivered" : "pending", isDone ? "import" : null, isDone ? nowIso : null, nowIso],
+         VALUES ($1, 1, $2, $3, 1, $4, 'pending', NULL, NULL, false, $5::timestamptz)`,
+        [id, fields.doNo, fields.materialCode, importId, nowIso],
       );
       await insertVersion(client, id, 1, importId, fields, hash, nowIso);
       continue;
@@ -98,15 +97,12 @@ export async function applySourceImport(
     const nextVersion = current.latest_version + 1;
     const activeJob = await activeJobForSource(client, current.id);
     const planningChanged = Boolean(activeJob && sourcePlanningMismatch(fields, activeJob.sourceSnapshot));
-    const deliveryConflict = Boolean(activeJob && activeJob.status !== "completed" && (isDone || current.delivery_status === "delivered"));
+    const deliveryConflict = Boolean(activeJob && activeJob.status !== "completed" && current.delivery_status === "delivered");
     await client.query(
       `UPDATE source_orders SET latest_version = $2,
-         delivery_status = CASE WHEN $3 AND delivery_source IS DISTINCT FROM 'manual' THEN 'delivered' ELSE delivery_status END,
-         delivery_source = CASE WHEN $3 AND delivery_source IS DISTINCT FROM 'manual' THEN 'import' ELSE delivery_source END,
-         delivery_recorded_at = CASE WHEN $3 AND delivery_source IS DISTINCT FROM 'manual' THEN $4::timestamptz ELSE delivery_recorded_at END,
-         needs_review = $5 OR $6, updated_at = $4::timestamptz
+         needs_review = $3 OR $4, updated_at = $5::timestamptz
        WHERE id = $1`,
-      [current.id, nextVersion, isDone, nowIso, planningChanged, deliveryConflict],
+      [current.id, nextVersion, planningChanged, deliveryConflict, nowIso],
     );
     await insertVersion(client, current.id, nextVersion, importId, fields, hash, nowIso);
   }
@@ -184,6 +180,8 @@ export async function setDeliveryStatus(
   reason: string | undefined,
   nowIso: string,
 ): Promise<SourceCommandResult> {
+  const tracked = await client.query("SELECT 1 FROM inventory_orders WHERE source_order_id=$1 AND EXISTS(SELECT 1 FROM inventory_imports WHERE included_baseline)", [sourceOrderId]);
+  if(tracked.rowCount)throw new ApiError(409,"USE_STOCK_DELIVERY","Record or reverse a stock collection for this order instead of changing its delivery flag.");
   const current = await client.query<{ delivery_status: "pending" | "delivered" }>(
     "SELECT delivery_status FROM source_orders WHERE workspace_id = 1 AND id = $1 FOR UPDATE",
     [sourceOrderId],
@@ -227,13 +225,11 @@ export async function listSourceOrders(pool: pg.Pool, query: URLSearchParams): P
   const importId = query.get("importId");
   if (importId) { values.push(importId); where.push(`o.latest_import_id = $${values.length}`); }
   const today = malaysiaDate();
-  values.push(today);
-  const todayParameter = `$${values.length}`;
   const dynamicWhere: string[] = [];
   const productionStatus = query.get("productionStatus");
   if (productionStatus) { values.push(productionStatus); dynamicWhere.push(`production_status = $${values.length}`); }
   const overdue = query.get("overdue");
-  const pickupOverdue = "delivery_status <> 'delivered' AND current_days_outstanding < 0";
+  const pickupOverdue = "delivery_status <> 'delivered' AND current_days_outstanding > 0";
   const productionOverdue = "production_status NOT IN ('completed', 'external-complete') AND current_delivery_lead_days < 0";
   if (overdue === "true" || overdue === "pickup") dynamicWhere.push(`(${pickupOverdue})`);
   if (overdue === "production") dynamicWhere.push(`(${productionOverdue})`);
@@ -248,9 +244,9 @@ export async function listSourceOrders(pool: pg.Pool, query: URLSearchParams): P
          v.fields, j.id AS job_id, j.status AS job_status, NULLIF(j.payload->>'sourceOrderVersion','')::integer AS job_source_version,
          j.payload->'sourceSnapshot' AS job_source_snapshot,
          (v.fields->>'deliveryDate')::date AS delivery_date, o.do_no, o.material_code,
-         COALESCE(j.status, CASE WHEN o.delivery_status = 'delivered' THEN 'external-complete' ELSE 'unplanned' END) AS production_status,
-         CASE WHEN v.fields->>'deliveryLeadDays' IS NULL THEN NULL ELSE (v.fields->>'deliveryLeadDays')::integer - (${todayParameter}::date - i.as_of_date) END AS current_delivery_lead_days,
-         CASE WHEN v.fields->>'daysOutstanding' IS NULL THEN NULL ELSE (v.fields->>'daysOutstanding')::integer - (${todayParameter}::date - i.as_of_date) END AS current_days_outstanding
+         ${productionStatusSql()} AS production_status,
+         ((v.fields->>'deliveryDate')::date - '${today}'::date)::integer AS current_delivery_lead_days,
+         CASE WHEN o.delivery_status='delivered' THEN 0 ELSE GREATEST(0, ('${today}'::date - (v.fields->>'deliveryDate')::date)::integer + 1) END AS current_days_outstanding
        FROM source_orders o
        JOIN source_order_versions v ON v.source_order_id = o.id AND v.version = o.latest_version
        JOIN source_imports i ON i.id = o.latest_import_id
@@ -264,7 +260,7 @@ export async function listSourceOrders(pool: pg.Pool, query: URLSearchParams): P
          count(*) FILTER (WHERE production_status = 'running')::integer AS running,
          count(*) FILTER (WHERE production_status IN ('completed', 'external-complete'))::integer AS completed,
          count(*) FILTER (WHERE delivery_status = 'delivered')::integer AS delivered,
-         count(*) FILTER (WHERE delivery_status <> 'delivered' AND current_days_outstanding < 0)::integer AS overdue
+         count(*) FILTER (WHERE delivery_status <> 'delivered' AND current_days_outstanding > 0)::integer AS overdue
        FROM filtered
      )
      SELECT stats.*, LEAST(${pageParameter}::integer, GREATEST(1, CEIL(stats.total / 50.0)::integer)) AS page,
@@ -328,6 +324,7 @@ export async function clearSourceData(client: pg.PoolClient): Promise<void> {
 }
 
 interface SourceDbView {
+  production_status?: SourceOrderSummary["productionStatus"];
   id: string; latest_version: number; import_id: string; file_name: string; as_of_date: string | Date;
   delivery_status: "pending" | "delivered"; delivery_source: "import" | "manual" | null;
   delivery_recorded_at: string | Date | null; delivery_reason: string | null; needs_review: boolean; updated_at: string | Date;
@@ -343,7 +340,7 @@ interface SourceListResult {
 function sourceViewSql(where: string): string {
   return `SELECT o.id, o.latest_version, o.latest_import_id AS import_id, i.file_name, i.as_of_date::text AS as_of_date,
     o.delivery_status, o.delivery_source, o.delivery_recorded_at, o.delivery_reason, o.needs_review, o.updated_at,
-    v.fields, j.id AS job_id, j.status AS job_status, NULLIF(j.payload->>'sourceOrderVersion','')::integer AS job_source_version,
+    v.fields, ${productionStatusSql()} AS production_status, j.id AS job_id, j.status AS job_status, NULLIF(j.payload->>'sourceOrderVersion','')::integer AS job_source_version,
     j.payload->'sourceSnapshot' AS job_source_snapshot
     FROM source_orders o
     JOIN source_order_versions v ON v.source_order_id = o.id AND v.version = o.latest_version
@@ -352,10 +349,18 @@ function sourceViewSql(where: string): string {
     WHERE ${where} ORDER BY (v.fields->>'deliveryDate')::date, o.do_no, o.material_code`;
 }
 
+
+function productionStatusSql():string {
+  return `CASE WHEN EXISTS(SELECT 1 FROM inventory_orders io WHERE io.source_order_id=o.id AND EXISTS(SELECT 1 FROM inventory_imports WHERE included_baseline)) THEN
+    CASE WHEN o.delivery_status='delivered' OR EXISTS(SELECT 1 FROM inventory_orders io LEFT JOIN inventory_reservations ir ON ir.source_order_id=io.source_order_id WHERE io.source_order_id=o.id AND (io.historical_status IN ('done','out') OR io.ordered_quantity_scaled<=COALESCE(ir.quantity_scaled,0)+COALESCE((SELECT sum(-l.quantity_delta_scaled) FROM inventory_ledger l WHERE l.source_order_id=o.id AND (l.movement_type='dispatch' OR (l.movement_type='reversal' AND l.reverses_movement_id IN (SELECT id FROM inventory_ledger WHERE movement_type='dispatch')))),0))) THEN 'external-complete'
+      WHEN EXISTS(SELECT 1 FROM jobs active WHERE active.source_order_id=o.id AND active.status='running') THEN 'running'
+      WHEN EXISTS(SELECT 1 FROM jobs active WHERE active.source_order_id=o.id AND active.status='pending') THEN 'pending' ELSE 'unplanned' END
+    ELSE COALESCE(j.status,CASE WHEN o.delivery_status='delivered' OR upper(btrim(v.fields->>'remark'))='DONE' THEN 'external-complete' ELSE 'unplanned' END) END`;
+}
+
 function toSummary(row: SourceDbView, today: string): SourceOrderSummary {
   const asOfDate = row.as_of_date instanceof Date ? row.as_of_date.toISOString().slice(0, 10) : String(row.as_of_date).slice(0, 10);
-  const elapsed = calendarDays(asOfDate, today);
-  const productionStatus = row.job_status ?? (row.delivery_status === "delivered" ? "external-complete" : "unplanned");
+  const productionStatus = row.production_status ?? row.job_status ?? (row.delivery_status === "delivered" || row.fields.remark.trim().toUpperCase()==='DONE' ? "external-complete" : "unplanned");
   return {
     id: row.id,
     version: row.latest_version,
@@ -369,8 +374,8 @@ function toSummary(row: SourceDbView, today: string): SourceOrderSummary {
     deliveryReason: row.delivery_reason,
     productionStatus,
     linkedJobId: row.job_id,
-    currentDeliveryLeadDays: row.fields.deliveryLeadDays === null ? null : row.fields.deliveryLeadDays - elapsed,
-    currentDaysOutstanding: row.fields.daysOutstanding === null ? null : row.fields.daysOutstanding - elapsed,
+    currentDeliveryLeadDays: calendarDays(today, row.fields.deliveryDate),
+    currentDaysOutstanding: row.delivery_status === 'delivered' ? 0 : Math.max(0, calendarDays(row.fields.deliveryDate, today) + 1),
     needsReview: row.needs_review || sourcePlanningMismatch(row.fields, row.job_source_snapshot),
     updatedAt: new Date(row.updated_at).toISOString(),
   };
@@ -489,5 +494,7 @@ function calendarDays(from: string, to: string): number {
 }
 
 function dbDate(value: string | Date): string {
-  return value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10);
+  return value instanceof Date
+    ? `${value.getFullYear().toString().padStart(4, "0")}-${(value.getMonth() + 1).toString().padStart(2, "0")}-${value.getDate().toString().padStart(2, "0")}`
+    : String(value).slice(0, 10);
 }

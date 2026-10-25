@@ -5,6 +5,7 @@ import express, { type ErrorRequestHandler, type NextFunction, type Request, typ
 import { parseCommand } from "../src/domain/commands";
 import { ApiError, badRequest } from "./errors";
 import type { WorkspaceStore } from "./store";
+import type { InventoryDraftRequest } from "../src/domain/inventoryTypes";
 
 export interface AppOptions {
   store: WorkspaceStore;
@@ -46,15 +47,53 @@ export function createApp(options: AppOptions): express.Express {
     response.json(await options.store.listSourceImports());
   }));
 
+  app.get("/api/inventory", asyncRoute(async (_request, response) => {
+    response.json(await options.store.getInventory());
+  }));
+  app.get("/api/inventory/jobs/:id/production", asyncRoute(async (request,response)=>{
+    const id=request.params.id;if(typeof id!=="string"||!id||id.length>200)throw badRequest("Invalid production card id.");
+    response.json(await options.store.getJobProduction(id));
+  }));
+
+  app.get("/api/inventory/orders", asyncRoute(async (_request, response) => {
+    response.json(await options.store.getInventoryOrders());
+  }));
+
+  app.get("/api/inventory/daily", asyncRoute(async (request, response) => {
+    const query = new URL(request.originalUrl, "http://localhost").searchParams;
+    for (const [name] of query) if (name !== "date") throw badRequest(`Inventory daily filter ${name} is not supported.`);
+    if (query.getAll("date").length > 1) throw badRequest("Inventory daily date may only be supplied once.");
+    const date = query.get("date") ?? undefined;
+    if (date && !validDate(date)) throw badRequest("Inventory daily date must be a valid YYYY-MM-DD date.");
+    response.json(await options.store.getInventoryDaily(date));
+  }));
+
+  app.get("/api/inventory/ledger", asyncRoute(async (request, response) => {
+    const query = new URL(request.originalUrl, "http://localhost").searchParams;
+    for (const [name] of query) if (name !== "limit" && name !== "itemId") throw badRequest(`Inventory ledger filter ${name} is not supported.`);
+    const value = query.get("limit");
+    const limit = value === null ? undefined : Number(value);
+    if (value !== null && (!/^\d+$/.test(value) || !Number.isSafeInteger(limit))) throw badRequest("Inventory ledger limit must be an integer.");
+    const itemId = query.get("itemId") ?? undefined;
+    if (itemId !== undefined && (!itemId.trim() || itemId.length > 200)) throw badRequest("Inventory ledger itemId is invalid.");
+    response.json(await options.store.getInventoryLedger(limit, itemId));
+  }));
+
+  app.get("/api/inventory/orders/:id/journal", asyncRoute(async (request, response) => {
+    const id = request.params.id;
+    if (typeof id !== "string" || !id || id.length > 200) throw badRequest("Inventory order id is invalid.");
+    response.json(await options.store.getInventoryOrderJournal(id));
+  }));
+
   app.get("/api/backup", asyncRoute(async (_request, response) => {
-    response.setHeader("Content-Disposition", `attachment; filename="millplan-backup-v3.json"`);
+    response.setHeader("Content-Disposition", `attachment; filename="millplan-backup-v4.json"`);
     response.json(await options.store.getPortableBackup());
   }));
 
   app.get("/api/backup/previous", asyncRoute(async (_request, response) => {
     const backup = await options.store.getPreviousPortableBackup();
     if (!backup) throw new ApiError(404, "PREVIOUS_BACKUP_NOT_FOUND", "No recovery backup is available.");
-    response.setHeader("Content-Disposition", `attachment; filename="millplan-previous-backup-v3.json"`);
+    response.setHeader("Content-Disposition", `attachment; filename="millplan-previous-backup-v4.json"`);
     response.json(backup);
   }));
 
@@ -75,6 +114,16 @@ export function createApp(options: AppOptions): express.Express {
       const parsed = parseApiCommand({ type: "data.import", input: request.body });
       if (parsed.type !== "data.import") throw badRequest("Import preview is invalid.");
       response.json(await options.store.previewSourceImport(parsed.input));
+    }),
+  );
+
+  app.post(
+    "/api/inventory/draft",
+    mutationBoundary(options.allowedOrigins),
+    requireJson,
+    express.json({ limit: "1mb", strict: true }),
+    asyncRoute(async (request, response) => {
+      response.json(await options.store.previewInventoryDraft(inventoryDraftRequest(request.body)));
     }),
   );
 
@@ -150,6 +199,35 @@ function commandRequest(value: unknown): { expectedRevision: number; commandId: 
 
 function plainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function inventoryDraftRequest(value: unknown): InventoryDraftRequest {
+  if (!plainObject(value)) throw badRequest("Inventory draft request must be a JSON object.");
+    const allowed = new Set(["fromDate", "toDate", "sourceOrderIds", "demandThrough"]);
+  for (const key of Object.keys(value)) if (!allowed.has(key)) throw badRequest(`Inventory draft field ${key} is not supported.`);
+  if (!validDate(value.fromDate) || !validDate(value.toDate)) throw badRequest("Inventory draft dates must be valid YYYY-MM-DD dates.");
+  if ((value.fromDate as string) > (value.toDate as string)) throw badRequest("Inventory draft fromDate cannot be after toDate.");
+  const days = Math.round((Date.parse(`${value.toDate}T12:00:00Z`) - Date.parse(`${value.fromDate}T12:00:00Z`)) / 86_400_000) + 1;
+  if (days > 31) throw badRequest("Inventory drafts may span at most 31 days.");
+  const result: InventoryDraftRequest = { fromDate: value.fromDate as string, toDate: value.toDate as string };
+  if(value.demandThrough!==undefined){if(!validDate(value.demandThrough))throw badRequest("Order demand cutoff must be a valid date.");result.demandThrough=value.demandThrough as string;}
+  if (Object.prototype.hasOwnProperty.call(value, "sourceOrderIds")) {
+    if (!Array.isArray(value.sourceOrderIds) || value.sourceOrderIds.length > 2_000) throw badRequest("sourceOrderIds must be an array of 2000 items or fewer.");
+    const ids = value.sourceOrderIds.map((id, index) => {
+      if (typeof id !== "string" || !id.trim() || id.length > 200) throw badRequest(`sourceOrderIds[${index}] is invalid.`);
+      return id;
+    });
+    if (new Set(ids).size !== ids.length) throw badRequest("sourceOrderIds cannot contain duplicates.");
+    result.sourceOrderIds = ids;
+  }
+  return result;
+}
+
+function validDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
 }
 
 function allowedHost(hostHeader: string | undefined, ports: ReadonlySet<number>): boolean {

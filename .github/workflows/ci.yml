@@ -66,4 +66,5 @@ jobs:
             output/playwright/database/
             output/playwright/redesign/
             output/playwright/data/
+            output/playwright/inventory/
           if-no-files-found: ignore

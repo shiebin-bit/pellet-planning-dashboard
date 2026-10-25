@@ -67,7 +67,7 @@ The pause/audit suite covers required pause reasons, trusted time, locked plans 
 
 The UI regression suite adds four-line board fit at 1366 × 768, first-screen Overview hierarchy, all five pages at 320/390/768/1440px, calendar/export/dialog/drawer bounds, keyboard focus and Escape, primary/status text contrast (4.5:1), and print visibility. It uses explicit demo fixtures and blocks browser writes after setup.
 
-CI runs all five suites on Ubuntu with PostgreSQL 16, Node 24 and Playwright Chromium. Browser tests use the CI-only database after the API suite.
+CI runs all six suites on Ubuntu with PostgreSQL 16, Node 24 and Playwright Chromium. Browser tests use the CI-only database after the API suite.
 
 ## Release checks
 
@@ -76,8 +76,15 @@ Alongside the automated suites, verify the full Compose image starts healthy; re
 For the offline compatibility build, check four fitted horizontal lines at 1366×768, direct drag/insertion/Undo, retained input drafts, Done, report downloads, restore recovery, and 390px touch layouts. The delivery verification retained the existing 9 horizontal, 10 drag and 5 report/restore workflow groups. These local historical QA scripts/evidence are excluded from source because they use machine-specific paths; the portable database suite is committed.
 
 
-The Data suite uploads fictional `.xlsx` files with all 13 screenshot fields, detects the header, validates the import preview and lost-response retry, checks 50-row paging and filtered statistics, creates whole-order MT/Bags cards from Data and the board, verifies immutable source fields and bag-weight snapshots, reimports changed quantities without overwriting production, separates Done from delivery, reads back backup v3 and checks mobile/dialog focus. Numeric identifier/date/formula/parser edge cases are covered by unit tests. No real SAP workbook was available, so real-file compatibility remains a first-import verification step.
+The Data suite uploads fictional `.xlsx` files with all 13 screenshot fields, detects the header, validates the import preview and lost-response retry, checks 50-row paging and filtered statistics, creates whole-order MT/Bags cards from Data and the board, verifies immutable source fields and bag-weight snapshots, reimports changed quantities without overwriting production, separates Done from delivery, reads back backup v4 and checks mobile/dialog focus. Numeric identifier/date/formula/parser edge cases are covered by unit tests. No real SAP workbook was available, so real-file compatibility remains a first-import verification step.
 
 Calendar/source tests cover 07:00–19:00 carry-over, cross-assigned-date queues, historical calendar selection, locked overlap rejection, source edit/copy protection, atomic import failure, revision conflict, command retry, delivery provenance, source-version compatibility and portable recovery. Test setup remains isolated from the deployed workspace.
 
 The Excel Data release passes 96 unit tests across 17 files, 15 PostgreSQL API tests and 35 browser workflow groups across the five suites. Deployment also rehearses calendar activation against a copy of the latest workspace and compares every original job payload, catalog item and execution timestamp before and after activation.
+
+
+## Inventory verification
+
+The inventory suite uses only fictional workbook fixtures and a disposable PostgreSQL database. It covers exact reservation arithmetic, MTS safety stock and overproduction, multiple receipts and partial collections, cumulative production correction, delivery reversal, full OUT and reopening, historical DONE/OUT without replay, later-import policy preservation, physical-count differences, command retries, concurrent revision conflicts and atomic rollback. Domain tests cover 25kg/50kg snapshots, downtime, horizon capacity, split cards and append-only planning. Browser checks import a fictional XLSM, generate/review/save a draft, record partial output and collection, and verify Stock, Daily stock, backup v4 and 320/390px layouts. Screenshots and generated fixtures remain under ignored output/playwright/inventory.
+
+Run API files serially (`--test-concurrency=1`) because they reset the same disposable test workspace. Never run API and browser mutation suites concurrently against one database.
