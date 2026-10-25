@@ -47,7 +47,7 @@ async function fits(locator,width,height){const box=await locator.boundingBox();
     if(viewport.width>=1366){assert.ok(await table.evaluate(el=>el.scrollWidth<=el.clientWidth+1),'All order columns fit a normal desktop');}
     else{
       const right=page.getByRole('button',{name:'Scroll order table right',exact:true});await right.waitFor();await right.scrollIntoViewIfNeeded();await right.click();await wait(async()=>await table.evaluate(el=>el.scrollLeft>0));
-      const left=page.getByRole('button',{name:'Scroll order table left',exact:true});assert.equal(await left.isEnabled(),true);await left.click();await wait(async()=>await table.evaluate(el=>el.scrollLeft<2));
+      const left=page.getByRole('button',{name:'Scroll order table left',exact:true});await wait(()=>left.isEnabled());await left.click();await wait(async()=>await table.evaluate(el=>el.scrollLeft<2));
       await page.locator('.data-order-link').last().scrollIntoViewIfNeeded();await fits(page.getByLabel('Order table scrolling'),viewport.width,viewport.height);
     }
     const cells=await table.locator('tbody tr').first().locator('td').evaluateAll(cells=>cells.map(cell=>{const bounds=cell.getBoundingClientRect(),walker=document.createTreeWalker(cell,NodeFilter.SHOW_TEXT);let node;while(node=walker.nextNode()){if(!node.textContent.trim()||node.parentElement.closest('.sr-only'))continue;const range=document.createRange();range.selectNodeContents(node);if([...range.getClientRects()].some(rect=>rect.left<bounds.left-1||rect.right>bounds.right+1))return false;}return true;}));assert.ok(cells.every(Boolean),'Order text stays in its own column');
