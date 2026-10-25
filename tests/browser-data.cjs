@@ -17,7 +17,7 @@ const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kuala_Lumpur'}).
 const headers=['DO no','Delivery date','Sold to Party','Ship to Party','Material code','Description','Qty','Unit','Delivery lead days','Remark','Days of outstanding','Medication','FMR / OMED'];
 async function workbook(file,change=false){
  const book=new ExcelJS.Workbook();const sheet=book.addWorksheet('SAP list');sheet.addRow(['Fictional QA export']);sheet.addRow([]);sheet.addRow(headers);
- for(let i=0;i<52;i++)sheet.addRow([String(1000+i).padStart(8,'0'),today(),'Example customer '+i,'Example pickup '+i,'000070313008'+String(i).padStart(6,'0'),'Example feed '+i,change&&i===0?260:i===0?250:5,'MT',3,'Open',i===0?-2:4,'QA medication','QA FMR']);
+ for(let i=0;i<52;i++)sheet.addRow([String(1000+i).padStart(8,'0'),today(),'Example customer '+i,'Example agricultural farm delivery destination '+i,'000070313008'+String(i).padStart(6,'0'),'Example poultry finisher feed for commercial farms in bulk '+i,change&&i===0?260:i===0?250:5,'MT',3,'Open',i===0?-2:4,'QA medication','QA FMR']);
  sheet.addRow(['BAGS-ORDER',today(),'Example bags customer','Example bags pickup','000070313008999901','Example bagged feed',400,'Bags',null,'Open',null,'','']);
  sheet.addRow(['DONE-ORDER',today(),'Example complete customer','Example complete pickup','000070313008999902','Example delivered feed',10,'MT',1,' Done ',-3,'','']);
  await book.xlsx.writeFile(file);
@@ -42,6 +42,19 @@ async function fits(locator,width,height){const box=await locator.boundingBox();
   console.log('PASS Excel upload detects headers, previews 54 orders, preserves codes, creates no cards and deduplicates lost-response retry');
   assert.equal(await page.locator('.source-table tbody tr').count(),50);await page.getByRole('button',{name:'Next',exact:true}).click();await wait(async()=>await page.locator('.source-table tbody tr').count()===4);await page.getByRole('button',{name:'Previous',exact:true}).click();
   await wait(async()=>await page.locator('.source-table tbody tr').count()===50);
+  for(const viewport of [{width:1920,height:900},{width:1366,height:768},{width:1024,height:768},{width:390,height:844},{width:320,height:760}]){
+    await page.setViewportSize(viewport);const table=page.getByRole('region',{name:'Order table — scroll for more columns',exact:true});
+    if(viewport.width>=1366){assert.ok(await table.evaluate(el=>el.scrollWidth<=el.clientWidth+1),'All order columns fit a normal desktop');}
+    else{
+      const right=page.getByRole('button',{name:'Scroll order table right',exact:true});await right.waitFor();await right.scrollIntoViewIfNeeded();await right.click();await wait(async()=>await table.evaluate(el=>el.scrollLeft>0));
+      const left=page.getByRole('button',{name:'Scroll order table left',exact:true});assert.equal(await left.isEnabled(),true);await left.click();await wait(async()=>await table.evaluate(el=>el.scrollLeft<2));
+      await page.locator('.data-order-link').last().scrollIntoViewIfNeeded();await fits(page.getByLabel('Order table scrolling'),viewport.width,viewport.height);
+    }
+    const cells=await table.locator('tbody tr').first().locator('td').evaluateAll(cells=>cells.map(cell=>{const bounds=cell.getBoundingClientRect(),walker=document.createTreeWalker(cell,NodeFilter.SHOW_TEXT);let node;while(node=walker.nextNode()){if(!node.textContent.trim()||node.parentElement.closest('.sr-only'))continue;const range=document.createRange();range.selectNodeContents(node);if([...range.getClientRects()].some(rect=>rect.left<bounds.left-1||rect.right>bounds.right+1))return false;}return true;}));assert.ok(cells.every(Boolean),'Order text stays in its own column');
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(output,'order-list-'+viewport.width+'.png')});
+  }
+  await page.setViewportSize({width:1366,height:768});
+
   const lastOrder=page.locator('.data-order-link').last();await lastOrder.scrollIntoViewIfNeeded();const listScroll=await page.evaluate(()=>scrollY);await lastOrder.click();
   const details=page.getByRole('dialog',{name:'Order details',exact:true});await details.waitFor();await fits(details,1366,768);
   assert.equal(await page.locator('#root').evaluate(el=>el.inert),true);

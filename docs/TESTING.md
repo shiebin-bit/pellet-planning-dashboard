@@ -90,3 +90,5 @@ The inventory suite uses only fictional workbook fixtures and a disposable Postg
 Run API files serially (`--test-concurrency=1`) because they reset the same disposable test workspace. Never run API and browser mutation suites concurrently against one database.
 
 Order/stock detail dialog regressions verify bottom-row opening, viewport bounds, background isolation, keyboard-reachable disclosures, scroll/focus restoration, in-dialog policy saving and status feedback, and transitions into planning or production details. The order picker is checked at1366/390/320px with bounded table scrolling, keyboard horizontal scrolling when needed, collapsible filters and a visible sticky planning action.
+
+Main Orders-table checks use long fictional customer/product names at1920/1366/1024/390/320px: desktop columns fit without overflow, text remains within cells, narrow-layout scroll controls work and remain visible down the long list, and the page has no horizontal overflow.

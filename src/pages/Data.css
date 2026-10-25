@@ -58,3 +58,12 @@
   .source-picker .data-pagination { padding: 10px; gap: 8px; }
   .source-picker .source-table th:last-child,.source-picker .source-table td:last-child { min-width: 130px; padding-inline: 10px; }
 }
+.orders-table { table-layout: fixed; white-space: normal; }
+.orders-table th,.orders-table td { padding-inline: 12px; overflow-wrap: anywhere; }
+.orders-table .source-tag { max-width: 100%; white-space: normal; }
+.orders-table td:last-child .button { width: 100%; min-width: 0; white-space: normal; padding-inline: 8px; }
+.orders-table th:last-child,.orders-table td:last-child { position: sticky; right: 0; background: #fff; box-shadow: -5px 0 8px -6px #17354b70; z-index: 1; }
+.orders-table th:last-child { background: #f6f7f8; }
+.order-scroll-tools { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: #f6f7f8; border-bottom: 1px solid var(--border); }
+.order-scroll-tools>span { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); }
+.order-scroll-tools .button { padding-inline: 10px; }
