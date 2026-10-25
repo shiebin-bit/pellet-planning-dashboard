@@ -167,6 +167,9 @@ integration("inventory API", () => {
     assert.equal((await invalid.json()).error.code, "NEGATIVE_PHYSICAL_STOCK");
     assert.equal((await get<any>("/api/workspace")).revision, 3);
     assert.equal((await get<any[]>("/api/inventory/ledger")).some(row => row.note === "Impossible"), false);
+    const future=await command(3,"future-receipt",{type:"inventory.receive",itemId:item.itemId,medication:"",fmrOmed:"",quantity:1,occurredOn:addDays(malaysiaToday(),1),postingKey:"future-receipt"});
+    assert.equal(future.status,400);assert.equal((await future.json()).error.code,"FUTURE_PHYSICAL_MOVEMENT");
+    assert.equal((await get<any>("/api/workspace")).revision,3);
   });
 
   it("corrects cumulative output, releases completed shortages and can receive the same total after a correction",async()=>{

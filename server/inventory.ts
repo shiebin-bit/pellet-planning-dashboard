@@ -56,6 +56,7 @@ export async function applyInventoryWorkbook(
   requireBaseline: boolean,
 ): Promise<AppState> {
   if (requireBaseline && !input.includeBaseline) throw new ApiError(400, "BASELINE_REQUIRED", "Baseline import requires includeBaseline=true.");
+  if((input.includeBaseline||input.reconcileStock)&&input.asOfDate>malaysiaDateAt(nowIso))throw new ApiError(400,"FUTURE_PHYSICAL_COUNT","A physical stock count cannot be dated in the future.");
   const semanticDigest = hashCanonical(input);
   const duplicate = await client.query<{ id: string }>(
     "SELECT id FROM inventory_imports WHERE workspace_id = 1 AND semantic_digest = $1",
@@ -663,6 +664,7 @@ async function insertMovement(client:pg.PoolClient,input:MovementInput):Promise<
   const existing=await client.query<any>("SELECT * FROM inventory_ledger WHERE workspace_id=1 AND posting_key=$1 FOR UPDATE",[input.postingKey]);
   if(existing.rowCount){const row=existing.rows[0];if(row.item_id!==input.itemId||row.medication!==medication||row.fmr_omed!==fmrOmed||row.movement_type!==input.movementType||numeric(row.quantity_delta_scaled)!==input.quantityDeltaScaled||dbDate(row.occurred_on)!==input.occurredOn||row.source_order_id!==(input.sourceOrderId??null)||row.job_id!==(input.jobId??null)||row.reverses_movement_id!==(input.reversesMovementId??null)||row.import_id!==(input.importId??null))throw new ApiError(409,"POSTING_KEY_CONFLICT","This posting key was already used for a different movement.");return{id:row.id,existing:true};}
   const id=`movement-${randomUUID()}`;
+  if(input.occurredOn>malaysiaDateAt(input.recordedAt))throw new ApiError(400,"FUTURE_PHYSICAL_MOVEMENT","Actual stock movements cannot be dated in the future. Schedule future production on the planning board instead.");
   const item=await requireItem(client,input.itemId,false);
   const boundary=await client.query<{date:string|null}>("SELECT min(as_of_date)::text date FROM inventory_imports WHERE included_baseline");
   if(input.movementType!=="baseline"&&boundary.rows[0].date&&input.occurredOn<boundary.rows[0].date)throw new ApiError(400,"MOVEMENT_BEFORE_BASELINE","Record movements on or after the stock baseline date. Earlier history is already included in Closing.");
