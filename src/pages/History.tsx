@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { ArrowUpRight, Clock3, ListFilter, CalendarDays } from 'lucide-react';
 import { useWorkspace } from '../lib/workspace';
 import { SearchInput, StatusBadge, EmptyState } from '../components/Shared';
@@ -9,6 +9,7 @@ import type { Job, LineId } from '../domain/types';
 import { HistoryChanges, historyFieldLabel } from '../components/HistoryChanges';
 import { useCurrentTime } from '../lib/useCurrentTime';
 import './History.css';
+import { useListState, useListPageScroll } from '../lib/listNavigation';
 import { RecordTable, RecordPagination } from '../components/RecordTable';
 
 const PAGE_SIZE = 50;
@@ -16,13 +17,14 @@ const PAGE_SIZE = 50;
 export function HistoryPage() {
   const { state, date, openJob, storageMode } = useWorkspace();
   const now = useCurrentTime(state.jobs.some(isJobPaused));
-  const [tab, setTab] = useState<'records' | 'activity'>('records');
-  const [query, setQuery] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [status, setStatus] = useState('all');
-  const [line, setLine] = useState<LineId | 'all'>('all');
-  const [page, setPage] = useState(1);
+  const [tab, setTab] = useListState<'records' | 'activity'>('history.tab','records');
+  const [query, setQuery] = useListState('history.query','');
+  const [from, setFrom] = useListState('history.from','');
+  const [to, setTo] = useListState('history.to','');
+  const [status, setStatus] = useListState('history.status','all');
+  const [line, setLine] = useListState<LineId | 'all'>('history.line','all');
+  const [page, setPage] = useListState('history.page',1);
+  useListPageScroll('history.position',true);
   const search = query.trim().toLowerCase();
   const records = useMemo(() => state.jobs.filter(job =>
     (!from || job.date >= from) && (!to || job.date <= to) &&
@@ -64,7 +66,7 @@ export function HistoryPage() {
       </div>
       <div className="date-scope" aria-label="History date and export context"><strong>{tab === 'records' ? 'Planning dates' : 'Activity dates'}: {dateRange}</strong><br/>Quick Excel / PDF: {dateLabel(date, true)} · all four lines. History filters do not apply; use Date range report to choose report dates and line.</div>
       <RecordPagination label="History" position="top" total={count} page={currentPage} onChange={setPage} itemLabel={tab === 'records' ? 'matching records' : 'matching events'}/>
-      {tab === 'records' ? (records.length ? <RecordTable label="History table" resetKey={`${currentPage}-${from}-${to}-${line}-${status}-${query}`}><table><thead><tr><th>PLANNING DATE</th><th>PRODUCT / ORDER</th><th>LINE</th><th>PLANNED / ACTUAL</th><th>ACTUAL START</th><th>ACTUAL END</th><th>STATUS</th><th/></tr></thead><tbody>{records.slice(offset, offset + PAGE_SIZE).map(job => <tr className="clickable-row" key={job.id} onClick={() => openJob(job.id)}><td>{dateLabel(job.date, true)}</td><td><div className="product-cell"><i style={{ background: productColor(job.productCode) }}/><div><strong>{job.productCode}</strong><small>{job.orderNo || 'No order reference'}</small></div></div></td><td><span className="line-tag">{job.lineId}</span></td><td><HistoryQuantity job={job} now={now}/></td><td className="tabular muted">{fullDateTime(job.actualStart)}</td><td className="tabular muted">{fullDateTime(job.actualEnd)}</td><td><StatusBadge status={job.status} issue={!!job.issue} paused={isJobPaused(job)}/></td><td><button className="icon-button" aria-label={'View ' + job.productCode + ' record'} onClick={e => { e.stopPropagation(); openJob(job.id); }}><ArrowUpRight size={16}/></button></td></tr>)}</tbody></table></RecordTable> : <EmptyState title="No matching records" text="Try another line, date range, status or product reference."/>) :
+      {tab === 'records' ? (records.length ? <RecordTable memoryKey="history.table" label="History table" resetKey={`${currentPage}-${from}-${to}-${line}-${status}-${query}`}><table><thead><tr><th>PLANNING DATE</th><th>PRODUCT / ORDER</th><th>LINE</th><th>PLANNED / ACTUAL</th><th>ACTUAL START</th><th>ACTUAL END</th><th>STATUS</th><th/></tr></thead><tbody>{records.slice(offset, offset + PAGE_SIZE).map(job => <tr className="clickable-row" key={job.id} onClick={() => openJob(job.id)}><td>{dateLabel(job.date, true)}</td><td><div className="product-cell"><i style={{ background: productColor(job.productCode) }}/><div><strong>{job.productCode}</strong><small>{job.orderNo || 'No order reference'}</small></div></div></td><td><span className="line-tag">{job.lineId}</span></td><td><HistoryQuantity job={job} now={now}/></td><td className="tabular muted">{fullDateTime(job.actualStart)}</td><td className="tabular muted">{fullDateTime(job.actualEnd)}</td><td><StatusBadge status={job.status} issue={!!job.issue} paused={isJobPaused(job)}/></td><td><button className="icon-button" aria-label={'View ' + job.productCode + ' record'} onClick={e => { e.stopPropagation(); openJob(job.id); }}><ArrowUpRight size={16}/></button></td></tr>)}</tbody></table></RecordTable> : <EmptyState title="No matching records" text="Try another line, date range, status or product reference."/>) :
         events.length ? <div className="activity-list">{events.slice(offset, offset + PAGE_SIZE).map(event => <div className="activity-event" key={event.id}><span className={'activity-dot ' + event.type}/><div><strong>{event.message}</strong><span>{fullDateTime(event.at)} · {event.type.replace(/[._-]+/g, ' ')}</span><HistoryChanges event={event}/></div>{event.jobId && state.jobs.some(job => job.id === event.jobId) && <button className="icon-button" onClick={() => openJob(event.jobId!)} aria-label="Open related production"><ArrowUpRight size={16}/></button>}</div>)}</div> : <EmptyState title="No matching activity" text="Try another search or date range."/>}
       <RecordPagination label="History" position="bottom" total={count} page={currentPage} onChange={setPage} itemLabel={tab === 'records' ? 'matching records' : 'matching events'}/>
       <p className="history-export-note">Statistics include every matching record across all pages.</p>

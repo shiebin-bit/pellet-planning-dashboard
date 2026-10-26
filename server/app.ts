@@ -6,6 +6,7 @@ import { parseCommand } from "../src/domain/commands";
 import { ApiError, badRequest } from "./errors";
 import type { WorkspaceStore } from "./store";
 import type { InventoryDraftRequest } from "../src/domain/inventoryTypes";
+import type { SourceImportInput, SourceImportPreviewContext } from "../src/domain/sourceTypes";
 
 export interface AppOptions {
   store: WorkspaceStore;
@@ -111,9 +112,8 @@ export function createApp(options: AppOptions): express.Express {
     requireJson,
     express.json({ limit: "10mb", strict: true }),
     asyncRoute(async (request, response) => {
-      const parsed = parseApiCommand({ type: "data.import", input: request.body });
-      if (parsed.type !== "data.import") throw badRequest("Import preview is invalid.");
-      response.json(await options.store.previewSourceImport(parsed.input));
+      const parsed = sourcePreviewRequest(request.body);
+      response.json(await options.store.previewSourceImport(parsed.input, parsed.context));
     }),
   );
 
@@ -199,6 +199,45 @@ function commandRequest(value: unknown): { expectedRevision: number; commandId: 
 
 function plainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function sourcePreviewRequest(value: unknown): { input: SourceImportInput; context?: SourceImportPreviewContext } {
+  let inputValue = value;
+  let context: SourceImportPreviewContext | undefined;
+  if (plainObject(value) && (Object.prototype.hasOwnProperty.call(value, "input") || Object.prototype.hasOwnProperty.call(value, "context"))) {
+    const keys = Object.keys(value);
+    if (keys.length !== 2 || !keys.includes("input") || !keys.includes("context")) throw badRequest("Import preview wrapper requires only input and context.");
+    inputValue = value.input;
+    context = sourcePreviewContext(value.context);
+  }
+  const parsed = parseApiCommand({ type: "data.import", input: inputValue });
+  if (parsed.type !== "data.import") throw badRequest("Import preview is invalid.");
+  return { input: parsed.input, ...(context ? { context } : {}) };
+}
+
+function sourcePreviewContext(value: unknown): SourceImportPreviewContext {
+  if (!plainObject(value)) throw badRequest("Import preview context must be an object.");
+  const keys = Object.keys(value);
+  if (keys.length !== 2 || !keys.includes("includeBaseline") || !keys.includes("annotations")) throw badRequest("Import preview context requires only includeBaseline and annotations.");
+  if (typeof value.includeBaseline !== "boolean") throw badRequest("Import preview includeBaseline must be boolean.");
+  if (!Array.isArray(value.annotations) || value.annotations.length > 10_000) throw badRequest("Import preview annotations must contain at most 10000 rows.");
+  const seen = new Set<string>();
+  const annotations = value.annotations.map((entry, index) => {
+    if (!plainObject(entry)) throw badRequest(`Import preview annotation ${index + 1} must be an object.`);
+    const expected = ["doNo", "materialCode", "remark", "medication", "fmrOmed"];
+    if (Object.keys(entry).length !== expected.length || expected.some(key => !Object.prototype.hasOwnProperty.call(entry, key))) throw badRequest(`Import preview annotation ${index + 1} has unsupported fields.`);
+    const text = (name: string, max: number, required = false): string => {
+      const raw = entry[name];
+      if (typeof raw !== "string" || raw.length > max || (required && !raw.trim())) throw badRequest(`Import preview annotation ${index + 1} ${name} is invalid.`);
+      return required ? raw.trim() : raw;
+    };
+    const annotation = { doNo: text("doNo", 120, true), materialCode: text("materialCode", 120, true), remark: text("remark", 1_000), medication: text("medication", 200), fmrOmed: text("fmrOmed", 200) };
+    const key = `${annotation.doNo.toLocaleUpperCase("en-US")}\u0000${annotation.materialCode.toLocaleUpperCase("en-US")}`;
+    if (seen.has(key)) throw badRequest(`Import preview annotation ${index + 1} duplicates an order.`);
+    seen.add(key);
+    return annotation;
+  });
+  return { includeBaseline: value.includeBaseline, annotations };
 }
 
 function inventoryDraftRequest(value: unknown): InventoryDraftRequest {

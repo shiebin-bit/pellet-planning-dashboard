@@ -9,7 +9,7 @@ import { ApiError } from "./errors";
 import { getScheduledJobs } from "../src/domain/engine";
 import { planInventoryDraft } from "../src/domain/inventoryPlanner";
 import type { InventoryCommand, InventoryDraftRequest } from "../src/domain/inventoryTypes";
-import type { SourceImportInput } from "../src/domain/sourceTypes";
+import type { SourceImportInput, SourceImportPreviewContext } from "../src/domain/sourceTypes";
 import type { PortableSourceData, PortableWorkspaceBackupV3 } from "../src/domain/sourceTypes";
 import type { PortableInventoryData, PortableWorkspaceBackupV4 } from "../src/domain/inventoryTypes";
 import { clearInventoryData, exportInventoryData, exportSourceData, portableBackupV4, restoreInventoryData, restoreSourceData, validatePortableBackupV3, validatePortableBackupV4 } from "./sourceBackup";
@@ -77,7 +77,7 @@ export class WorkspaceStore {
     await this.pool.query("SELECT 1");
   }
 
-  async previewSourceImport(input: SourceImportInput) { return previewSourceImport(this.pool, input); }
+  async previewSourceImport(input: SourceImportInput, context?: SourceImportPreviewContext) { return previewSourceImport(this.pool, input, context); }
   async listSourceOrders(query: URLSearchParams) { return listSourceOrders(this.pool, query); }
   async getSourceOrder(id: string) { return getSourceOrder(this.pool, id); }
   async getInventory() { return getInventorySnapshot(this.pool); }

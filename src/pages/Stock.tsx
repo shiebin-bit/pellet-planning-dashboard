@@ -1,9 +1,10 @@
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { Upload } from 'lucide-react';
 import { AutoPlanningButton } from '../components/InventoryDraftDialog';
 import { DailyStockBrowser, StockBrowser } from '../components/InventoryWorkspace';
 import { useWorkspace } from '../lib/workspace';
 import './Data.css';
+import { useListState } from '../lib/listNavigation';
 
 const tabs = [
   { id: 'stock', label: 'Stock' },
@@ -12,7 +13,7 @@ const tabs = [
 
 export function StockPage() {
   const { storageMode, openImport, mutationLocked, hasConflict } = useWorkspace();
-  const [tab, setTab] = useState<'stock' | 'daily'>('stock');
+  const [tab, setTab] = useListState<'stock' | 'daily'>('stock.tab','stock');
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
 
   return <div className="page data-page stock-page">

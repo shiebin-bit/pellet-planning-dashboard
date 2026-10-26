@@ -404,7 +404,7 @@ integration("PostgreSQL workspace API", () => {
         doNo: "001039192030", deliveryDate: "2026-10-22", soldToParty: "FFM FARMS SDN BHD",
         shipToParty: "FFM FARMS SDN BHD", materialCode: "7.0313008513800",
         description: "FS 5138 POULTRY BR PRE-LAY CRUMB IN BULK", quantity: 20, unit: "Bags",
-        deliveryLeadDays: 1, remark: "", daysOutstanding: -2, medication: "", fmrOmed: "",
+        deliveryLeadDays: 0, remark: "", daysOutstanding: null, medication: "", fmrOmed: "",
       }],
     };
     const invalidImport = structuredClone(sourceImport);
@@ -440,6 +440,11 @@ integration("PostgreSQL workspace API", () => {
     const laterPreviewBody = await laterPreview.json();
     assert.equal(laterPreviewBody.changed, 1);
     assert.deepEqual(laterPreviewBody.rows[0].changedFields, ["asOfDate"]);
+    assert.deepEqual(laterPreviewBody.rows[0].previousFields, sourceImport.rows[0]);
+    assert.equal(laterPreviewBody.rows[0].previousFields.deliveryLeadDays, 0);
+    assert.equal(laterPreviewBody.rows[0].previousFields.daysOutstanding, null);
+    assert.equal(laterPreviewBody.rows[0].previousFields.remark, "");
+    assert.equal(laterPreviewBody.rows[0].previousAsOfDate, "2026-10-22");
     const laterImport = await postCommand(1, "source-import-later-baseline", { type: "data.import", input: laterBaseline });
     assert.equal(laterImport.status, 200);
     const laterEnvelope = await laterImport.json() as WorkspaceEnvelope;
@@ -548,9 +553,57 @@ integration("PostgreSQL workspace API", () => {
     assert.equal(detail.versions.length, 2);
     assert.equal((await fetch(`${baseUrl}/api/data?deliveryFrom=2026-02-31`)).status, 400);
     assert.equal((await fetch(`${baseUrl}/api/data?productionStatus=unknown`)).status, 400);
+    assert.equal((await fetch(`${baseUrl}/api/data?view=unknown`)).status, 400);
+    assert.equal((await fetch(`${baseUrl}/api/data?view=all&view=needs-review`)).status, 400);
     assert.equal((await fetch(`${baseUrl}/api/data?page=0`)).status, 400);
+    const invalidContext = await fetch(`${baseUrl}/api/data/preview`, { method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify({ input: base, context: { includeBaseline: true, annotations: [], extra: true } }) });
+    assert.equal(invalidContext.status, 400);
     const backup = await (await fetch(`${baseUrl}/api/backup`)).json();
     assert.equal(backup.sourceData.orders.length, 1);
+  });
+
+  it("filters legacy order quick views before computing totals and pagination", async () => {
+    const rows: SourceImportInput["rows"] = Array.from({ length: 55 }, (_, index) => ({
+      doNo: `DO-L-${String(index).padStart(3, "0")}`,
+      deliveryDate: "2026-11-10",
+      soldToParty: `Customer ${index}`,
+      shipToParty: `Plant ${index}`,
+      materialCode: `MAT-L-${String(index).padStart(3, "0")}`,
+      description: `Legacy feed ${index}`,
+      quantity: index === 0 ? 0 : 5,
+      unit: "MT" as const,
+      deliveryLeadDays: null,
+      remark: index === 2 ? "DONE" : "",
+      daysOutstanding: null,
+      medication: "",
+      fmrOmed: "",
+    }));
+    const input: SourceImportInput = {
+      fileName: "legacy-many.xlsx", sheetName: "Orders", digest: "7".repeat(64), asOfDate: "2026-10-26", rows,
+    };
+    assert.equal((await postCommand(0, "legacy-many", { type: "data.import", input })).status, 200);
+    const page = await (await fetch(`${baseUrl}/api/data?search=DO-L-001`)).json() as SourceOrderPage;
+    const planned = page.items[0];
+    assert.equal((await postCommand(1, "legacy-plan-one", { type: "job.createFromSource", input: {
+      sourceOrderId: planned.id, sourceOrderVersion: planned.version, date: malaysiaToday(), lineId: "PM1", bin: "", remarks: "",
+    } })).status, 200);
+    await pool.query("UPDATE source_orders SET needs_review=true WHERE workspace_id=1 AND do_no='DO-L-003'");
+
+    const filtered = await (await fetch(`${baseUrl}/api/data?view=needs-production&page=2`)).json() as SourceOrderPage;
+    assert.equal(filtered.total, 53);
+    assert.equal(filtered.stats.total, 53);
+    assert.equal(filtered.stats.completed, 1);
+    assert.equal(filtered.page, 2);
+    assert.equal(filtered.items.length, 3);
+    const combined = await (await fetch(`${baseUrl}/api/data?view=needs-production&productionStatus=external-complete`)).json() as SourceOrderPage;
+    assert.equal(combined.total, 1);
+    assert.equal(combined.items[0].doNo, "DO-L-002");
+    const ready = await (await fetch(`${baseUrl}/api/data?view=ready-pickup`)).json() as SourceOrderPage;
+    assert.equal(ready.total, 1);
+    assert.equal(ready.items[0].doNo, "DO-L-002");
+    const review = await (await fetch(`${baseUrl}/api/data?view=needs-review`)).json() as SourceOrderPage;
+    assert.equal(review.total, 1);
+    assert.equal(review.items[0].doNo, "DO-L-003");
   });
 
   it("flags linked cards only when imported planning fields change", async () => {

@@ -11,7 +11,12 @@ import { DetailDialog } from '../components/DetailDialog';
 import { StockOrderPanel } from '../components/InventoryWorkspace';
 import { AutoPlanningButton } from '../components/InventoryDraftDialog';
 import { readInventoryOrders, readInventory } from '../lib/inventoryApi';
+import { useListState, useListPageScroll, useListTableScroll } from '../lib/listNavigation';
 import type { InventoryOrderProgress } from '../domain/inventoryTypes';
+
+const ORDER_VIEWS=[{id:'all',label:'All orders'},{id:'needs-production',label:'Needs production'},{id:'ready-pickup',label:'Ready for pickup'},{id:'needs-review',label:'Needs review'}] as const;
+type OrderView=typeof ORDER_VIEWS[number]['id'];
+const EMPTY_FILTERS={deliveryFrom:'',deliveryTo:'',unit:'',productionStatus:'',deliveryStatus:'',overdue:'',importId:''};
 
 const productionLabels: Record<string, string> = { unplanned: 'Unplanned', pending: 'Planned', running: 'Running', completed: 'Completed', cancelled: 'Unplanned', 'external-complete': 'External complete' };
 export function canPlanSource(order: SourceOrderSummary) { return order.deliveryStatus !== 'delivered' && (order.netToPlan !== undefined ? order.netToPlan > 0 : !order.linkedJobId) && order.quantity > 0; }
@@ -30,14 +35,16 @@ export function DataPage() {
 
 export function DataBrowser({ onChoose, compact = false }: { onChoose?: (order: SourceOrderSummary) => void; compact?: boolean }) {
   const { savedAt, openSource, openJob, mutationLocked, hasConflict, notify } = useWorkspace();
-  const [search, setSearch] = useState('');
-  const [filtersOpen, setFiltersOpen] = useState(false);
+  const listKey=compact?null:'orders';
+  const [search, setSearch] = useListState(listKey?listKey+'.search':null,'');
+  const [view,setView]=useListState<OrderView>(listKey?listKey+'.view':null,'all');
+  const [filtersOpen, setFiltersOpen] = useListState(listKey?listKey+'.filtersOpen':null,false);
   const filterId = useId();
   const [scrollArea, setScrollArea] = useState<HTMLDivElement | null>(null);
   const [scrollEdges, setScrollEdges] = useState({ left: false, right: false });
-  const [query, setQuery] = useState('');
-  const [filters, setFilters] = useState({ deliveryFrom: '', deliveryTo: '', unit: '', productionStatus: '', deliveryStatus: '', overdue: '', importId: '' });
-  const [page, setPage] = useState(1);
+  const [query, setQuery] = useState(search);
+  const [filters, setFilters] = useListState(listKey?listKey+'.filters':null,EMPTY_FILTERS);
+  const [page, setPage] = useListState(listKey?listKey+'.page':null,1);
   const [result, setResult] = useState<SourceOrderPage | null>(null);
   useEffect(() => {
     const area = scrollArea;
@@ -59,6 +66,8 @@ export function DataBrowser({ onChoose, compact = false }: { onChoose?: (order: 
   }, [compact, scrollArea]);
   const [batches, setBatches] = useState<ImportBatchOption[]>([]);
   const [loading, setLoading] = useState(true);
+  useListPageScroll(listKey?listKey+'.position':null,!loading);
+  useListTableScroll(scrollArea,listKey?listKey+'.table':null,JSON.stringify({page,query,filters,view}),!loading);
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
   const [today, setToday] = useState(localDate());
@@ -81,15 +90,17 @@ export function DataBrowser({ onChoose, compact = false }: { onChoose?: (order: 
   useEffect(() => {
     const version = ++request.current;
     setLoading(true); setError('');
-    const params = new URLSearchParams(Object.entries({ page: String(page), search: query, ...filters }).filter(([, value]) => value !== ''));
+    const params = new URLSearchParams(Object.entries({ page: String(page), search: query, ...filters,view:compact?'':view }).filter(([, value]) => value !== ''));
     readSourceOrders(params).then(data => {
       if (version !== request.current) return;
       setResult(data); if (data.page !== page) setPage(data.page);
     }).catch(reason => { if (version === request.current) setError(reason instanceof Error ? reason.message : 'Orders could not be loaded.'); }).finally(() => { if (version === request.current) setLoading(false); });
     return () => { request.current++; };
-  }, [query, filters, page, savedAt, reload, today]);
+  }, [query, filters, view, compact, page, savedAt, reload, today]);
   useEffect(() => { if (detail) void showDetail(detail.id); }, [savedAt, today, reload]);
   useEffect(() => () => { detailRequest.current++; }, []);
+  const clearFilters=()=>{detailRequest.current++;setDetail(null);setSearch('');setQuery('');setFilters({...EMPTY_FILTERS});setView('all');setPage(1);};
+  const filterCount=Object.values(filters).filter(Boolean).length;
   const change = (key: keyof typeof filters, value: string) => { setFilters(previous => ({ ...previous, [key]: value })); setPage(1); detailRequest.current++; setDetail(null); };
   async function showDetail(id: string) {
     const version = ++detailRequest.current;
@@ -103,20 +114,21 @@ export function DataBrowser({ onChoose, compact = false }: { onChoose?: (order: 
   return <div className={'data-browser ' + (compact ? 'compact' : '')}>
     {!compact && result && <div className="data-stats" aria-label="Filtered order summary"><div><span>Matching orders</span><strong>{result.stats.total}</strong></div><div><span>Planned / running</span><strong>{result.stats.planned} / {result.stats.running}</strong></div><div><span>Production complete</span><strong>{result.stats.completed}</strong></div><div><span>Delivered / pickup overdue</span><strong>{result.stats.delivered} / <em>{result.stats.overdue}</em></strong></div></div>}
     {detail && !compact && <SourceDetail order={{...detail,...(progress.find(p=>p.sourceOrderId===detail.id)?{netToPlan:progress.find(p=>p.sourceOrderId===detail.id)!.netToPlan}:{})}} onClose={() => { detailRequest.current++; setDetail(null); }} onReload={() => { void showDetail(detail.id); setReload(value => value + 1); }}/>}
+    {!compact&&<div className="order-views" role="group" aria-label="Order views">{ORDER_VIEWS.map(item=><button type="button" key={item.id} aria-pressed={view===item.id} onClick={()=>{setView(item.id);setPage(1);detailRequest.current++;setDetail(null);}}>{item.label}</button>)}</div>}
     <section className="panel data-list"><div className="data-filters">
-      <label className="data-search"><Search size={16}/><input aria-label="Search order data" placeholder="DO no, customer, material or description" value={search} onChange={event => setSearch(event.target.value)}/></label>
+      <label className="data-search"><Search size={16}/><input aria-label="Search order data" placeholder="DO no, customer, material or description" value={search} onChange={event => {setSearch(event.target.value);setPage(1);}}/></label>
       <button className="button secondary" disabled={loading} onClick={() => setReload(value => value + 1)} aria-label="Refresh order data"><RefreshCw size={15}/><span>Refresh</span></button>
-      {compact && <button className="button secondary" aria-expanded={filtersOpen} aria-controls={filterId} onClick={() => setFiltersOpen(value => !value)}>Filters{Object.values(filters).some(Boolean) ? ` (${Object.values(filters).filter(Boolean).length})` : ''}</button>}
-      {(!compact || filtersOpen) && <div className="data-filter-row" id={filterId}>
+      <button className="button secondary" aria-expanded={filtersOpen} aria-controls={filterId} onClick={() => setFiltersOpen(value => !value)}>{compact?'Filters':'Advanced filters'}{filterCount?` (${filterCount})`:''}</button>{(search||filterCount||view!=='all')&&<button className="text-link" onClick={clearFilters}>Clear filters</button>}
+      <div className="data-filter-row" id={filterId} hidden={!filtersOpen}>
         <label>Delivery from<input type="date" value={filters.deliveryFrom} onChange={event => change('deliveryFrom', event.target.value)}/></label><label>Delivery to<input type="date" min={filters.deliveryFrom} value={filters.deliveryTo} onChange={event => change('deliveryTo', event.target.value)}/></label>
         <label>Unit<select value={filters.unit} onChange={event => change('unit', event.target.value)}><option value="">All units</option><option>MT</option><option>Bags</option></select></label>
         <label>Production<select value={filters.productionStatus} onChange={event => change('productionStatus', event.target.value)}><option value="">All production</option><option value="unplanned">Unplanned</option><option value="pending">Planned</option><option value="running">Running</option><option value="completed">Completed</option><option value="external-complete">External complete</option></select></label>
         <label>Delivery<select value={filters.deliveryStatus} onChange={event => change('deliveryStatus', event.target.value)}><option value="">All deliveries</option><option value="pending">Not delivered</option><option value="delivered">Delivered</option></select></label>
         <label>Deadline<select value={filters.overdue} onChange={event => change('overdue', event.target.value)}><option value="">All deadlines</option><option value="production">Production overdue</option><option value="pickup">Pickup overdue</option></select></label>
         <label>Import batch<select value={filters.importId} onChange={event => change('importId', event.target.value)}><option value="">All imports</option>{batches.map(batch => <option key={batch.id} value={batch.id}>{batch.fileName} · {batch.asOfDate} · {batch.id.slice(0, 8)}</option>)}</select></label>
-        {(search || Object.values(filters).some(Boolean)) && <button className="text-link" onClick={() => { detailRequest.current++; setDetail(null); setSearch(''); setQuery(''); setFilters({ deliveryFrom: '', deliveryTo: '', unit: '', productionStatus: '', deliveryStatus: '', overdue: '', importId: '' }); setPage(1); }}>Clear filters</button>}
-      </div>}</div>
-      {!compact && <p className="date-scope" aria-label="Order date context"><strong>Delivery dates: {filters.deliveryFrom || filters.deliveryTo ? [filters.deliveryFrom ? dateLabel(filters.deliveryFrom, true) : 'Any start', filters.deliveryTo ? dateLabel(filters.deliveryTo, true) : 'Any end'].join(' – ') : 'All dates'}</strong> · Deadlines as of {dateLabel(today, true)}. The planning date does not filter orders.</p>}
+
+      </div></div>
+      {!compact && <p className="date-scope" aria-label="Order date context"><strong>{ORDER_VIEWS.find(item=>item.id===view)?.label} · Delivery dates: {filters.deliveryFrom || filters.deliveryTo ? [filters.deliveryFrom ? dateLabel(filters.deliveryFrom, true) : 'Any start', filters.deliveryTo ? dateLabel(filters.deliveryTo, true) : 'Any end'].join(' – ') : 'All dates'}</strong> · Deadlines as of {dateLabel(today, true)}. The planning date does not filter orders.{filterCount>0&&<> {filterCount} advanced {filterCount===1?'filter':'filters'} applied.</>}</p>}
       {!compact && (scrollEdges.left || scrollEdges.right) && <div className="order-scroll-tools" role="group" aria-label="Order table scrolling"><span>More columns</span><button className="button secondary" aria-label="Scroll order table left" disabled={!scrollEdges.left} onClick={() => scrollArea?.scrollBy({ left: -scrollArea.clientWidth * .7 })}><ChevronLeft size={15}/>Left</button><button className="button secondary" aria-label="Scroll order table right" disabled={!scrollEdges.right} onClick={() => scrollArea?.scrollBy({ left: scrollArea.clientWidth * .7 })}>Right<ChevronRight size={15}/></button></div>}
       {error ? <div className="data-empty" role="alert"><p>{error}</p><button className="button secondary" onClick={() => setReload(value => value + 1)}>Retry loading</button></div> : loading || awaitingSearch ? <div className="data-empty" role="status">Loading orders…</div> : result?.items.length ? <div ref={setScrollArea} className="table-scroll data-table-scroll" tabIndex={0} role="region" aria-label="Order table — scroll for more columns"><table className={'source-table' + (!compact ? ' orders-table' : '')}>{!compact && <colgroup>{[13, 19, 8, 8, 7, 10, 15, 10, 10].map((width, index) => <col key={index} style={{ width: `${width}%` }}/>)}</colgroup>}<thead><tr><th>DO / CUSTOMER</th><th>MATERIAL / DESCRIPTION</th><th>DELIVERY</th><th>QUANTITY</th><th>PRODUCE BY</th><th>UNCOLLECTED</th><th>STOCK / PROGRESS</th><th>STATUS</th><th><span className="sr-only">Planning actions</span></th></tr></thead><tbody>{result.items.map(original => { const p = progress.find(p => p.sourceOrderId === original.id); const order = p ? { ...original, netToPlan: p.netToPlan } : original; return <tr key={order.id}><td><button className="data-order-link" onClick={() => compact ? onChoose?.(order) : void showDetail(order.id)}>{order.doNo}</button><small>{order.shipToParty || order.soldToParty || '—'}</small></td><td><strong className="data-material">{order.materialCode}</strong><small>{order.description || '—'}</small></td><td>{dateLabel(order.deliveryDate, true)}</td><td className="tabular">{numberLabel(order.quantity, order.unit === 'Bags' ? 0 : 2)} {order.unit}</td><td><DayCount label="production" value={order.currentDeliveryLeadDays} stopped={['completed', 'external-complete'].includes(order.productionStatus)}/></td><td><DayCount label="pickup" value={order.currentDaysOutstanding} stopped={order.deliveryStatus === 'delivered'}/></td><td>{progress.find(p => p.sourceOrderId === order.id) ? <><strong>{numberLabel(progress.find(p => p.sourceOrderId === order.id)!.netToPlan, order.unit === 'Bags' ? 0 : 3)} {order.unit} to plan</strong><small>{numberLabel(progress.find(p => p.sourceOrderId === order.id)!.reserved)} reserved · {numberLabel(progress.find(p => p.sourceOrderId === order.id)!.produced)} produced</small><small>{numberLabel(progress.find(p => p.sourceOrderId === order.id)!.delivered)} collected · {numberLabel(progress.find(p => p.sourceOrderId === order.id)!.scheduledUnreceived)} scheduled</small></> : '—'}</td><td><SourceStatus order={order}/></td><td>{canPlanSource(order) ? <button className="button secondary" disabled={mutationLocked || hasConflict} onClick={() => onChoose ? onChoose(order) : openSource(order)}>Plan production</button> : order.linkedJobId && !compact ? <button className="text-link" disabled={mutationLocked} onClick={() => openJob(order.linkedJobId!, true)}>View card<ArrowUpRight size={14}/></button> : <span className="muted small">{order.quantity === 0 ? 'No quantity' : order.needsReview ? 'Review order' : 'Already processed'}</span>}</td></tr>; })}</tbody></table></div> : <EmptyState title="No matching orders" text="Import an Excel workbook or adjust the filters."/>}
       <div className="table-foot data-pagination"><span aria-live="polite">{total ? (page - 1) * 50 + 1 : 0}–{Math.min(page * 50, total)} of {total} orders</span><nav aria-label="Order data pages"><button className="button secondary" disabled={loading || page <= 1} onClick={() => setPage(value => value - 1)}><ChevronLeft size={15}/>Previous</button><span>Page {page} of {pages}</span><button className="button secondary" disabled={loading || page >= pages} onClick={() => setPage(value => value + 1)}>Next<ChevronRight size={15}/></button></nav></div>

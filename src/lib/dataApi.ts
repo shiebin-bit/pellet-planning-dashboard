@@ -1,5 +1,5 @@
 import { ApiError } from './api';
-import type { SourceImportInput, SourceImportPreview, SourceOrderDetail, SourceOrderPage } from '../domain/sourceTypes';
+import type { SourceImportInput, SourceImportPreviewContext, SourceImportPreview, SourceOrderDetail, SourceOrderPage } from '../domain/sourceTypes';
 
 export async function dataRequest<T>(path: string, body?: unknown): Promise<T> {
   const controller = new AbortController();
@@ -17,6 +17,6 @@ export async function dataRequest<T>(path: string, body?: unknown): Promise<T> {
 }
 export const readSourceOrders = (query: URLSearchParams) => dataRequest<SourceOrderPage>('/api/data?' + query);
 export const readSourceOrder = (id: string) => dataRequest<SourceOrderDetail>('/api/data/' + encodeURIComponent(id));
-export const previewSourceImport = (input: SourceImportInput) => dataRequest<SourceImportPreview>('/api/data/preview', input);
+export const previewSourceImport = (input: SourceImportInput, context?: SourceImportPreviewContext) => dataRequest<SourceImportPreview>('/api/data/preview', context ? {input, context} : input);
 export interface ImportBatchOption { id: string; fileName: string; asOfDate: string; importedAt: string; rowCount: number }
 export const readImportBatches = () => dataRequest<ImportBatchOption[]>('/api/data/imports');

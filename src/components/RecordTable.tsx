@@ -1,14 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import './RecordTable.css';
+import { useListTableScroll } from '../lib/listNavigation';
 
 /** Keep wide, paginated operational tables navigable without scrolling to their last row. */
-export function RecordTable({ label, resetKey, children }: { label: string; resetKey: string | number; children: ReactNode }) {
-  const area = useRef<HTMLDivElement>(null);
+export function RecordTable({ label, resetKey, children, memoryKey, ready = true }: { label: string; resetKey: string | number; children: ReactNode; memoryKey?: string; ready?: boolean }) {
+  const [area, setArea] = useState<HTMLDivElement | null>(null);
+  useListTableScroll(area, memoryKey ?? null, resetKey, ready);
   const [edges, setEdges] = useState({ left: false, right: false });
   useEffect(() => {
-    const node = area.current;
+    const node = area;
     if (!node) return;
     const update = () => {
       const left = node.scrollLeft > 1, right = node.scrollLeft + node.clientWidth < node.scrollWidth - 1;
@@ -20,15 +22,14 @@ export function RecordTable({ label, resetKey, children }: { label: string; rese
     node.addEventListener('scroll', update, { passive: true });
     update();
     return () => { observer.disconnect(); node.removeEventListener('scroll', update); };
-  }, []);
-  useEffect(() => { area.current?.scrollTo({ top: 0, left: 0 }); }, [resetKey]);
+  }, [area]);
   return <div className="record-table">
     {(edges.left || edges.right) && <div className="record-table-tools" role="group" aria-label={`${label} scrolling`}>
       <span>More columns</span>
-      <button type="button" className="button secondary" aria-label={`Scroll ${label.toLowerCase()} left`} disabled={!edges.left} onClick={() => area.current?.scrollBy({ left: -area.current.clientWidth * .7 })}><ChevronLeft size={15}/>Left</button>
-      <button type="button" className="button secondary" aria-label={`Scroll ${label.toLowerCase()} right`} disabled={!edges.right} onClick={() => area.current?.scrollBy({ left: area.current.clientWidth * .7 })}>Right<ChevronRight size={15}/></button>
+      <button type="button" className="button secondary" aria-label={`Scroll ${label.toLowerCase()} left`} disabled={!edges.left} onClick={() => area?.scrollBy({ left: -area.clientWidth * .7 })}><ChevronLeft size={15}/>Left</button>
+      <button type="button" className="button secondary" aria-label={`Scroll ${label.toLowerCase()} right`} disabled={!edges.right} onClick={() => area?.scrollBy({ left: area.clientWidth * .7 })}>Right<ChevronRight size={15}/></button>
     </div>}
-    <div ref={area} className="table-scroll record-table-scroll" tabIndex={0} role="region" aria-label={`${label} — scroll for more columns`}>
+    <div ref={setArea} className="table-scroll record-table-scroll" tabIndex={0} role="region" aria-label={`${label} — scroll for more columns`}>
       {children}
     </div>
   </div>;

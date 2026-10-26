@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Database, Warehouse, LayoutDashboard, CalendarRange, Plus, History, Settings2, Download, Menu, X, ChevronDown, FileSpreadsheet, Printer, Check, HardDrive, PanelLeftClose, Undo2 } from 'lucide-react';
+import { ListNavigationProvider } from './lib/listNavigation';
 import { WorkspaceProvider, useWorkspace } from './lib/workspace';
 import type { Page } from './lib/workspace';
 import { dateLabel, localDate } from './lib/format';
@@ -29,7 +30,7 @@ const navigation = [
   { id: 'history' as Page, label: 'History', icon: History },
   { id: 'settings' as Page, label: 'Settings', icon: Settings2 },
 ];
-export function App() { return <WorkspaceProvider><Dashboard /></WorkspaceProvider>; }
+export function App() { return <WorkspaceProvider><ListNavigationProvider><Dashboard /></ListNavigationProvider></WorkspaceProvider>; }
 
 function Dashboard() {
   const { state, board, date, setDate, page, navigate, openInput, editor, copyDialog, importOpen, sourceDialog, selectedId, toast, savedAt, storageWarning, notify, canUndo, undo,isDemo,storageMode,busy,refresh,hasConflict,resolveConflict,mutationLocked } = useWorkspace();

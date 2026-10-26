@@ -7,6 +7,7 @@ import { dateLabel, localDate, numberLabel } from '../lib/format';
 import type { Job } from '../domain/types';
 import './InventoryWorkspace.css';
 import { DetailDialog } from './DetailDialog';
+import { useListState, useListPageScroll } from '../lib/listNavigation';
 import { RecordTable, RecordPagination } from './RecordTable';
 
 const qty = (value: number, unit: string) => `${numberLabel(value, unit === 'Bags' ? 0 : 3)} ${unit}`;
@@ -16,11 +17,14 @@ export function StockBrowser({ policiesOnly = false }: { policiesOnly?: boolean 
   const { savedAt, commit, mutationLocked, hasConflict, toast } = useWorkspace();
   const [items, setItems] = useState<InventoryItemSnapshot[]>([]);
   const [error, setError] = useState('');
-  const [search, setSearch] = useState('');
-  const [strategy, setStrategy] = useState('');
-  const [variant, setVariant] = useState('');
-  const [low, setLow] = useState(false);
-  const [page, setPage] = useState(1);
+  const listKey=policiesOnly?'stock.policies':'stock.list';
+  const [loaded,setLoaded]=useState(false);
+  useListPageScroll(policiesOnly?null:'stock.position',loaded);
+  const [search, setSearch] = useListState(listKey+'.search','');
+  const [strategy, setStrategy] = useListState(listKey+'.strategy','');
+  const [variant, setVariant] = useListState(listKey+'.variant','');
+  const [low, setLow] = useListState(listKey+'.low',false);
+  const [page, setPage] = useListState(listKey+'.page',1);
   const [selected, setSelected] = useState<InventoryItemSnapshot | null>(null);
   const [ledger, setLedger] = useState<InventoryLedgerEntry[]>([]);
   const [reload, setReload] = useState(0);
@@ -29,10 +33,11 @@ export function StockBrowser({ policiesOnly = false }: { policiesOnly?: boolean 
   const [lastCount, setLastCount] = useState<string|null>(null);
   useEffect(() => {
     let active = true;
-    readInventory().then(data => { if (active) { setItems(data.items); setDate(data.asOfDate); setBaseline(data.baselineDate); setLastCount(data.lastCountDate ?? data.baselineDate ?? null); setError(''); } }).catch(e => { if (active) setError(e.message); });
+    readInventory().then(data => { if (active) { setItems(data.items); setLoaded(true); setDate(data.asOfDate); setBaseline(data.baselineDate); setLastCount(data.lastCountDate ?? data.baselineDate ?? null); setError(''); } }).catch(e => { if (active) setError(e.message); });
     return () => { active = false; };
   }, [savedAt, reload]);
-  useEffect(() => { setPage(1); }, [search, strategy, variant, low]);
+  const previousFilters=useRef({search,strategy,variant,low});
+  useEffect(()=>{const old=previousFilters.current;if(old.search!==search||old.strategy!==strategy||old.variant!==variant||old.low!==low)setPage(1);previousFilters.current={search,strategy,variant,low};},[search,strategy,variant,low]);
   useEffect(() => {
     let active = true; setLedger([]);
     if (selected) readLedger(selected.itemId).then(data => { if (active) setLedger(data); }).catch(e => { if (active) setError(e.message); });
@@ -51,7 +56,7 @@ export function StockBrowser({ policiesOnly = false }: { policiesOnly?: boolean 
     <details className="stock-balance-help"><summary>{items.length} finished-goods products · How stock balances work</summary><p className="data-note">On hand includes reserved stock; available stock excludes it. Blank medication / FMR is a separate stock variant. Product safety stock targets apply to the standard variant; other variants are planned against their orders. The snapshot includes all posted ledger movements, independently of the planning date and movement dates.</p></details>
     {error && <p className="data-error" role="alert">{error}</p>}
     {selected && <DetailDialog title="Manage stock" subtitle={`${selected.materialCode} · ${selected.description}`} closeLabel="Close stock details" onClose={() => setSelected(null)}><div className="inventory-workspace inventory-detail">{error && <p className="data-error" role="alert">{error}</p>}<StockConfiguration key={`${selected.itemId}-${savedAt}`} item={items.find(i => i.itemId === selected.itemId) ?? selected}/>{!policiesOnly && <><StockAdjustment item={selected}/><h3>Stock movements</h3><div className="table-scroll"><table><thead><tr><th>DATE</th><th>TYPE</th><th>CHANGE</th><th>VARIANT / NOTE</th><th/></tr></thead><tbody>{ledger.slice(0, 100).map(entry => <tr key={entry.id}><td>{entry.occurredOn}</td><td>{entry.movementType}</td><td>{qty(entry.quantityDelta, entry.unit)}</td><td>{entry.medication || 'Standard'} / {entry.fmrOmed || '—'}<small>{entry.note}</small></td><td><MovementCorrection entry={entry}/></td></tr>)}</tbody></table></div><p className="data-note">Latest 100 movements. The full ledger is included in database backups.</p></>}</div></DetailDialog>}
-    <div className="panel"><InventoryPagination label={policiesOnly ? "Stock policy" : "Stock"} position="top" total={display.length} page={page} setPage={setPage}/><RecordTable label={policiesOnly ? "Stock policy table" : "Stock table"} resetKey={`${page}-${search}-${strategy}-${variant}-${low}`}><table className="source-table"><thead><tr><th>PRODUCT</th>{!policiesOnly && <><th>VARIANT</th><th>ON HAND</th><th>RESERVED</th><th>AVAILABLE</th></>}<th>STRATEGY / SAFETY STOCK</th><th>EXTRA</th><th/></tr></thead><tbody>{policiesOnly ? rows.slice((page - 1) * 50, page * 50).map(i => <tr key={i.itemId}><td><strong>{i.materialCode}</strong><small>{i.description} · {i.unit === 'Bags' ? `${i.bagWeightKg ?? '?'}kg / bag` : 'Bulk MT'}</small></td><td>{i.strategy?.toUpperCase() ?? 'Review'} · {qty(i.targetQuantity ?? 0, i.unit)}{i.needsReview && <small>Needs review</small>}</td><td>{extraLabel(i)}</td><td><button className="button secondary" onClick={() => setSelected(i)}><Settings2 size={14}/>Edit policy</button></td></tr>) : buckets.slice((page - 1) * 50, page * 50).map((b, n) => <tr key={`${b.item.itemId}-${n}`}><td><strong>{b.item.materialCode}</strong><small>{b.item.description} · {b.item.bagWeightKg ? `${b.item.bagWeightKg}kg` : 'Bulk'}</small></td><td>{b.medication || 'Standard'}<small>{b.fmrOmed || 'No FMR / OMED'}</small></td><td>{qty(b.onHand, b.item.unit)}</td><td>{qty(b.reserved, b.item.unit)}</td><td className={!b.medication && !b.fmrOmed && b.available < (b.item.targetQuantity ?? 0) && b.item.strategy === 'mts' ? 'days-overdue' : ''}><strong>{qty(b.available, b.item.unit)}</strong></td><td>{b.item.strategy?.toUpperCase() ?? 'Review'} · {qty(b.item.targetQuantity ?? 0, b.item.unit)}{b.item.needsReview && <small>Needs review</small>}</td><td>{extraLabel(b.item)}</td><td><button className="button secondary" onClick={() => setSelected(b.item)}>Manage stock</button></td></tr>)}</tbody></table></RecordTable>{!display.length && <p className="data-empty">No stock matches. Import the daily stock workbook to establish inventory.</p>}<InventoryPagination label={policiesOnly ? "Stock policy" : "Stock"} total={display.length} page={page} setPage={setPage}/></div>
+    <div className="panel"><InventoryPagination ready={loaded} label={policiesOnly ? "Stock policy" : "Stock"} position="top" total={display.length} page={page} setPage={setPage}/><RecordTable memoryKey={listKey+'.table'} ready={loaded} label={policiesOnly ? "Stock policy table" : "Stock table"} resetKey={`${page}-${search}-${strategy}-${variant}-${low}`}><table className="source-table"><thead><tr><th>PRODUCT</th>{!policiesOnly && <><th>VARIANT</th><th>ON HAND</th><th>RESERVED</th><th>AVAILABLE</th></>}<th>STRATEGY / SAFETY STOCK</th><th>EXTRA</th><th/></tr></thead><tbody>{policiesOnly ? rows.slice((page - 1) * 50, page * 50).map(i => <tr key={i.itemId}><td><strong>{i.materialCode}</strong><small>{i.description} · {i.unit === 'Bags' ? `${i.bagWeightKg ?? '?'}kg / bag` : 'Bulk MT'}</small></td><td>{i.strategy?.toUpperCase() ?? 'Review'} · {qty(i.targetQuantity ?? 0, i.unit)}{i.needsReview && <small>Needs review</small>}</td><td>{extraLabel(i)}</td><td><button className="button secondary" onClick={() => setSelected(i)}><Settings2 size={14}/>Edit policy</button></td></tr>) : buckets.slice((page - 1) * 50, page * 50).map((b, n) => <tr key={`${b.item.itemId}-${n}`}><td><strong>{b.item.materialCode}</strong><small>{b.item.description} · {b.item.bagWeightKg ? `${b.item.bagWeightKg}kg` : 'Bulk'}</small></td><td>{b.medication || 'Standard'}<small>{b.fmrOmed || 'No FMR / OMED'}</small></td><td>{qty(b.onHand, b.item.unit)}</td><td>{qty(b.reserved, b.item.unit)}</td><td className={!b.medication && !b.fmrOmed && b.available < (b.item.targetQuantity ?? 0) && b.item.strategy === 'mts' ? 'days-overdue' : ''}><strong>{qty(b.available, b.item.unit)}</strong></td><td>{b.item.strategy?.toUpperCase() ?? 'Review'} · {qty(b.item.targetQuantity ?? 0, b.item.unit)}{b.item.needsReview && <small>Needs review</small>}</td><td>{extraLabel(b.item)}</td><td><button className="button secondary" onClick={() => setSelected(b.item)}>Manage stock</button></td></tr>)}</tbody></table></RecordTable>{!display.length && <p className="data-empty">No stock matches. Import the daily stock workbook to establish inventory.</p>}<InventoryPagination ready={loaded} label={policiesOnly ? "Stock policy" : "Stock"} total={display.length} page={page} setPage={setPage}/></div>
     {(mutationLocked || hasConflict) && <p className="data-note">Resolve the current workspace update before saving stock changes.</p>}{toast?.error && <p className="data-error" role="alert">{toast.message}</p>}
   </section>;
 }
@@ -115,22 +120,26 @@ export function StockOrderPanel({ orderId, onLeave }: { orderId: string; onLeave
 
 export function DailyStockBrowser() {
   const { savedAt } = useWorkspace();
-  const [date, setDate] = useState(localDate()), [search, setSearch] = useState(''), [rows, setRows] = useState<InventoryDailyStockRow[]>([]), [error, setError] = useState(''), [page, setPage] = useState(1);
+  const [date,setDate]=useListState('stock.daily.date',localDate);
+  const [search,setSearch]=useListState('stock.daily.search','');
+  const [page,setPage]=useListState('stock.daily.page',1);
+  const [rows,setRows]=useState<InventoryDailyStockRow[]>([]),[error,setError]=useState(''),[loaded,setLoaded]=useState(false);
+  useListPageScroll('stock.daily.position',loaded);
   const [countSelection, setCountSelection] = useState<{ row: InventoryDailyStockRow; date: string } | null>(null);
-  useEffect(() => { let active = true; readDailyStock(date).then(data => { if (active) { setRows(data); setError(''); } }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [date, savedAt]);
+  useEffect(() => { let active = true; readDailyStock(date).then(data => { if (active) { setRows(data); setLoaded(true); setError(''); } }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [date, savedAt]);
   const matched = rows.filter(r => `${r.materialCode} ${r.medication} ${r.fmrOmed}`.toLowerCase().includes(search.toLowerCase()));
   return <section className="daily-stock-browser">
-    <div className="inventory-toolbar"><label className="field">Stock date<input type="date" value={date} onChange={e => { setDate(e.target.value); setPage(1); }}/></label><label className="field">Product / variant<input value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}/></label></div>
+    <div className="inventory-toolbar"><label className="field">Stock date<input type="date" value={date} onChange={e => { setDate(e.target.value); setPage(1); }}/></label><label className="field">Product / variant<input aria-label="Search daily stock" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}/></label></div>
     <p className="date-scope" aria-label="Daily stock date context"><strong>Daily movements: {dateLabel(date)}</strong> · Use Stock date to change this view. The planning date does not filter this table.</p>
     <p className="data-note">Closing = Opening + Production + Received + Sales return − Rework − Issue + Adjustments. The imported baseline day retains its reported Excel totals.</p>
     {error && <p className="data-error" role="alert">{error}</p>}
     {countSelection && <PhysicalCountDialog row={countSelection.row} date={countSelection.date} onClose={() => setCountSelection(null)}/>}
 
     <div className="panel">
-      <InventoryPagination label="Daily stock" position="top" total={matched.length} page={page} setPage={setPage}/>
-      <RecordTable label="Daily stock table" resetKey={`${page}-${date}-${search}`}><table className="source-table"><thead><tr>{['PRODUCT / VARIANT', 'UNIT', 'OPENING', 'PRODUCTION', 'RECEIVED', 'RETURN', 'REWORK', 'ISSUE', 'ADJUSTMENT', 'CLOSING', 'COUNT'].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{matched.slice((page - 1) * 50, page * 50).map((r, n) => <tr key={n}><td>{r.materialCode}<small>{r.medication || 'Standard'} / {r.fmrOmed || '—'}</small></td><td>{r.unit}</td>{[r.opening, r.production, r.received, r.salesReturn, r.rework, r.dispatch, r.adjustment, r.closing].map((v, i) => <td key={i}>{numberLabel(v, r.unit === 'Bags' ? 0 : 3)}</td>)}<td><button className="text-link" onClick={() => setCountSelection({ row: r, date })}>Enter physical count</button></td></tr>)}</tbody></table></RecordTable>
+      <InventoryPagination ready={loaded} label="Daily stock" position="top" total={matched.length} page={page} setPage={setPage}/>
+      <RecordTable memoryKey="stock.daily.table" ready={loaded} label="Daily stock table" resetKey={`${page}-${date}-${search}`}><table className="source-table"><thead><tr>{['PRODUCT / VARIANT', 'UNIT', 'OPENING', 'PRODUCTION', 'RECEIVED', 'RETURN', 'REWORK', 'ISSUE', 'ADJUSTMENT', 'CLOSING', 'COUNT'].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{matched.slice((page - 1) * 50, page * 50).map((r, n) => <tr key={n}><td>{r.materialCode}<small>{r.medication || 'Standard'} / {r.fmrOmed || '—'}</small></td><td>{r.unit}</td>{[r.opening, r.production, r.received, r.salesReturn, r.rework, r.dispatch, r.adjustment, r.closing].map((v, i) => <td key={i}>{numberLabel(v, r.unit === 'Bags' ? 0 : 3)}</td>)}<td><button className="text-link" onClick={() => setCountSelection({ row: r, date })}>Enter physical count</button></td></tr>)}</tbody></table></RecordTable>
       {!matched.length && <p className="data-empty">No stock records for this date.</p>}
-      <InventoryPagination label="Daily stock" total={matched.length} page={page} setPage={setPage}/>
+      <InventoryPagination ready={loaded} label="Daily stock" total={matched.length} page={page} setPage={setPage}/>
     </div>
   </section>;
 }
@@ -163,8 +172,8 @@ export function InventoryReceiptForm({ job }: { job: Job }) {
   const unit = job.mode === 'bags' ? 'Bags' : 'MT';
   return <section className="drawer-section"><h3>Production received into stock</h3><p>{qty(recorded, unit)} recorded so far</p>{job.status === 'running' && <form onSubmit={async e => { e.preventDefault(); if (await commit({ type: 'production.recordReceipt', jobId: job.id, totalActualQuantity: Math.round((recorded + +quantity) * 1000) / 1000, occurredOn: date }, 'Production received. Order progress and stock updated.')) setQuantity(''); }}><div className="field-grid"><label className="field">Production date<input type="date" required value={date} onChange={e => setDate(e.target.value)}/></label><label className="field">New quantity ({unit})<input type="number" required min={unit === 'Bags' ? 1 : .001} step={unit === 'Bags' ? 1 : .001} value={quantity} onChange={e => setQuantity(e.target.value)}/></label></div><button className="button secondary full-width" disabled={mutationLocked || hasConflict || !+quantity}>Record production quantity</button></form>}<p className="field-help">Done asks for the final total, including quantities already recorded here.</p>{error && <p className="data-error">{error}</p>}</section>;
 }
-export function InventoryPagination({ total, page, setPage, label = 'Inventory', position = 'bottom' }: { total: number; page: number; setPage: (page: number) => void; label?: string; position?: 'top' | 'bottom' }) {
+export function InventoryPagination({ total, page, setPage, label = 'Inventory', position = 'bottom', ready = true }: { total: number; page: number; setPage: (page: number) => void; label?: string; position?: 'top' | 'bottom'; ready?: boolean }) {
   const pages = Math.max(1, Math.ceil(total / 50));
-  useEffect(() => { if (page > pages) setPage(pages); }, [page, pages, setPage]);
+  useEffect(() => { if (ready && page > pages) setPage(pages); }, [ready, page, pages, setPage]);
   return <RecordPagination label={label} position={position} total={total} page={Math.min(page, pages)} onChange={setPage} itemLabel="items"/>;
 }

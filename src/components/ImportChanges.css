@@ -1,0 +1,9 @@
+.import-changes { margin: 0; min-width: 220px; max-width: 340px; white-space: normal; }
+.import-changes>div+div { border-top: 1px solid var(--border); margin-top: 9px; padding-top: 9px; }
+.import-changes dt { font-size: 11px; font-weight: 650; margin-bottom: 4px; }
+.import-changes dd { margin: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; overflow-wrap: anywhere; line-height: 1.5; }
+.import-changes dd>span { min-width: 0; }
+.import-changes dd>span>span { display: block; color: var(--muted); font-size: 10px; font-weight: 400; }
+.import-change-before { color: var(--muted); }
+.import-change-after { color: var(--text); font-weight: 600; }
+.import-change-note { color: var(--muted); }

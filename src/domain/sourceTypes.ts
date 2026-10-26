@@ -28,6 +28,17 @@ export interface SourceImportInput {
   rows: SourceOrderFields[];
 }
 
+export interface SourceImportPreviewContext {
+  includeBaseline: boolean;
+  annotations: Array<{
+    doNo: string;
+    materialCode: string;
+    remark: string;
+    medication: string;
+    fmrOmed: string;
+  }>;
+}
+
 export type ImportRowDisposition = "added" | "unchanged" | "changed";
 
 export interface SourceImportPreviewRow {
@@ -35,13 +46,19 @@ export interface SourceImportPreviewRow {
   disposition: ImportRowDisposition;
   existingOrderId: string | null;
   fields: SourceOrderFields;
+  /** Effective values currently retained for this order, including protected manual inventory fields. */
+  previousFields?: SourceOrderFields | null;
+  previousAsOfDate?: string | null;
   changedFields: string[];
+  /** True when an existing order's effective operational values would change. */
+  operationalChanged?: boolean;
 }
 
 export interface SourceImportPreview {
   added: number;
   unchanged: number;
   changed: number;
+  operationalChanged?: number;
   rows: SourceImportPreviewRow[];
 }
 

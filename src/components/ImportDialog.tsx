@@ -11,6 +11,7 @@ import './ProductionEditor.css';
 import '../pages/Data.css';
 import { isFeedWorkbook, parseFeedWorkbook, type FeedWorkbookData } from '../lib/feedWorkbook';
 import { FeedImportDialog } from './FeedImportDialog';
+import { ImportChanges } from './ImportChanges';
 
 function columnName(index: number): string { let value = ''; while (index) { index--; value = String.fromCharCode(65 + index % 26) + value; index = Math.floor(index / 26); } return value; }
 export function ImportDialog() {
@@ -84,10 +85,10 @@ export function ImportDialog() {
     {(error || parsed.error) && <p className="data-error" role="alert">{error || parsed.error}</p>}
     {invalid.length > 0 && !preview && <div className="data-error" role="alert"><strong>{invalid.length} rows need correction.</strong> Nothing will be imported until every row is valid.</div>}
     {preview && <><div className="import-summary" aria-label="Import preview summary"><div><strong>{preview.added}</strong><span>New orders</span></div><div><strong>{preview.changed}</strong><span>Updated orders</span></div><div><strong>{preview.unchanged}</strong><span>Unchanged · skipped</span></div></div><p className="data-note"><strong>{input?.fileName}</strong> · {input?.sheetName} · Excel as-of {input?.asOfDate}. Updates retain the previous imported version. Production cards keep their existing quantities.</p></>}
-    {count > 0 && <><div className="table-scroll import-preview"><table><thead><tr><th>ROW / RESULT</th><th>DO NO</th><th>MATERIAL</th><th>DELIVERY DATE</th><th>QUANTITY</th><th>{preview ? 'CHANGES' : 'CHECKS'}</th></tr></thead><tbody>{rows.map((item, index) => {
+    {count > 0 && <><div className="table-scroll import-preview" role="region" aria-label="Excel import comparison" tabIndex={0}><table><colgroup>{[9,12,21,12,10,36].map((width,index)=><col key={index} style={{width:`${width}%`}}/>)}</colgroup><thead><tr><th>ROW / RESULT</th><th>DO NO</th><th>MATERIAL</th><th>DELIVERY DATE</th><th>QUANTITY</th><th>{preview ? 'CHANGES' : 'CHECKS'}</th></tr></thead><tbody>{rows.map((item, index) => {
       const data = 'data' in item ? item.data : item.fields;
       const errors = 'errors' in item ? item.errors : [];
-      return <tr key={index} className={errors.length ? 'import-invalid' : ''}><td>{'rowNumber' in item ? item.rowNumber : <span className={'source-tag ' + item.disposition}>{item.disposition}</span>}</td><td>{data.doNo || '—'}</td><td><strong>{data.materialCode || '—'}</strong><small>{data.description}</small></td><td>{data.deliveryDate || '—'}</td><td>{data.quantity ?? '—'} {data.unit}</td><td>{'changedFields' in item ? item.changedFields.join(', ') || '—' : errors.length ? errors.join(' · ') : 'Valid'}</td></tr>;
+      return <tr key={index} className={errors.length ? 'import-invalid' : ''}><td>{'rowNumber' in item ? item.rowNumber : <span className={'source-tag ' + item.disposition}>{item.disposition}</span>}</td><td>{data.doNo || '—'}</td><td><strong>{data.materialCode || '—'}</strong><small>{data.description}</small></td><td>{data.deliveryDate || '—'}</td><td>{data.quantity ?? '—'} {data.unit}</td><td>{'changedFields' in item ? <ImportChanges row={item} asOfDate={input?.asOfDate ?? asOfDate}/> : errors.length ? errors.join(' · ') : 'Valid'}</td></tr>;
     })}</tbody></table></div><div className="data-pagination"><span>{(page - 1) * 50 + 1}–{Math.min(page * 50, count)} of {count} rows</span><div><button className="button secondary" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Previous</button><button className="button secondary" disabled={page * 50 >= count} onClick={() => setPage(value => value + 1)}>Next</button></div></div></>}
     {preview && <label className="checkbox-label import-confirm"><input type="checkbox" checked={confirmed} disabled={mutationLocked || hasConflict} onChange={event => setConfirmed(event.target.checked)}/>I reviewed the dates, quantities and updates. Save these orders without creating production cards.</label>}
     {failed && toast?.error && <p className="data-error" role="alert">{toast.message}</p>}
