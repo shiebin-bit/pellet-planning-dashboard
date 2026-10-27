@@ -11,11 +11,19 @@
 | `DATABASE_URL` | Native Node connection URL; Compose app supplies its internal URL automatically |
 | `HOST`, `PORT` | Native server bind address/port; default 127.0.0.1:8080 |
 | `PUBLIC_PORT` | Optional external port recognized in Host/Origin checks; Compose sets this from APP_PORT |
-| `ALLOWED_ORIGINS` | Additional exact origins, comma-separated; needed for native Vite development |
+| `ALLOWED_ORIGINS` | Additional exact origins, comma-separated; forwarded to the Docker app too. Required for Vite development and any HTTPS reverse-proxy hostname |
 | `DIST_DIR` | Optional native static build path |
 | `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR` | Optional persistent Compose file selection; on Windows use `compose.yml;compose.dev.yml` and `;` to retain DataGrip port 5434 through normal startup |
 
 Changing `.env`'s PostgreSQL password does **not** change the role password inside an existing volume. Coordinate password rotation through PostgreSQL and update all connection settings. Do not delete a data volume to fix a password mismatch. Arbitrary passwords need URL encoding in a connection URL; the generated hex passwords avoid that problem.
+
+## Cloudflare Tunnel
+
+For a `cloudflared` connector running on this Windows PC, route the chosen hostname to **HTTP `127.0.0.1:8080`** (or the configured `APP_PORT`). Under the route's additional HTTP settings, set **HTTP Host Header** to **`127.0.0.1:8080`**. This lets the existing loopback Host validation work behind the tunnel. Add the exact public origin, for example `https://planning.example.com`, to `.env`'s `ALLOWED_ORIGINS`, preserving existing origins. Recreate only the app with `docker compose up -d --no-deps --wait app`; an environment-only change does not require an image rebuild.
+
+Keep web port 8080 and DataGrip port 5434 bound to `127.0.0.1`. Route only the web application through the tunnel. Verify the public health endpoint and preview request validation as well as loading the page: loading HTML alone does not prove that the HTTPS origin can save/import.
+
+The dashboard provides full planning and stock operations without an application login. An unprotected published hostname makes these operations reachable by anyone who discovers the URL; it does not provide view-only access. Use Cloudflare Access with an explicit allow policy for restricted remote use. Do not overwrite other tunnel routes. Removing this application's route/DNS and its exact allowed origin rolls back external access while preserving the local dashboard and database.
 
 ## Start, stop and update
 

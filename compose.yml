@@ -22,6 +22,7 @@ services:
       HOST: 0.0.0.0
       PORT: 8080
       PUBLIC_PORT: ${APP_PORT:-8080}
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-}"
       DATABASE_URL: postgresql://${POSTGRES_USER:-millplan}:${POSTGRES_PASSWORD:?Run scripts/setup.ps1 first}@db:5432/${POSTGRES_DB:-millplan}
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"
