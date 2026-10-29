@@ -76,7 +76,7 @@ async function bounds(locator,width,height){const b=await locator.boundingBox();
    await page.getByRole('tab',{name:'Products',exact:true}).click();assert.equal(await page.getByRole('heading',{name:'Product catalog',exact:true}).isVisible(),true);
    await page.getByRole('tab',{name:'Workspace',exact:true}).click();await bounds(page.locator('.settings-savebar'),viewport.width,viewport.height);
    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(output,`settings-tabs-${viewport.width}.png`),animations:'disabled'});
-   await page.getByRole('button',{name:'Open navigation',exact:true}).click();await page.getByRole('button',{name:'Planning board',exact:true}).click();await page.locator('.hplan-card-open').last().focus();await preview.waitFor();await bounds(preview,viewport.width,viewport.height);await page.keyboard.press('Escape');
+   await page.getByRole('button',{name:'Open navigation',exact:true}).click();await page.getByRole('button',{name:'Planning board',exact:true}).click();const mobileCard=page.locator('.hplan-card-open').last();await mobileCard.scrollIntoViewIfNeeded();await mobileCard.focus();await preview.waitFor();await bounds(preview,viewport.width,viewport.height);await page.keyboard.press('Escape');
   }
   assert.deepEqual(errors,[]);console.log('PASS Settings tabs/save bar and focus previews fit 320/390px; no browser errors');
  }catch(error){if(page)await page.screenshot({path:path.join(output,'settings-preview-failure.png')}).catch(()=>{});throw error;}
