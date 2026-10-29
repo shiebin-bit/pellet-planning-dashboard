@@ -30,6 +30,7 @@ The default setup serves only this PC. It has no login or user roles. Company-wi
 | --- | --- |
 | Overview | Planned MT, recorded output with completion coverage, utilisation, completion, four line summaries, working-shift status timelines, recorded downtime by mill and items needing attention |
 | Planning board | Four horizontal lines; card length follows production time; Day/Full plan; carry-over; changeover and downtime; direct date/month/year selection |
+| Planning batches | Due-date priority; optional same-product/same-due-date order batches with per-order quantities; capacity splits across lines/days; later-due batches stay separate |
 | Card movement | Drag a pending card to another line or sequence; destination-bin review; recalculated line rate; one-step Undo; keyboard and held-touch movement |
 | Production details | Same-product orders can share one card with separate allocations; Add/edit in a dialog; searchable product catalog with description/default delivery; manual products; bags or bulk, orders, bins, remarks and issues |
 | Copy planning | Select manual cards by source date/line (linked Excel orders are excluded), enter fresh order references and adjusted quantities, preview target utilisation/carry-over, then append the batch atomically |

@@ -223,7 +223,7 @@
   --hplan-bg: var(--pending-bg,#f1f3f5);
   --hplan-border: var(--pending-border,var(--border));
   --hplan-text: var(--pending-text,var(--text));
-  container-type: inline-size;
+  container-type: size;
   container-name: hplan-card;
   z-index: 2;
   border: 1px solid var(--hplan-border);
@@ -302,17 +302,23 @@
 }
 .hplan-card-content {
   position: absolute;
-  inset-block: 8px;
+  inset-block: 6px;
   inset-inline: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   overflow: hidden;
   pointer-events: none;
 }
 .hplan-code-short,.hplan-code-full,.hplan-quantity,.hplan-time,.hplan-state {
   display: none;
+  flex: 0 0 auto;
+  max-width: 100%;
 }
 .hplan-code-short,.hplan-code-full {
   overflow: hidden;
-  line-height: 1.05;
+  line-height: 1.15;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -323,29 +329,34 @@
   font-size: 16px;
 }
 .hplan-quantity {
-  margin-top: 6px;
   font-size: 13px;
+  line-height: 1.15;
   font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
+.hplan-order-count,.hplan-packaging {
+  display: none;
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 500;
+}
 .hplan-time {
-  margin-top: 5px;
   overflow: hidden;
   font-family: var(--mono);
   font-size: 10px;
+  line-height: 1.2;
   font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .hplan-state {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
   align-items: center;
   gap: 4px;
   overflow: hidden;
   font-size: 10px;
+  line-height: 1.2;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -366,35 +377,49 @@
     display: block;
   }
 }
-@container hplan-card (min-width:80px) {
+@container hplan-card (min-width:80px) and (min-height:52px) {
   .hplan-quantity {
     display: block;
   }
 }
-@container hplan-card (min-width:94px) {
+@container hplan-card (min-width:94px) and (min-height:68px) {
   .hplan-time {
     display: flex;
   }
 }
-@container hplan-card (min-width:110px) {
+@container hplan-card (min-width:110px) and (min-height:88px) {
   .hplan-state {
     display: flex;
   }
 }
+@container hplan-card (min-width:180px) {
+  .hplan-order-count,.hplan-packaging {
+    display: inline;
+  }
+}
+@container hplan-card (min-width:72px) {
+  .hplan-card[data-draggable=true] .hplan-code-full {
+    max-width: calc(100% - 23px);
+  }
+}
 .hplan-drag-handle {
   position: absolute;
-  top: 50%;
+  top: 5px;
   right: 4px;
   z-index: 3;
-  display: grid;
+  display: none;
   place-items: center;
   width: 22px;
-  height: 28px;
-  transform: translateY(-50%);
+  height: 22px;
   border-radius: 5px;
   background: color-mix(in srgb,var(--hplan-bg) 78%,#fff);
   color: var(--hplan-text);
   pointer-events: none;
+}
+@container hplan-card (min-width:72px) {
+  .hplan-drag-handle {
+    display: grid;
+  }
 }
 .hplan-insert {
   position: absolute;

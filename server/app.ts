@@ -242,7 +242,7 @@ function sourcePreviewContext(value: unknown): SourceImportPreviewContext {
 
 function inventoryDraftRequest(value: unknown): InventoryDraftRequest {
   if (!plainObject(value)) throw badRequest("Inventory draft request must be a JSON object.");
-    const allowed = new Set(["fromDate", "toDate", "sourceOrderIds", "demandThrough"]);
+  const allowed = new Set(["fromDate", "toDate", "sourceOrderIds", "demandThrough", "combineSameProduct"]);
   for (const key of Object.keys(value)) if (!allowed.has(key)) throw badRequest(`Inventory draft field ${key} is not supported.`);
   if (!validDate(value.fromDate) || !validDate(value.toDate)) throw badRequest("Inventory draft dates must be valid YYYY-MM-DD dates.");
   if ((value.fromDate as string) > (value.toDate as string)) throw badRequest("Inventory draft fromDate cannot be after toDate.");
@@ -250,6 +250,10 @@ function inventoryDraftRequest(value: unknown): InventoryDraftRequest {
   if (days > 31) throw badRequest("Inventory drafts may span at most 31 days.");
   const result: InventoryDraftRequest = { fromDate: value.fromDate as string, toDate: value.toDate as string };
   if(value.demandThrough!==undefined){if(!validDate(value.demandThrough))throw badRequest("Order demand cutoff must be a valid date.");result.demandThrough=value.demandThrough as string;}
+  if (value.combineSameProduct !== undefined) {
+    if (typeof value.combineSameProduct !== "boolean") throw badRequest("combineSameProduct must be true or false.");
+    result.combineSameProduct = value.combineSameProduct;
+  }
   if (Object.prototype.hasOwnProperty.call(value, "sourceOrderIds")) {
     if (!Array.isArray(value.sourceOrderIds) || value.sourceOrderIds.length > 2_000) throw badRequest("sourceOrderIds must be an array of 2000 items or fewer.");
     const ids = value.sourceOrderIds.map((id, index) => {

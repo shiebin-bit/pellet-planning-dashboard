@@ -97,6 +97,8 @@ Main Orders-table checks use long fictional customer/product names at1920/1366/1
 
 ## Insert-only imports and combined production
 
+Due-date batch checks cover generating `5220(A+B) → 5811 → later 5220(C)`, switching the combine option, saving per-order quantities and showing due dates in the draft. Planner unit tests additionally cover four-line batching before assignment, 501-order allocation limits, compatible stock extras across split days, and full-material/Medication isolation. The UI suite checks visible card rows for intersections and clipping at 1640×900, 1366×768, 1366×650 and 390×844, including the short-height regression.
+
 The combined-production suite uses fictional orders and stock in a disposable database. It checks same-product selection while disabling a different full material with the same FS display code, per-order quantity inputs, desktop/320px/390px dialogs, short display codes and retained full material IDs, partial receipts and Done without double posting, combining pending cards while retaining cancelled originals, Excel/print allocation details and portable backup round trips. Reimporting a changed existing order alongside a new one must leave its saved fields, source versions and ledger unchanged and add only the new order. Evidence stays under ignored `output/playwright/combined-production/`.
 
 This release also checks generated extra output end to end: 30 MT on hand plus a 100 MT order and 20 MT extra produces a 90 MT card with a 70 MT order allocation. Editing stock extra changes the unscheduled-extra warning; saving and restoring retain the physical total and source allocation separately. Final local verification passed 110 unit tests, 30 PostgreSQL API tests and all ten browser scripts.

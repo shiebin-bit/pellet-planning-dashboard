@@ -175,6 +175,7 @@ function ProductionSegment({ segment, job, start, end, primary, activeId, select
   activeId: string | null; selected: boolean; onOpen: () => void;
 }) {
   const locked = job.status !== 'pending';
+  const allocations = getJobSourceAllocations(job);
   const { attributes, listeners, setNodeRef: dragRef } = useDraggable({
     id: primary ? job.id : `hplan-segment-${job.id}-${segment.start}`,
     disabled: locked,
@@ -188,12 +189,12 @@ function ProductionSegment({ segment, job, start, end, primary, activeId, select
   const clippedEnd = Math.min(end, segment.end);
   const paused = isJobPaused(job);
   const status = job.issue ? 'issue' : paused ? 'paused' : job.status;
-  const detail = `${productLabel(job)} · ${numberLabel(job.quantityMt)} MT · ${getJobSourceAllocations(job).length} orders · ${timeLabel(segment.start)}–${timeLabel(segment.end)} · ${job.issue ? `Issue: ${job.issue.reason}` : paused ? 'Paused' : job.status}`;
+  const detail = `${productLabel(job)} · ${numberLabel(job.quantityMt)} MT · ${allocations.length} orders · ${timeLabel(segment.start)}–${timeLabel(segment.end)} · ${job.issue ? `Issue: ${job.issue.reason}` : paused ? 'Paused' : job.status}`;
   const insert=isOver&&activeId&&activeId!==job.id;
   const preview=usePlanningCardPreview(job,!!activeId);
   return <div ref={node => {dragRef(node);dropRef(node);preview.anchor.current=node;}} {...preview.events} data-job-id={primary ? job.id : undefined} data-production-job={job.id} data-draggable={!locked} className={`hplan-card ${status} ${selected ? 'selected' : ''} ${activeId===job.id ? 'dragging' : ''} ${insert ? 'drop-before' : ''} ${segment.end > end ? 'clipped-end' : ''}`} style={intervalStyle(clippedStart, clippedEnd, start, end)}>
     <button type="button" className="hplan-card-open" {...(!locked?attributes:{})} {...(!locked?listeners:{})} onClick={()=>{preview.close();onOpen();}} aria-describedby={[!locked?attributes['aria-describedby']:undefined,preview.descriptionId].filter(Boolean).join(' ')||undefined} aria-label={`Open ${productLabel(job)} on ${job.lineId}${primary?'':' continued segment'}`} aria-description={`${detail}. ${locked?'This production plan is locked.':'Drag anywhere on this card to move it. On touch screens, hold briefly then drag. Enter opens details; Space starts a keyboard move.'}`}/>
-    <div className="hplan-card-content" aria-hidden="true"><strong className="hplan-code-short">{productLabel(job)}</strong><strong className="hplan-code-full">{productLabel(job)}</strong><span className="hplan-quantity">{numberLabel(job.quantityMt)} MT</span><span className="hplan-time">{timeLabel(segment.start)}–{timeLabel(segment.end)}</span><span className="hplan-state">{job.issue ? <AlertTriangle size={12}/> : locked ? <LockKeyhole size={11}/> : null}{job.issue ? 'Issue' + (paused ? ' · Paused' : '') : paused ? 'Paused' : job.status === 'running' ? 'Running' : job.status === 'completed' ? 'Done' : primary ? 'Planned' : 'Continued'}</span></div>
+    <div className="hplan-card-content" aria-hidden="true"><strong className="hplan-code-short">{productLabel(job)}</strong><strong className="hplan-code-full">{productLabel(job)}</strong><span className="hplan-quantity">{numberLabel(job.quantityMt)} MT<small className="hplan-packaging">{job.mode === 'bags' ? 'Bags' : 'Bulk'}</small>{allocations.length > 1 && <small className="hplan-order-count">{allocations.length} orders</small>}</span><span className="hplan-time">{timeLabel(segment.start)}–{timeLabel(segment.end)}</span><span className="hplan-state">{job.issue ? <AlertTriangle size={12}/> : locked ? <LockKeyhole size={11}/> : null}{job.issue ? 'Issue' + (paused ? ' · Paused' : '') : paused ? 'Paused' : job.status === 'running' ? 'Running' : job.status === 'completed' ? 'Done' : primary ? 'Planned' : 'Continued'}</span></div>
     {!locked && <span className="hplan-drag-handle" aria-hidden="true"><GripVertical size={15}/></span>}
     {insert && <span className="hplan-insert">Insert</span>}
     {preview.preview}

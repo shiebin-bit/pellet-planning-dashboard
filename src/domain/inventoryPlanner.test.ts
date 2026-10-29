@@ -48,7 +48,6 @@ describe('inventory draft scheduling', () => {
   });
   it('combines adjacent compatible MTO orders scheduled on the same day and line', () => {
     const state = createEmptyState();
-    state.settings.downtime = ['PM2', 'PM3', 'PM4'].map((lineId, index) => ({ id: `stop-${index}`, date: FROM, lineId: lineId as 'PM2'|'PM3'|'PM4', start: '07:00', end: '07:00', reason: 'Unavailable' }));
     const result = planInventoryDraft(state, [demand(), demand({ key: 'order-2', sourceOrderId: 'order-2', orderNo: 'DO2', quantity: 50 })], { fromDate: FROM, toDate: FROM }, 3, NOW);
     expect(result.jobs).toHaveLength(1);
     expect(result.jobs[0]).toMatchObject({ sourceOrderId: null, lineId: 'PM1', quantity: 150 });
@@ -56,6 +55,93 @@ describe('inventory draft scheduling', () => {
       { sourceOrderId: 'order-1', plannedQuantity: 100 },
       { sourceOrderId: 'order-2', plannedQuantity: 50 },
     ]);
+  });
+  it('batches compatible orders by due date without pulling a later order across another product', () => {
+    const state = createEmptyState();
+    state.settings.downtime = ['PM2', 'PM3', 'PM4'].map((lineId, index) => ({ id: `stop-${index}`, date: FROM, lineId: lineId as 'PM2'|'PM3'|'PM4', start: '07:00', end: '07:00', reason: 'Unavailable' }));
+    const next = '2026-10-27', later = '2026-10-28';
+    const result = planInventoryDraft(state, [
+      demand({ key: 'a-1', sourceOrderId: 'a-1', orderNo: 'A1', materialCode: 'MAT-A', unit: 'MT', bagWeightKg: null, quantity: 4 }),
+      demand({ key: 'b-1', sourceOrderId: 'b-1', orderNo: 'B1', materialCode: 'MAT-B', itemId: 'item-b', unit: 'MT', bagWeightKg: null, quantity: 3, dueDate: next }),
+      demand({ key: 'a-3', sourceOrderId: 'a-3', orderNo: 'A3', materialCode: 'MAT-A', unit: 'MT', bagWeightKg: null, quantity: 2, dueDate: later }),
+      demand({ key: 'a-2', sourceOrderId: 'a-2', orderNo: 'A2', materialCode: 'MAT-A', unit: 'MT', bagWeightKg: null, quantity: 5 }),
+    ], { fromDate: FROM, toDate: FROM }, 3, NOW);
+    expect(result.jobs.map(job => job.materialCode)).toEqual(['MAT-A', 'MAT-B', 'MAT-A']);
+    expect(result.jobs[0]).toMatchObject({ quantity: 9, orderNo: 'A1 +1' });
+    expect(result.jobs[0].sourceAllocations).toEqual([
+      { sourceOrderId: 'a-1', plannedQuantity: 4 },
+      { sourceOrderId: 'a-2', plannedQuantity: 5 },
+    ]);
+    expect(result.jobs[2].sourceAllocations).toEqual([{ sourceOrderId: 'a-3', plannedQuantity: 2 }]);
+  });
+  it('can keep compatible orders as separate cards when requested', () => {
+    const state = createEmptyState();
+    const result = planInventoryDraft(state, [
+      demand({ key: 'a-1', sourceOrderId: 'a-1', orderNo: 'A1', unit: 'MT', bagWeightKg: null, quantity: 4 }),
+      demand({ key: 'a-2', sourceOrderId: 'a-2', orderNo: 'A2', unit: 'MT', bagWeightKg: null, quantity: 5 }),
+    ], { fromDate: FROM, toDate: FROM, combineSameProduct: false }, 3, NOW);
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs.map(job => job.orderNo)).toEqual(['A1', 'A2']);
+    expect(result.jobs.map(job => job.lineId)).toEqual(['PM1', 'PM2']);
+  });
+  it('caps a combined physical card at 500 distinct source orders', () => {
+    const orders = Array.from({ length: 501 }, (_, index) => demand({
+      key: `order-${String(index).padStart(3, '0')}`,
+      sourceOrderId: `order-${index}`,
+      orderNo: `DO${index}`,
+      unit: 'MT',
+      bagWeightKg: null,
+      quantity: .001,
+    }));
+    const result = planInventoryDraft(createEmptyState(), orders, { fromDate: FROM, toDate: FROM }, 3, NOW);
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs.map(job => job.sourceAllocations?.length)).toEqual([500, 1]);
+    expect(result.jobs.reduce((sum, job) => sum + job.quantity, 0)).toBeCloseTo(.501, 6);
+    expect(new Set(result.jobs.flatMap(job => job.sourceAllocations?.map(row => row.sourceOrderId) ?? [])).size).toBe(501);
+  });
+  it('keeps separate cards contiguous without changeover for the same full product and stock variant', () => {
+    const state = createEmptyState();
+    state.settings.downtime = ['PM2', 'PM3', 'PM4'].map(lineId => ({id:lineId,date:FROM,lineId:lineId as 'PM2'|'PM3'|'PM4',start:'07:00',end:'07:00',reason:'Unavailable'}));
+    const draft = planInventoryDraft(state, [demand(), demand({key:'order-2',sourceOrderId:'order-2',orderNo:'DO2',quantity:50})], {fromDate:FROM,toDate:FROM,combineSameProduct:false}, 1, NOW);
+    const saved = draft.jobs.reduce((current, job) => createJob(current, {
+      date:job.date,lineId:job.lineId,orderNo:job.orderNo,productCode:job.materialCode,description:job.description,
+      bin:'',mode:'bags',bagCount:job.quantity,bagWeightKgSnapshot:25,quantityMt:0,remarks:'',
+      inventoryItemId:job.itemId,notBefore:job.notBefore,medication:job.medication,fmrOmed:job.fmrOmed,
+    }), state);
+    const scheduled = getScheduledJobs(saved);
+    expect(scheduled).toHaveLength(2);
+    expect(scheduled.flatMap(job => job.segments).filter(segment => segment.kind === 'changeover')).toEqual([]);
+    expect(scheduled[1].plannedStart).toBe(scheduled[0].plannedEnd);
+  });
+  it('preserves every order share and stock extra when a due-date batch splits around capacity and downtime', () => {
+    const state = createEmptyState();
+    const next = '2026-10-27';
+    state.settings.downtime = [FROM, next].flatMap(date => ['PM2', 'PM3', 'PM4'].map((lineId, index) => ({ id: `${date}-stop-${index}`, date, lineId: lineId as 'PM2'|'PM3'|'PM4', start: '07:00', end: '07:00', reason: 'Unavailable' })));
+    const result = planInventoryDraft(state, [
+      demand({ key: 'a', sourceOrderId: 'a', orderNo: 'A', unit: 'MT', bagWeightKg: null, quantity: 100, sourceAllocationQuantity: 80 }),
+      demand({ key: 'b', sourceOrderId: 'b', orderNo: 'B', unit: 'MT', bagWeightKg: null, quantity: 50, sourceAllocationQuantity: 40 }),
+    ], { fromDate: FROM, toDate: next }, 3, NOW);
+    const allocations = new Map<string, number>();
+    for (const row of result.jobs.flatMap(job => job.sourceAllocations ?? [])) allocations.set(row.sourceOrderId, (allocations.get(row.sourceOrderId) ?? 0) + row.plannedQuantity);
+    const physical = result.jobs.reduce((sum, job) => sum + job.quantity, 0);
+    const allocated = [...allocations.values()].reduce((sum, quantity) => sum + quantity, 0);
+    expect(result.jobs).toHaveLength(2);
+    expect(result.jobs.map(job => job.date)).toEqual([FROM, next]);
+    expect(result.jobs.every(job => job.lineId === 'PM1')).toBe(true);
+    expect(Object.fromEntries(allocations)).toEqual({ a: 80, b: 40 });
+    expect(physical).toBe(150);
+    expect(physical - allocated).toBe(30);
+    expect(result.backlog).toEqual([]);
+  });
+  it('does not combine orders that only share the visible FS alias', () => {
+    const common = { description: 'FS 5220 BROILER FIN PELLET II IN BULK', unit: 'MT' as const, bagWeightKg: null };
+    const result = planInventoryDraft(createEmptyState(), [
+      demand({ ...common, key: 'base', sourceOrderId: 'base', orderNo: 'BASE', itemId: 'item-a', materialCode: '7.03120085220000', quantity: 2 }),
+      demand({ ...common, key: 'material', sourceOrderId: 'material', orderNo: 'MATERIAL', itemId: 'item-b', materialCode: '7.03130085220000', quantity: 2 }),
+      demand({ ...common, key: 'variant', sourceOrderId: 'variant', orderNo: 'VARIANT', itemId: 'item-a', materialCode: '7.03120085220000', medication: 'MED-X', quantity: 2 }),
+    ], { fromDate: FROM, toDate: FROM }, 3, NOW);
+    expect(result.jobs).toHaveLength(3);
+    expect(result.jobs.flatMap(job => job.sourceAllocations?.map(row => row.sourceOrderId) ?? [])).toEqual(['base', 'material', 'variant']);
   });
   it('keeps deliberate extra output outside the source-order allocation, including split cards', () => {
     const state = createEmptyState();

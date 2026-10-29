@@ -26,6 +26,24 @@ async function bounds(locator,width,height){const b=await locator.boundingBox();
   await page.screenshot({path:path.join(output,'board-fit.png'),animations:'disabled',fullPage:true});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight+1),'Four-line board needs no page scrolling at 1366x768');
   await page.screenshot({path:path.join(output,'board-desktop.png'),animations:'disabled'});
+  for(const viewport of [{width:1640,height:900},{width:1366,height:650},{width:1366,height:768},{width:390,height:844}]){
+   await page.setViewportSize(viewport);
+   const layout=await page.locator('.hplan-card-content').evaluateAll(cards=>{
+    let overlaps=0,clipped=0;
+    for(const card of cards){
+     const bounds=card.getBoundingClientRect();
+     const rows=[...card.children].filter(el=>getComputedStyle(el).display!=='none').map(el=>el.getBoundingClientRect());
+     for(let i=0;i<rows.length;i++){
+      const row=rows[i];if(row.bottom>bounds.bottom+1||row.top<bounds.top-1)clipped++;
+      for(let j=i+1;j<rows.length;j++){const next=rows[j];if(Math.min(row.right,next.right)-Math.max(row.left,next.left)>1&&Math.min(row.bottom,next.bottom)-Math.max(row.top,next.top)>1)overlaps++;}
+     }
+    }
+    return {overlaps,clipped};
+   });
+   assert.deepEqual(layout,{overlaps:0,clipped:0},`Timeline text fits without intersections at ${viewport.width}x${viewport.height}`);
+   await page.screenshot({path:path.join(output,`card-text-${viewport.width}-${viewport.height}.png`),animations:'disabled'});
+  }
+  await page.setViewportSize({width:1366,height:768});
   await page.getByRole('button',{name:'Overview',exact:true}).click();
   await bounds(page.locator('.schedule-panel'),1366,768);
   assert.ok((await page.locator('.schedule-panel').boundingBox()).y<(await page.locator('.capacity-panel').boundingBox()).y);

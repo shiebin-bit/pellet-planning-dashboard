@@ -80,6 +80,33 @@ const sources = job => job.sourceAllocations || (job.sourceOrderId?[{sourceOrder
   await draft.getByLabel('Stock extra draft-1',{exact:true}).fill('0');const unscheduled=draft.locator('details').filter({has:page.locator('summary').filter({hasText:'Unscheduled demand'})});await unscheduled.locator('summary').click();assert.match(await unscheduled.innerText(),/Extra for stock[\s\S]*20\.000 MT/);await draft.getByLabel('Stock extra draft-1',{exact:true}).fill('20');assert.equal(await draft.locator('summary').filter({hasText:'Unscheduled demand'}).count(),0);
   await page.screenshot({path:path.join(output,'draft-order-and-stock-extra.png'),animations:'disabled'});await draft.getByRole('button',{name:'Confirm 1 cards',exact:true}).click();await draft.waitFor({state:'hidden'});const extraJob=(await json('/api/workspace')).state.jobs[0];assert.equal(extraJob.quantityMt,90);assert.equal(extraJob.sourceAllocations[0].plannedQuantity,70);assert.equal((await json('/api/inventory/orders')).orders[0].netToPlan,0);assert.deepEqual(errors,[]);
   console.log('PASS Automatic draft keeps 70 order quantity plus 20 extra stock separate; editing extra updates backlog and saves 90 physical production once');
+  // Due-date batches are generated as physical runs before choosing a line.
+  await command({type:'workspace.restore',backup:{...backup.planning,jobs:[],events:[],settings:{...backup.planning.settings,dayStart:'07:00',availableHours:12,downtime:['PM2','PM3','PM4'].map(lineId=>({id:`qa-${lineId}`,date:tomorrow,lineId,start:'07:00',end:'07:00',reason:'Fictional single-line scenario'}))}}});
+  const dueRows=[
+   {...sourceRows[0],doNo:'QA-BATCH-A1',deliveryDate:tomorrow,quantity:14},
+   {...sourceRows[0],doNo:'QA-BATCH-A2',deliveryDate:tomorrow,quantity:15},
+   {...sourceRows[0],doNo:'QA-BATCH-B',materialCode:'7.0000099581100',description:'FS 5811 FICTIONAL FEED IN BULK',deliveryDate:later,quantity:20},
+   {...sourceRows[0],doNo:'QA-BATCH-A3',deliveryDate:new Date(Date.parse(later+'T12:00:00Z')+86400000).toISOString().slice(0,10),quantity:20},
+  ];
+  await command({type:'inventory.importBaseline',input:{fileName:'fictional-batches.xlsm',digest:'d'.repeat(64),asOfDate:yesterday,includeBaseline:true,orders:[{...sourceInput,rows:dueRows}],items:[dueRows[0],dueRows[2]].map(row=>({materialCode:row.materialCode,description:row.description,unit:'MT',bagWeightKg:null,strategy:'mto',targetQuantity:0,needsReview:false,opening:0,production:0,received:0,salesReturn:0,rework:0,issue:0,closing:0,medication:'',fmrOmed:''})),annotations:[],packingBinTotal:null}});
+  await page.reload();await page.getByRole('button',{name:'Generate planning',exact:true}).click();
+  const batchDialog=page.getByRole('dialog',{name:'Generate planning draft',exact:true});
+  await batchDialog.getByLabel('Plan from',{exact:true}).fill(tomorrow);await batchDialog.getByLabel('Plan through',{exact:true}).fill(tomorrow);await batchDialog.getByLabel('Orders due by',{exact:true}).fill(dueRows[3].deliveryDate);
+  const combineOption=batchDialog.getByRole('checkbox',{name:'Combine same-product orders with the same due date',exact:true});assert.equal(await combineOption.isChecked(),true);
+  await batchDialog.getByRole('button',{name:'Generate draft',exact:true}).click();await batchDialog.locator('.draft-edit-table tbody tr').first().waitFor();
+  assert.equal(await batchDialog.locator('.draft-edit-table tbody tr').count(),3);
+  assert.deepEqual(await batchDialog.locator('.draft-edit-table tbody tr td:first-child > strong').allTextContents(),['5220','5811','5220']);
+  await batchDialog.locator('.draft-edit-table details summary').first().click();const previewText=await batchDialog.locator('.draft-edit-table tbody tr').first().innerText();for(const expected of ['QA-BATCH-A1','QA-BATCH-A2','Due'])assert.ok(previewText.includes(expected));
+  await page.screenshot({path:path.join(output,'due-date-batches.png'),animations:'disabled'});
+  await combineOption.uncheck();assert.equal(await batchDialog.locator('.draft-edit-table').count(),0);await batchDialog.getByRole('button',{name:'Generate draft',exact:true}).click();await batchDialog.locator('.draft-edit-table tbody tr').first().waitFor();assert.equal(await batchDialog.locator('.draft-edit-table tbody tr').count(),4);
+  await combineOption.check();await batchDialog.getByRole('button',{name:'Generate draft',exact:true}).click();await batchDialog.locator('.draft-edit-table tbody tr').first().waitFor();
+  await batchDialog.getByRole('button',{name:'Confirm 3 cards',exact:true}).click();await batchDialog.waitFor({state:'hidden'});
+  const batchJobs=(await json('/api/workspace')).state.jobs.filter(j=>j.status==='pending').sort((a,b)=>a.sequence-b.sequence);
+  assert.deepEqual(batchJobs.map(j=>j.productCode),[material,dueRows[2].materialCode,material]);assert.deepEqual(batchJobs.map(j=>j.quantityMt),[29,20,20]);assert.equal(sources(batchJobs[0]).length,2);assert.equal(sources(batchJobs[2]).length,1);
+  const batchCard=page.locator(`[data-job-id="${batchJobs[0].id}"]`);await batchCard.waitFor();assert.equal(await batchCard.locator('.hplan-order-count').innerText(),'2 orders');assert.equal(await batchCard.locator('.hplan-order-count').isVisible(),true);await batchCard.locator('.hplan-card-open').click();
+  const batchDrawer=page.getByRole('dialog',{name:'5220',exact:true});await batchDrawer.waitFor();const batchDetails=batchDrawer.getByLabel('Production order allocations');for(const [doNo,quantity] of [['QA-BATCH-A1','14.000 MT'],['QA-BATCH-A2','15.000 MT']])assert.ok((await batchDetails.locator('.combined-source-item').filter({hasText:doNo}).innerText()).includes(quantity));await batchDrawer.getByRole('button',{name:'Close production details',exact:true}).click();
+  await page.setViewportSize({width:1366,height:650});await page.screenshot({path:path.join(output,'due-date-board-short-window.png'),animations:'disabled'});assert.deepEqual(errors,[]);
+  console.log('PASS Due-date batches produce 5220(A1+A2), then5811, then later5220(A3); optional separate cards, saved order details and quantities remain correct');
  }catch(error){if(page)await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw error;}
  finally{if(browser)await browser.close();await command({type:'workspace.restore',backup});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

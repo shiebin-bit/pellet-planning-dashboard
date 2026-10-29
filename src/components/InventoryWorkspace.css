@@ -17,3 +17,8 @@
 .daily-stock-browser td small { display: block; }
 .daily-stock-browser>.date-scope { padding-inline: 0; border-bottom: 0; }
 .detail-dialog .inventory-inline-form>div:first-child { flex-basis: 100%; overflow-wrap: anywhere; }
+.draft-combine-option { display: flex; align-items: center; gap: 9px; padding-block: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.draft-combine-option input { flex: 0 0 auto; width: 17px; height: 17px; }
+.draft-edit-table details { margin-top: 8px; }
+.draft-edit-table summary { padding-block: 6px; cursor: pointer; font-size: 12px; }
+.draft-edit-table details .field { margin-top: 10px; }

@@ -65,13 +65,19 @@ integration("inventory API", () => {
 
     const draftResponse = await fetch(`${baseUrl}/api/inventory/draft`, {
       method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl },
-      body: JSON.stringify({ fromDate: malaysiaToday(), toDate: addDays(malaysiaToday(), 3) }),
+      body: JSON.stringify({ fromDate: malaysiaToday(), toDate: addDays(malaysiaToday(), 3), combineSameProduct: true }),
     });
     assert.equal(draftResponse.status, 200);
     const draft = await draftResponse.json();
+    assert.equal(draft.request.combineSameProduct, true);
     assert.equal(draft.demand.filter((row: any) => row.purpose === "mto").reduce((n: number, row: any) => n + row.quantity, 0), 70);
     assert.equal(draft.demand.filter((row: any) => row.purpose === "mts").reduce((n: number, row: any) => n + row.quantity, 0), 20);
     assert.equal(draft.demand.reduce((n: number, row: any) => n + row.quantity, 0), 90);
+    const invalidCombine = await fetch(`${baseUrl}/api/inventory/draft`, {
+      method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl },
+      body: JSON.stringify({ fromDate: malaysiaToday(), toDate: addDays(malaysiaToday(), 3), combineSameProduct: "yes" }),
+    });
+    assert.equal(invalidCombine.status, 400);
 
     const retry = await command(0, "baseline-one", { type: "inventory.importBaseline", input: baselineInput() });
     assert.equal(retry.status, 200);

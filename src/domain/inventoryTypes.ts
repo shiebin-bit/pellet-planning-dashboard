@@ -85,6 +85,8 @@ export interface InventoryDraftRequest {
   toDate: string;
   demandThrough?: string;
   sourceOrderIds?: string[];
+  /** Combine compatible orders with the same due date into one physical production batch. */
+  combineSameProduct?: boolean;
 }
 
 /** Quantity demand passed to the pure inventory planner. Quantities use the row unit. */

@@ -124,6 +124,8 @@ Daily stock 可选日期查看 Opening、Production、Received、Return、Rework
 
 ## 自动排程与分批生产
 
+草稿默认勾选 **Combine same-product orders with the same due date**：同一交期、相同完整产品及库存组合的订单先组成生产批次，再分配产线，每张卡保留各订单数量。例如可排成 `5220（A＋B）→ 5811 → 较晚交期的 5220（C）`。不会把所有 5220 强制合并；取消勾选即可分开排卡。手动 Add same-product order 或 Combine cards 可自行选择要一起生产的兼容订单，并核对交货日期。相同完整产品及 Medication／FMR 连续生产不额外加换料时间；同样显示 5220 的不同 SAP 产品／包装仍可能需要换料。已有卡片不会自动重新合并。
+
 在 Data 或 Planning board 按 Generate planning，选择日期范围并生成草稿。系统先用兼容现货、扣除已有未完成排程，再按交货日期安排订单缺口，最后补安全库存。四条产线均可用，沿用 07:00–19:00、产能、换料和停机设置。大订单可拆到不同日期／产线，袋数为整数；未排数量会保留。负责人可修改草稿数量、日期和产线，确认后才整批保存，原有卡片不移动。
 
 开始后，在卡片内 Record production quantity 填本次新增产量及日期，可分次入库。Done 填最终累计产量，包括已入账部分，系统只补差额。订单内 Record collection 填本次取货数量；全部取完才 OUT。Stock 的流水可 Correct output 或 Reverse collection，必须填写原因，原记录保留。
