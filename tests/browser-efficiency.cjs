@@ -15,7 +15,7 @@ const pass=name=>console.log('PASS '+name);
 function job(id,date,lineId,sequence,extra={}){return {id,date,lineId,sequence,orderNo:id,productCode:'QA-HISTORY',description:'Fictional efficiency fixture',bin:'QA-BIN',mode:'bags',bagCount:20,quantityMt:1,status:'pending',remarks:'QA fixture',actualStart:null,actualEnd:null,binNeedsReview:false,createdAt:'2026-10-01T00:00:00.000Z',updatedAt:'2026-10-01T00:00:00.000Z',...extra};}
 (async()=>{
   await fs.mkdir(output,{recursive:true});
-  const baseline=await get();
+  const baseline=await get();const backupResponse=await fetch(base+'/api/backup');assert.equal(backupResponse.status,200);const baselineBackup=await backupResponse.json();
   const history=Array.from({length:124},(_,i)=>{
     const date='2026-10-'+String(1+Math.floor(i/16)).padStart(2,'0');
     return job('HIST-'+i,date,'PM'+(i%4+1),Math.floor(i%16/4)+1,i%7===0?{status:'cancelled'}:i%3===0?{status:'completed',actualStart:date+'T01:00:00.000Z',actualEnd:date+'T01:10:00.000Z',...(i%2===0?{actualQuantityMt:.9}:{} )}:{});
@@ -90,5 +90,5 @@ function job(id,date,lineId,sequence,extra={}){return {id,date,lineId,sequence,o
     const changed=structuredClone(legacy);Object.assign(changed.jobs.find(j=>j.id==='COPY-B'),{mode:'bulk',bagCount:null,quantityMt:4});await offline.evaluate(value=>{const text=JSON.stringify(value);localStorage.setItem('millplan.workspace.v1',text);window.dispatchEvent(new StorageEvent('storage',{key:'millplan.workspace.v1',newValue:text}));},changed);await offlineModal.getByRole('button',{name:'Review latest source plan',exact:true}).waitFor();assert.equal(await offlineModal.getByRole('button',{name:'Copy 2 cards',exact:true}).isDisabled(),true);await offlineModal.getByRole('button',{name:'Review latest source plan',exact:true}).click();assert.equal(await offlineModal.getByLabel('New order reference QA-COPY-B on PM1 position 2',{exact:true}).inputValue(),'OFFLINE-DRAFT');assert.equal(await offlineModal.getByLabel('Copy quantity QA-COPY-B on PM1 in MT',{exact:true}).inputValue(),'4');await offlineContext.close();assert.deepEqual(errors,[]);
     pass('Legacy import warns about missing catalog; offline v1 loads and cross-tab packaging changes require review and rebase quantity');
   }catch(error){if(page)await page.screenshot({path:path.join(output,'efficiency-failure.png')}).catch(()=>{});throw error;}
-  finally{await browser.close();await command({type:'workspace.restore',backup:baseline.state});}
+  finally{await browser.close();await command({type:'workspace.restore',backup:baselineBackup});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

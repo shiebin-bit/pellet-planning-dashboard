@@ -26,7 +26,7 @@ const wait=async(fn)=>{
 };
 (async()=>{
   await fs.mkdir(output,{recursive:true});
-  const baseline=await get();
+  const baseline=await get();const backupResponse=await fetch(base+'/api/backup');assert.equal(backupResponse.status,200);const baselineBackup=await backupResponse.json();
   const empty={...baseline.state,jobs:[],events:[],settings:{...baseline.state.settings,downtime:[]}};
   await command({type:'workspace.restore',backup:empty});
   const browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:!existsSync(chromium.executablePath())?{channel:'chrome'}:{})});
@@ -285,5 +285,5 @@ const wait=async(fn)=>{
     pass('Initial API failure requires reconnection and never falls back to browser/demo data; no page errors');
     await fs.writeFile(path.join(output,'verification.json'),JSON.stringify({at:new Date().toISOString(),date:date(),checks,errors},null,2));
   }catch(error){if(page)await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>{});throw error;}
-  finally{await browser.close();await command({type:'workspace.restore',backup:baseline.state});}
+  finally{await browser.close();await command({type:'workspace.restore',backup:baselineBackup});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

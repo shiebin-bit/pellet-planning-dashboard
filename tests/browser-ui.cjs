@@ -13,7 +13,7 @@ const command=async command=>{const current=await get();const r=await fetch(base
 const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kuala_Lumpur'}).format(new Date());
 async function bounds(locator,width,height){const b=await locator.boundingBox();assert.ok(b&&b.x>=0&&b.y>=0&&b.x+b.width<=width+1&&b.y+b.height<=height+1,'Floating content fits viewport: '+JSON.stringify(b));}
 (async()=>{
- await fs.mkdir(output,{recursive:true});const baseline=await get();let browser;
+ await fs.mkdir(output,{recursive:true});const baseline=await get();const backupResponse=await fetch(base+'/api/backup');assert.equal(backupResponse.status,200);const baselineBackup=await backupResponse.json();let browser;
  try{
   await command({type:'workspace.resetDemo',date:today()});
   browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:!existsSync(chromium.executablePath())?{channel:'chrome'}:{})});
@@ -58,5 +58,5 @@ async function bounds(locator,width,height){const b=await locator.boundingBox();
   for(const sample of samples){const a=luminance(sample.fg),b=luminance(sample.bg);assert.ok((Math.max(a,b)+.05)/(Math.min(a,b)+.05)>=4.5,`${sample.label} text contrast`);}
   await page.emulateMedia({media:'print'});assert.equal(await page.locator('.workspace').isVisible(),false);assert.equal(await page.locator('.print-report').isVisible(),true);await page.emulateMedia({media:'screen'});assert.deepEqual(errors,[]);
   console.log('PASS Primary action and all five status labels meet 4.5:1 contrast; print view retains the report; no page errors or browser writes');
- }finally{if(browser)await browser.close();await command({type:'workspace.restore',backup:baseline.state});}
+ }finally{if(browser)await browser.close();await command({type:'workspace.restore',backup:baselineBackup});}
 })().catch(e=>{console.error(e);process.exitCode=1;});
