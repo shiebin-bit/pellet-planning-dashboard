@@ -1,5 +1,6 @@
 import {
   cancelJob,
+  combinePendingJobs,
   copyJobBatch,
   createCatalogProduct,
   completeJob,
@@ -19,7 +20,7 @@ import {
 } from "./engine";
 import { validateWorkspaceBackup } from "./backup";
 import type { AppState, JobInput, LineId, Settings } from "./types";
-import type { CreateJobFromSourceInput, PortableWorkspaceBackupV3, SourceImportInput } from "./sourceTypes";
+import type { CreateJobFromSourceInput, CreateJobFromSourcesInput, PortableWorkspaceBackupV3, SourceImportInput } from "./sourceTypes";
 import { parseInventoryCommand, type InventoryCommand, type PortableWorkspaceBackupV4 } from './inventoryTypes';
 
 export type CopyBatchQuantity =
@@ -47,6 +48,7 @@ export type Command =
   | { type: "job.move"; jobId: string; toLineId: LineId; beforeJobId?: string }
   | { type: "job.start"; jobId: string }
   | { type: "job.createFromSource"; input: CreateJobFromSourceInput }
+  | { type: "job.createFromSources"; input: CreateJobFromSourcesInput }
   | { type: "job.complete"; jobId: string; actualQuantityMt: number; completionNote?: string }
   | { type: "job.recordActual"; jobId: string; actualQuantityMt: number; completionNote?: string }
   | { type: "job.cancel"; jobId: string }
@@ -56,6 +58,7 @@ export type Command =
   | { type: "job.pause"; jobId: string; reason: string }
   | { type: "job.resume"; jobId: string }
   | { type: "job.copyBatch"; sourceDate: string; targetDate: string; items: CopyBatchItem[] }
+  | { type: "job.combinePending"; jobIds: string[]; bin: string; remarks: string }
   | { type: "catalog.create"; input: CatalogCreateInput }
   | { type: "catalog.update"; productId: string; patch: CatalogUpdatePatch }
   | { type: "catalog.setActive"; productId: string; active: boolean }
@@ -122,6 +125,8 @@ export function executeCommand(
         command.items,
         context.nowIso ?? new Date().toISOString(),
       );
+    case "job.combinePending":
+      return combinePendingJobs(state, command.jobIds, command.bin, command.remarks, context.nowIso ?? new Date().toISOString());
     case "catalog.create":
       return createCatalogProduct(state, command.input, context.nowIso ?? new Date().toISOString());
     case "catalog.update":
@@ -130,6 +135,7 @@ export function executeCommand(
       return setCatalogProductActive(state, command.productId, command.active, context.nowIso ?? new Date().toISOString());
     case "settings.update": return updateSettings(state, command.settings);
     case "job.createFromSource":
+    case "job.createFromSources":
     case "settings.activateCalendar":
     case "data.import":
     case "data.setDeliveryStatus":
@@ -179,6 +185,23 @@ export function parseCommand(value: unknown): Command {
       if (has(input, "mode")) result.mode = quantityMode(input.mode, "command.input.mode");
       return { type, input: result };
     }
+    case "job.createFromSources": {
+      exact(source, ["type", "input"], "command");
+      const input = object(source.input, "command.input");
+      exact(input, ["orders", "date", "lineId", "bin", "remarks"], "command.input");
+      const orders = array(input.orders, "command.input.orders", 500).map((value, index) => {
+        const row = object(value, `command.input.orders[${index}]`);
+        exact(row, ["sourceOrderId", "sourceOrderVersion", "plannedQuantity"], `command.input.orders[${index}]`);
+        return {
+          sourceOrderId: reference(row.sourceOrderId, `command.input.orders[${index}].sourceOrderId`),
+          sourceOrderVersion: integer(row.sourceOrderVersion, `command.input.orders[${index}].sourceOrderVersion`, 1),
+          plannedQuantity: finite(row.plannedQuantity, `command.input.orders[${index}].plannedQuantity`, Number.EPSILON),
+        };
+      });
+      if (!orders.length) throw new Error("command.input.orders must contain at least one order.");
+      if (new Set(orders.map(order => order.sourceOrderId)).size !== orders.length) throw new Error("command.input.orders cannot contain duplicate source orders.");
+      return { type, input: { orders, date: date(input.date, "command.input.date"), lineId: lineId(input.lineId, "command.input.lineId"), bin: string(input.bin, "command.input.bin", 200), remarks: string(input.remarks, "command.input.remarks", 1_000) } };
+    }
     case "job.complete":
     case "job.recordActual": {
       exact(source, ["type", "jobId", "actualQuantityMt", "completionNote"], "command", true);
@@ -214,6 +237,13 @@ export function parseCommand(value: unknown): Command {
         targetDate: date(source.targetDate, "command.targetDate"),
         items,
       };
+    }
+    case "job.combinePending": {
+      exact(source, ["type", "jobIds", "bin", "remarks"], "command");
+      const jobIds = array(source.jobIds, "command.jobIds", 500).map((value, index) => id(value, `command.jobIds[${index}]`));
+      if (jobIds.length < 2) throw new Error("command.jobIds must contain at least two cards.");
+      if (new Set(jobIds).size !== jobIds.length) throw new Error("command.jobIds cannot contain duplicates.");
+      return { type, jobIds, bin: string(source.bin, "command.bin", 200), remarks: string(source.remarks, "command.remarks", 1_000) };
     }
     case "catalog.create":
       exact(source, ["type", "input"], "command");

@@ -102,6 +102,8 @@ export interface InventoryPlanningDemandRow extends InventoryBucketKey {
   dueDate: string;
   /** ISO timestamp; the planner must not place work before this instant. */
   notBefore: string;
+  /** Portion of quantity assigned to the source order. Any remainder is deliberate stock output. */
+  sourceAllocationQuantity?: number;
   quantity: number;
 }
 
@@ -109,6 +111,7 @@ export interface InventoryDraftJob extends InventoryBucketKey {
   draftId: string;
   itemId: string;
   sourceOrderId: string | null;
+  sourceAllocations?: Array<{ sourceOrderId: string; plannedQuantity: number }>;
   orderNo: string;
   materialCode: string;
   description: string;
@@ -142,6 +145,7 @@ export type InventoryCommand =
   | { type: "inventory.configure"; itemId: string; patch: Partial<Pick<InventoryItemConfiguration, "bagWeightKg" | "strategy" | "targetQuantity" | "defaultExtra" | "needsReview">> }
   | { type: "production.recordReceipt"; jobId: string; totalActualQuantity: number; occurredOn?: string }
   | { type: "production.correct"; movementId: string; correctedTotalQuantity: number; reason: string; postingKey: string; occurredOn?: string }
+  | { type: "production.correctJobTotal"; jobId: string; correctedTotalQuantity: number; reason: string; postingKey: string; occurredOn?: string }
   | { type: "delivery.record"; sourceOrderId: string; quantity: number; postingKey: string; occurredOn?: string }
   | { type: "delivery.reverse"; movementId: string; quantity: number; reason: string; postingKey: string; occurredOn?: string }
   | { type: "planning.commitDraft"; previewRevision: number; jobs: InventoryDraftJob[] }
@@ -319,6 +323,9 @@ export function parseInventoryCommand(value: unknown): InventoryCommand {
     case "production.correct":
       exactOptional(source, ["type", "movementId", "correctedTotalQuantity", "reason", "postingKey"], ["occurredOn"], "command");
       return withOccurredOn({ type, movementId: reference(source.movementId, "command.movementId"), correctedTotalQuantity: nonnegative(source.correctedTotalQuantity, "command.correctedTotalQuantity"), reason: trimmed(source.reason, "command.reason", 1_000), postingKey: reference(source.postingKey, "command.postingKey") }, source);
+    case "production.correctJobTotal":
+      exactOptional(source, ["type", "jobId", "correctedTotalQuantity", "reason", "postingKey"], ["occurredOn"], "command");
+      return withOccurredOn({ type, jobId: reference(source.jobId, "command.jobId"), correctedTotalQuantity: nonnegative(source.correctedTotalQuantity, "command.correctedTotalQuantity"), reason: trimmed(source.reason, "command.reason", 1_000), postingKey: reference(source.postingKey, "command.postingKey") }, source);
     case "delivery.record":
       exactOptional(source, ["type", "sourceOrderId", "quantity", "postingKey"], ["occurredOn"], "command");
       return withOccurredOn({ type, sourceOrderId: reference(source.sourceOrderId, "command.sourceOrderId"), quantity: positive(source.quantity, "command.quantity"), postingKey: reference(source.postingKey, "command.postingKey") }, source);
@@ -400,10 +407,20 @@ function sourceImport(value: unknown, path: string): SourceImportInput {
 
 function draftJob(value: unknown, path: string): InventoryDraftJob {
   const source = object(value, path);
-  exact(source, ["draftId", "itemId", "sourceOrderId", "orderNo", "materialCode", "description", "unit", "bagWeightKg", "productionPurpose", "date", "lineId", "quantity", "notBefore", "bin", "remarks", "medication", "fmrOmed"], path);
+  exactOptional(source, ["draftId", "itemId", "sourceOrderId", "orderNo", "materialCode", "description", "unit", "bagWeightKg", "productionPurpose", "date", "lineId", "quantity", "notBefore", "bin", "remarks", "medication", "fmrOmed"], ["sourceAllocations"], path);
   const unit = inventoryUnit(source.unit, `${path}.unit`); const weight = bagWeight(source.bagWeightKg, `${path}.bagWeightKg`);
   if ((unit === "Bags") !== (weight !== null)) throw new Error(`${path}.bagWeightKg does not match the unit.`);
-  return { draftId: reference(source.draftId, `${path}.draftId`), itemId: reference(source.itemId, `${path}.itemId`), sourceOrderId: source.sourceOrderId === null ? null : reference(source.sourceOrderId, `${path}.sourceOrderId`), orderNo: string(source.orderNo, `${path}.orderNo`, 120), materialCode: trimmed(source.materialCode, `${path}.materialCode`, 120), description: string(source.description, `${path}.description`, 200), unit, bagWeightKg: weight, productionPurpose: strategy(source.productionPurpose, `${path}.productionPurpose`), date: date(source.date, `${path}.date`), lineId: lineId(source.lineId, `${path}.lineId`), quantity: positive(source.quantity, `${path}.quantity`), notBefore: timestamp(source.notBefore, `${path}.notBefore`), bin: string(source.bin, `${path}.bin`, 200), remarks: string(source.remarks, `${path}.remarks`, 1_000), ...bucket(source, path) };
+  const sourceAllocations = has(source, "sourceAllocations") ? array(source.sourceAllocations, `${path}.sourceAllocations`, 500).map((value, index) => {
+    const allocationPath = `${path}.sourceAllocations[${index}]`; const allocation = object(value, allocationPath);
+    exact(allocation, ["sourceOrderId", "plannedQuantity"], allocationPath);
+    const plannedQuantity=positive(allocation.plannedQuantity, `${allocationPath}.plannedQuantity`),scaled=plannedQuantity*(unit==="MT"?1_000:1);
+    if(!Number.isSafeInteger(Math.round(scaled))||Math.abs(scaled-Math.round(scaled))>1e-7)throw new Error(`${allocationPath}.plannedQuantity must be whole Bags or MT with at most 3 decimals.`);
+    return { sourceOrderId: reference(allocation.sourceOrderId, `${allocationPath}.sourceOrderId`), plannedQuantity };
+  }) : undefined;
+  if (sourceAllocations && (!sourceAllocations.length || new Set(sourceAllocations.map(row => row.sourceOrderId)).size !== sourceAllocations.length)) throw new Error(`${path}.sourceAllocations must contain distinct source orders.`);
+  const quantity = positive(source.quantity, `${path}.quantity`);
+  if (sourceAllocations && sourceAllocations.reduce((sum, row) => sum + row.plannedQuantity, 0) - quantity > 1e-6) throw new Error(`${path}.sourceAllocations cannot exceed the draft quantity.`);
+  return { draftId: reference(source.draftId, `${path}.draftId`), itemId: reference(source.itemId, `${path}.itemId`), sourceOrderId: source.sourceOrderId === null ? null : reference(source.sourceOrderId, `${path}.sourceOrderId`), ...(sourceAllocations ? { sourceAllocations } : {}), orderNo: string(source.orderNo, `${path}.orderNo`, 120), materialCode: trimmed(source.materialCode, `${path}.materialCode`, 120), description: string(source.description, `${path}.description`, 200), unit, bagWeightKg: weight, productionPurpose: strategy(source.productionPurpose, `${path}.productionPurpose`), date: date(source.date, `${path}.date`), lineId: lineId(source.lineId, `${path}.lineId`), quantity, notBefore: timestamp(source.notBefore, `${path}.notBefore`), bin: string(source.bin, `${path}.bin`, 200), remarks: string(source.remarks, `${path}.remarks`, 1_000), ...bucket(source, path) };
 }
 
 function extra(value: unknown, path: string): InventoryExtra | null {

@@ -136,6 +136,22 @@ All source mutations use the existing `POST /api/commands` revision/command-ID e
 { type: 'job.start', jobId }
 ```
 
-`job.start` rejects a client-supplied `actualStart`; the server timestamp is retained on retry. Import accepts up to 2,000 orders per transaction, validates every row before writes, and retains existing orders absent from the file. A partial unique index permits at most one noncancelled card per source order, including completed cards. Source fields on linked cards cannot be changed through ordinary `job.update`; cancelled cards can be replanned. Delivery reopen requires a reason. Imported Done never invents actual production timestamps.
+`job.start` rejects a client-supplied `actualStart`; the server timestamp is retained on retry. Import accepts up to 2,000 orders per transaction, validates every row before writes, and retains existing orders absent from the file. An order can be split across several cards; a combined card stores ordered source allocations. Imports only insert previously unseen DO + full-material identities; existing orders are skipped without new source versions or changed import dates. Source fields on linked cards cannot be changed through ordinary `job.update`; cancelled cards can be replanned. Delivery reopen requires a reason. Imported Done never invents actual production timestamps.
 
 Database portable backup v3 is `{schemaVersion:3, exportedAt, planning:AppState, sourceData:{imports,orders,versions}}`. Restore validates the complete graph inside the transaction and retains both planning and source data as a recovery copy. Version 1/2 planning backups remain accepted and replace Data with an empty set. Live `AppState.schemaVersion` remains 2 for planning compatibility.
+
+### Combined order production
+
+```ts
+{ type: 'job.createFromSources', input: { orders: [{sourceOrderId, sourceOrderVersion, plannedQuantity}], date, lineId, bin, remarks } }
+{ type: 'job.combinePending', jobIds: [firstId, secondId], bin, remarks }
+{ type: 'production.correctJobTotal', jobId, correctedTotalQuantity, reason, postingKey, occurredOn? }
+```
+
+Create accepts 1–500 unique order shares and derives the product, snapshots and card total on the server. Combine accepts 2–500 pending/unposted source cards on one date and line with identical product/packaging/bucket identity. It keeps the earliest card and cancels the other originals atomically. Stale versions, incompatible products and invalid allocations roll back the whole command. All normal revision checks and command receipts apply.
+
+`Job.sourceAllocations[]` saves source ID, version, immutable source snapshot (including customer/date when available) and planned quantity in the source unit. Legacy singular source metadata remains readable. Portable backup v4 includes the optional allocation field and full production ledger. Import previews expose `skipped` and per-row `importAction: "insert" | "skip-existing"`; `changed` is informational and never authorizes overwrite.
+
+`GET /api/inventory/jobs/:id/production` returns the physical card total and optional `orderTotals` split by source order; a `null` source ID identifies extra stock. Correcting a card total retains original postings and records the required reversal or additional receipt. A combined card is posted once and attributed in allocation order, with output beyond the allocated total becoming compatible stock.
+
+Draft demand rows may include `sourceAllocationQuantity`: the actual order portion of physical `quantity`. Draft job `sourceAllocations` cannot exceed current unplanned order demand; their sum can be smaller than physical card quantity, with the balance becoming stock. Omit allocations for a pure stock continuation.

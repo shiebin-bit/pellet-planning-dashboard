@@ -1,3 +1,4 @@
+import { productLabel } from '../lib/productLabel';
 import { useMemo } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { getScheduledJobs } from '../domain/engine';
@@ -16,5 +17,5 @@ export function LegacyCarryoverNotice() {
     ));
   }, [state, board.date, board.start, board.end]);
   if (!outside.length) return null;
-  return <div className="notice warning legacy-carryover"><AlertTriangle size={16}/><div><strong>{outside.length} retained plan{outside.length === 1 ? '' : 's'} extend outside this shift.</strong><p>These reservations use the earlier calendar or a locked plan. Open a card to review its complete dates and times.</p><div>{outside.map(job => <button className="text-link" key={job.id} onClick={() => openJob(job.id)}>{job.lineId} · {job.productCode}</button>)}</div></div></div>;
+  return <div className="notice warning legacy-carryover"><AlertTriangle size={16}/><div><strong>{outside.length} retained plan{outside.length === 1 ? '' : 's'} extend outside this shift.</strong><p>These reservations use the earlier calendar or a locked plan. Open a card to review its complete dates and times.</p><div>{outside.map(job => <button className="text-link" key={job.id} onClick={() => openJob(job.id)}>{job.lineId} · {productLabel(job)}</button>)}</div></div></div>;
 }

@@ -4,6 +4,7 @@ import { validateWorkspaceBackup } from "../src/domain/backup";
 import type { AppState } from "../src/domain/types";
 import type { PortableSourceData, PortableWorkspaceBackupV3, SourceOrderFields } from "../src/domain/sourceTypes";
 import type { PortableInventoryData, PortableWorkspaceBackupV4 } from "../src/domain/inventoryTypes";
+import { getJobSourceAllocations } from "../src/domain/jobSources";
 
 export function validatePortableBackupV4(value: unknown): PortableWorkspaceBackupV4 {
   const root = record(value, "backup");
@@ -38,7 +39,7 @@ export function validatePortableInventoryData(value: unknown, sourceData: Portab
   for(const order of orders){const source=sourceData.orders.find(row=>row.id===order.sourceOrderId),item=inventoryById.get(order.itemId);const latest=sourceData.versions.find(row=>row.sourceOrderId===order.sourceOrderId&&row.version===source?.latestVersion);if(!source||!item||!latest||latest.fields.materialCode.trim().toUpperCase()!==item.materialCode.trim().toUpperCase()||latest.fields.unit!==item.unit)throw new Error('An inventory order does not match its latest source product.');}
   const reversedDispatch=new Map<string,number>();
   for(const row of ledger){
-    if(row.jobId){const job=planning.jobs.find(job=>job.id===row.jobId);if(!job||job.inventoryItemId!==row.itemId||(job.sourceOrderId??null)!==row.sourceOrderId||(job.medication??'')!==row.medication||(job.fmrOmed??'')!==row.fmrOmed)throw new Error('A production movement does not match its card.');}
+    if(row.jobId){const job=planning.jobs.find(job=>job.id===row.jobId);const sources=job?new Set(getJobSourceAllocations(job).map(allocation=>allocation.sourceOrderId)):new Set<string>();if(!job||job.inventoryItemId!==row.itemId||(row.sourceOrderId!==null&&!sources.has(row.sourceOrderId))||(job.medication??'')!==row.medication||(job.fmrOmed??'')!==row.fmrOmed)throw new Error('A production movement does not match its card.');}
     if(!row.reversesMovementId)continue;
     const original=movementById.get(row.reversesMovementId);
     if(!original||original.id===row.id||original.recordedAt>row.recordedAt||original.sourceOrderId!==row.sourceOrderId||original.jobId!==row.jobId||!['production','dispatch'].includes(original.movementType))throw new Error('A correction refers to an invalid original movement.');
@@ -104,18 +105,18 @@ export function validatePortableBackupV3(value: unknown): PortableWorkspaceBacku
     if (businessKey(latest.fields.doNo, latest.fields.materialCode) !== businessKey(order.doNo, order.materialCode)) throw new Error(`Source order ${order.id} does not match its latest version key.`);
   }
   const orderById = new Map(orders.map(order => [order.id, order]));
-  for (const job of planning.jobs) if (job.sourceOrderId) {
-    if (!orderIds.has(job.sourceOrderId)) throw new Error(`Job ${job.id} refers to a missing source order.`);
-    const order = orderById.get(job.sourceOrderId)!;
-    if (!job.sourceOrderVersion || job.sourceOrderVersion > order.latestVersion) throw new Error(`Job ${job.id} has an invalid source version.`);
-    const sourceVersion = versionByKey.get(`${job.sourceOrderId}\u0000${job.sourceOrderVersion}`);
+  for (const job of planning.jobs) for (const allocation of getJobSourceAllocations(job)) {
+    if (!orderIds.has(allocation.sourceOrderId)) throw new Error(`Job ${job.id} refers to a missing source order.`);
+    const order = orderById.get(allocation.sourceOrderId)!;
+    if (allocation.sourceOrderVersion > order.latestVersion) throw new Error(`Job ${job.id} has an invalid source version.`);
+    const sourceVersion = versionByKey.get(`${allocation.sourceOrderId}\u0000${allocation.sourceOrderVersion}`);
     if (!sourceVersion) throw new Error(`Job ${job.id} refers to a missing source version.`);
-    const snapshot = job.sourceSnapshot!;
+    const snapshot = allocation.sourceSnapshot;
     const fields = sourceVersion.fields;
     if (!snapshot || snapshot.doNo !== fields.doNo || snapshot.materialCode !== fields.materialCode || snapshot.description !== fields.description || snapshot.quantity !== fields.quantity || snapshot.unit !== fields.unit) {
       throw new Error(`Job ${job.id} source snapshot does not match its source version.`);
     }
-    if (job.orderNo !== snapshot.doNo || job.productCode !== snapshot.materialCode || job.description !== snapshot.description) {
+    if (job.productCode !== snapshot.materialCode) {
       throw new Error(`Job ${job.id} planning fields do not match its source snapshot.`);
     }
     if (fields.unit === "Bags") {

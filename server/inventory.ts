@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type pg from "pg";
 import { createJob, getScheduledJobs } from "../src/domain/engine";
+import { getJobSourceAllocations, jobHasSourceOrder } from "../src/domain/jobSources";
 import {
   baselineBalances,
   bucketIdentity,
@@ -144,10 +145,11 @@ export async function syncInventoryOrders(
   const persisted = await client.query<{ id: string; fields: SourceOrderFields }>(
     `SELECT o.id, v.fields FROM source_orders o
        JOIN source_order_versions v ON v.source_order_id = o.id AND v.version = o.latest_version
+       LEFT JOIN inventory_orders tracked ON tracked.source_order_id = o.id
        JOIN jsonb_to_recordset($1::jsonb) k(do_no text, material_code text)
          ON lower(btrim(o.do_no)) = lower(btrim(k.do_no)) AND lower(btrim(o.material_code)) = lower(btrim(k.material_code))
-      WHERE o.workspace_id = 1`,
-    [JSON.stringify(keys)],
+      WHERE o.workspace_id = 1 AND ($2::boolean OR tracked.source_order_id IS NULL)`,
+    [JSON.stringify(keys), applyBaselineAnnotations],
   );
   for (const source of persisted.rows) {
     const fields = source.fields;
@@ -172,8 +174,9 @@ export async function syncInventoryOrders(
          fmr_omed = CASE WHEN $10 AND NOT inventory_orders.manual_fmr_omed THEN EXCLUDED.fmr_omed ELSE inventory_orders.fmr_omed END,
          historical_status = CASE WHEN $10 THEN EXCLUDED.historical_status ELSE inventory_orders.historical_status END,
          needs_review = inventory_orders.needs_review OR EXCLUDED.needs_review,
-         updated_at = EXCLUDED.updated_at`,
-      [source.id, item.id, fields.deliveryDate, ordered, medication, fmrOmed, status, item.needs_review || (!applyBaselineAnnotations && rawStatus !== "pending"), nowIso, updateAnnotatedBucket],
+         updated_at = EXCLUDED.updated_at
+       WHERE $11::boolean`,
+      [source.id, item.id, fields.deliveryDate, ordered, medication, fmrOmed, status, item.needs_review || (!applyBaselineAnnotations && rawStatus !== "pending"), nowIso, updateAnnotatedBucket, applyBaselineAnnotations],
     );
     await synchronizeDeliveryStatus(client, source.id, nowIso);
   }
@@ -238,6 +241,7 @@ export async function executeInventoryCommand(
     }
     case "production.recordReceipt": return recordProductionReceipt(client, state, command, nowIso);
     case "production.correct": return correctProduction(client, state, command, nowIso);
+    case "production.correctJobTotal": return correctJobProductionTotal(client, state, command, nowIso);
     case "delivery.record": return recordDelivery(client, state, command, nowIso);
     case "delivery.reverse": return reverseDelivery(client, state, command, nowIso);
     case "data.updateManualFields": return updateManualFields(client, state, command, nowIso);
@@ -252,14 +256,9 @@ async function recordProductionReceipt(client: pg.PoolClient, state: AppState, c
   const item = await requireItem(client, job.inventoryItemId, true);
   const total = quantityToScaled(item.unit, command.totalActualQuantity, "total actual quantity");
   const posted = await jobProductionTotal(client, job.id);
-  if (total < posted) throw new ApiError(409, "PRODUCTION_TOTAL_DECREASED", "Use production.correct to reduce an already posted receipt.");
-  const delta = total - posted;
-  if (delta === 0) return state;
-  await insertMovement(client, { itemId: item.id, medication: job.medication ?? "", fmrOmed: job.fmrOmed ?? "", movementType: "production",
-    quantityDeltaScaled: delta, occurredOn: command.occurredOn ?? malaysiaDateAt(nowIso), recordedAt: nowIso,
-    postingKey: `production-${randomUUID()}`, sourceOrderId: job.sourceOrderId ?? null, jobId: job.id,
-    note: `Production receipt total ${scaledToQuantity(item.unit, total)} ${item.unit}.` });
-  await recalculateReservations(client, nowIso);
+  if (total < posted) throw new ApiError(409, "PRODUCTION_TOTAL_DECREASED", "Use production.correctJobTotal to reduce an already posted receipt.");
+  if (total === posted) return state;
+  await reconcileJobProduction(client, job, item, total, command.occurredOn ?? malaysiaDateAt(nowIso), nowIso, `production-${randomUUID()}`, `Production receipt total ${scaledToQuantity(item.unit, total)} ${item.unit}.`);
   const actualQuantityMt=item.unit==="Bags"?scaledToQuantity(item.unit,total)*(job.bagWeightKgSnapshot??item.bag_weight_kg??50)/1000:scaledToQuantity(item.unit,total);
   const next={...state,jobs:state.jobs.map(row=>row.id===job.id&&row.status==="completed"?{...row,actualQuantityMt,updatedAt:nowIso}:row)};
   return appendEvent(next, nowIso, "production.received", `Received production for ${job.orderNo}.`, job.id);
@@ -269,21 +268,48 @@ async function correctProduction(client: pg.PoolClient, state: AppState, command
   if (await replayPosting(client, command.postingKey, command)) return state;
   const original = await movementById(client, command.movementId, true);
   if (original.movement_type !== "production") throw new ApiError(400, "PRODUCTION_MOVEMENT_REQUIRED", "Only a production receipt can be corrected here.");
+  if (!original.job_id) throw new ApiError(400, "PRODUCTION_JOB_REQUIRED", "The receipt must refer to a production card.");
+  const job=state.jobs.find(row=>row.id===original.job_id);
+  if(!job)throw new ApiError(400,"JOB_NOT_FOUND","The production job no longer exists.");
   const item = await requireItem(client, original.item_id, true);
   const corrected = quantityToScaled(item.unit, command.correctedTotalQuantity, "corrected total quantity");
-  if (!original.job_id) throw new ApiError(400, "PRODUCTION_JOB_REQUIRED", "The receipt must refer to a production card.");
-  const delta = corrected - await jobProductionTotal(client, original.job_id);
-  if (delta === 0) return state;
-  if (delta < 0) await assertNonnegativeAfter(client, item.id, original.medication, original.fmr_omed, delta);
-  await insertMovement(client, { itemId: item.id, medication: original.medication, fmrOmed: original.fmr_omed,
-    movementType: delta < 0 ? "reversal" : "production", quantityDeltaScaled: delta,
-    occurredOn: command.occurredOn ?? malaysiaDateAt(nowIso), recordedAt: nowIso, postingKey: command.postingKey,
-    sourceOrderId: original.source_order_id, jobId: original.job_id, reversesMovementId: original.id,
-    note: command.reason, metadata: { commandFingerprint: hashCanonical(command) } });
-  await recalculateReservations(client, nowIso);
-  const job=state.jobs.find(row=>row.id===original.job_id);
+  if(corrected===await jobProductionTotal(client,job.id))return state;
+  await reconcileJobProduction(client,job,item,corrected,command.occurredOn??malaysiaDateAt(nowIso),nowIso,command.postingKey,command.reason,hashCanonical(command));
   const actualQuantityMt=item.unit==="Bags"?scaledToQuantity(item.unit,corrected)*(job?.bagWeightKgSnapshot??item.bag_weight_kg??50)/1000:scaledToQuantity(item.unit,corrected);
   return appendEvent({...state,jobs:state.jobs.map(row=>row.id===original.job_id&&row.status==="completed"?{...row,actualQuantityMt,updatedAt:nowIso}:row)}, nowIso, "production.corrected", `Corrected a production receipt: ${command.reason}`, original.job_id);
+}
+
+async function correctJobProductionTotal(client:pg.PoolClient,state:AppState,command:Extract<InventoryCommand,{type:"production.correctJobTotal"}>,nowIso:string):Promise<AppState>{
+  if(await replayPosting(client,command.postingKey,command))return state;
+  const job=state.jobs.find(row=>row.id===command.jobId);if(!job)throw new ApiError(400,"JOB_NOT_FOUND","The production job no longer exists.");
+  if(!job.inventoryItemId)throw new ApiError(400,"JOB_INVENTORY_ITEM_REQUIRED","Link the job to an inventory item before correcting production.");
+  const item=await requireItem(client,job.inventoryItemId,true),corrected=quantityToScaled(item.unit,command.correctedTotalQuantity,"corrected total quantity");
+  if(corrected===await jobProductionTotal(client,job.id))return state;
+  await reconcileJobProduction(client,job,item,corrected,command.occurredOn??malaysiaDateAt(nowIso),nowIso,command.postingKey,command.reason,hashCanonical(command));
+  const actualQuantityMt=item.unit==="Bags"?scaledToQuantity(item.unit,corrected)*(job.bagWeightKgSnapshot??item.bag_weight_kg??50)/1000:scaledToQuantity(item.unit,corrected);
+  return appendEvent({...state,jobs:state.jobs.map(row=>row.id===job.id&&row.status==="completed"?{...row,actualQuantityMt,updatedAt:nowIso}:row)},nowIso,"production.corrected",`Corrected a production receipt: ${command.reason}`,job.id);
+}
+
+async function reconcileJobProduction(client:pg.PoolClient,job:Job,item:ItemRow,target:number,occurredOn:string,nowIso:string,postingKey:string,note:string,commandFingerprint?:string):Promise<void>{
+  const allocations=getJobSourceAllocations(job);
+  const desired=new Map<string|null,number>();let remaining=target;
+  for(const allocation of allocations){const planned=!job.sourceAllocations&&job.sourceOrderId===allocation.sourceOrderId?remaining:quantityToScaled(item.unit,allocation.plannedQuantity,"source allocation");const attributed=Math.min(remaining,planned);desired.set(allocation.sourceOrderId,attributed);remaining-=attributed;}
+  if(remaining>0)desired.set(null,remaining);
+  const currentRows=await client.query<{source_order_id:string|null;total:string}>(`SELECT l.source_order_id,COALESCE(sum(CASE WHEN l.movement_type='production' THEN l.quantity_delta_scaled WHEN l.movement_type='reversal' AND original.movement_type='production' THEN l.quantity_delta_scaled ELSE 0 END),0)::text total
+    FROM inventory_ledger l LEFT JOIN inventory_ledger original ON original.id=l.reverses_movement_id WHERE l.job_id=$1 GROUP BY l.source_order_id`,[job.id]);
+  const current=new Map<string|null,number>(currentRows.rows.map(row=>[row.source_order_id,numeric(row.total)]));
+  const keys=[...new Set<string|null>([...allocations.map(row=>row.sourceOrderId),null,...current.keys()])];let movementIndex=0;
+  for(const sourceOrderId of keys){const delta=(desired.get(sourceOrderId)??0)-(current.get(sourceOrderId)??0);if(!delta)continue;
+    if(delta>0){await insertMovement(client,{itemId:item.id,medication:job.medication??"",fmrOmed:job.fmrOmed??"",movementType:"production",quantityDeltaScaled:delta,occurredOn,recordedAt:nowIso,postingKey:movementIndex?`${postingKey}:${movementIndex}`:postingKey,sourceOrderId,jobId:job.id,note,metadata:{...(commandFingerprint?{commandFingerprint}:{}),allocation:true}});movementIndex++;continue;}
+    let toReverse=-delta;
+    const originals=await client.query<{id:string;available:string}>(`SELECT original.id,(original.quantity_delta_scaled+COALESCE(sum(correction.quantity_delta_scaled),0))::text available
+      FROM inventory_ledger original LEFT JOIN inventory_ledger correction ON correction.reverses_movement_id=original.id
+      WHERE original.job_id=$1 AND original.movement_type='production' AND original.source_order_id IS NOT DISTINCT FROM $2
+      GROUP BY original.id,original.quantity_delta_scaled,original.recorded_at ORDER BY original.recorded_at DESC,original.id DESC`,[job.id,sourceOrderId]);
+    for(const original of originals.rows){const available=numeric(original.available);if(available<=0)continue;const amount=Math.min(toReverse,available);await insertMovement(client,{itemId:item.id,medication:job.medication??"",fmrOmed:job.fmrOmed??"",movementType:"reversal",quantityDeltaScaled:-amount,occurredOn,recordedAt:nowIso,postingKey:movementIndex?`${postingKey}:${movementIndex}`:postingKey,sourceOrderId,jobId:job.id,reversesMovementId:original.id,note,metadata:{...(commandFingerprint?{commandFingerprint}:{}),allocation:true}});movementIndex++;toReverse-=amount;if(!toReverse)break;}
+    if(toReverse)throw new ApiError(409,"PRODUCTION_ALLOCATION_INCONSISTENT","Production attribution could not be corrected safely.");
+  }
+  await recalculateReservations(client,nowIso);
 }
 
 async function recordDelivery(client: pg.PoolClient, state: AppState, command: Extract<InventoryCommand, { type: "delivery.record" }>, nowIso: string): Promise<AppState> {
@@ -342,14 +368,52 @@ async function updateManualFields(client: pg.PoolClient, state: AppState, comman
 async function commitDraft(client: pg.PoolClient, state: AppState, previewRevision: number, rows: InventoryDraftJob[], nowIso: string): Promise<AppState> {
   // WorkspaceStore has already locked and verified expectedRevision. This second token rejects stale preview UI state.
   if (!Number.isSafeInteger(previewRevision) || previewRevision < 0) throw new ApiError(400, "INVALID_DRAFT_REVISION", "Draft revision is invalid.");
+  const requestedByOrder = new Map<string, { requested: number; itemId: string; medication: string; fmrOmed: string }>();
+  for (const row of rows) {
+    const allocations = row.sourceAllocations ?? (row.sourceOrderId ? [{ sourceOrderId: row.sourceOrderId, plannedQuantity: row.quantity }] : []);
+    for (const allocation of allocations) {
+      const scaled = quantityToScaled(row.unit, allocation.plannedQuantity, `planned quantity for ${row.orderNo}`);
+      const current = requestedByOrder.get(allocation.sourceOrderId);
+      if (current && (current.itemId !== row.itemId || bucketIdentity(current.medication, current.fmrOmed) !== bucketIdentity(row.medication, row.fmrOmed))) {
+        throw new ApiError(409, "DRAFT_ORDER_CHANGED", "The same order cannot be planned against different products or inventory variants.");
+      }
+      requestedByOrder.set(allocation.sourceOrderId, {
+        requested: (current?.requested ?? 0) + scaled,
+        itemId: row.itemId,
+        medication: row.medication,
+        fmrOmed: row.fmrOmed,
+      });
+    }
+  }
+  const lockedOrders = new Map<string, OrderRow>();
+  for (const [sourceOrderId, request] of requestedByOrder) {
+    const order = await orderById(client, sourceOrderId, true);
+    lockedOrders.set(sourceOrderId, order);
+    if (order.item_id !== request.itemId || bucketIdentity(order.medication, order.fmr_omed) !== bucketIdentity(request.medication, request.fmrOmed) || order.historical_status !== "pending") {
+      throw new ApiError(409, "DRAFT_ORDER_CHANGED", "The order product, variant or production status changed. Refresh the draft.");
+    }
+    const item = await requireItem(client, order.item_id, false);
+    const delivered = await orderDeliveredTotal(client, sourceOrderId);
+    const reservedRow = await client.query<{ quantity_scaled: string }>("SELECT quantity_scaled::text FROM inventory_reservations WHERE source_order_id=$1", [sourceOrderId]);
+    const reserved = numeric(reservedRow.rows[0]?.quantity_scaled ?? "0");
+    const scheduled = (await Promise.all(state.jobs
+      .filter(job => jobHasSourceOrder(job, sourceOrderId) && (job.status === "pending" || job.status === "running"))
+      .map(async job => Math.max(0, jobAllocationScaled(job, sourceOrderId, item.unit) - await jobSourceProductionTotal(client, job.id, sourceOrderId)))))
+      .reduce((total, value) => total + value, 0);
+    const available = Math.max(0, numeric(order.ordered_quantity_scaled) - delivered - reserved - scheduled);
+    if (request.requested > available) {
+      throw new ApiError(409, "DRAFT_ORDER_QUANTITY_CHANGED", `Order ${order.do_no} no longer has that much unplanned quantity. Refresh the draft.`);
+    }
+  }
   let next = state;
   const createdIds: string[] = [];
   const oldSchedules = new Map(getScheduledJobs(state).map(job=>[job.id,job]));
   for (let row of rows) {
     const item=await requireItem(client,row.itemId,true);
     if(item.material_code.trim().toUpperCase()!==row.materialCode.trim().toUpperCase()||item.unit!==row.unit||item.bag_weight_kg!==row.bagWeightKg)throw new ApiError(409,"DRAFT_ITEM_CHANGED","The product or bag weight changed. Refresh the draft.");
-    if(row.sourceOrderId){
-      const order=await orderById(client,row.sourceOrderId,true);
+    const allocationRequests=row.sourceAllocations??(row.sourceOrderId?[{sourceOrderId:row.sourceOrderId,plannedQuantity:row.quantity}]:[]);
+    for(const allocation of allocationRequests){
+      const order=lockedOrders.get(allocation.sourceOrderId) ?? await orderById(client,allocation.sourceOrderId,true);
       if(order.item_id!==item.id||bucketIdentity(order.medication,order.fmr_omed)!==bucketIdentity(row.medication,row.fmrOmed)||order.historical_status!=="pending")throw new ApiError(409,"DRAFT_ORDER_CHANGED","The order product, variant or production status changed. Refresh the draft.");
       const delivered=await orderDeliveredTotal(client,order.source_order_id);
       if(delivered>=numeric(order.ordered_quantity_scaled))throw new ApiError(409,"ORDER_ALREADY_DELIVERED","This order has already been collected.");
@@ -367,15 +431,13 @@ async function commitDraft(client: pg.PoolClient, state: AppState, previewRevisi
     });
     const created = next.jobs.at(-1);
     if (created) createdIds.push(created.id);
-    if (created && row.sourceOrderId) {
-      const sourceOrderId = row.sourceOrderId;
-      const source = await client.query<{ latest_version:number; fields:SourceOrderFields }>(`SELECT o.latest_version,v.fields FROM source_orders o
-        JOIN source_order_versions v ON v.source_order_id=o.id AND v.version=o.latest_version WHERE o.workspace_id=1 AND o.id=$1`,[sourceOrderId]);
-      if(!source.rowCount)throw new ApiError(400,"SOURCE_NOT_FOUND","The source order no longer exists.");
-      const fields=source.rows[0].fields;
-      next = { ...next, jobs: next.jobs.map(job => job.id === created.id ? { ...job, sourceOrderId,
-        sourceOrderVersion:source.rows[0].latest_version,sourceSnapshot:{doNo:fields.doNo,materialCode:fields.materialCode,description:fields.description,quantity:fields.quantity,unit:fields.unit},
-        createdAt: nowIso, updatedAt: nowIso } : job) };
+    if (created && allocationRequests.length) {
+      const source = await client.query<{ id:string; latest_version:number; fields:SourceOrderFields }>(`SELECT o.id,o.latest_version,v.fields FROM source_orders o
+        JOIN source_order_versions v ON v.source_order_id=o.id AND v.version=o.latest_version WHERE o.workspace_id=1 AND o.id=ANY($1::text[])`,[allocationRequests.map(allocation=>allocation.sourceOrderId)]);
+      if(source.rows.length!==allocationRequests.length)throw new ApiError(400,"SOURCE_NOT_FOUND","A source order no longer exists.");
+      const sources=new Map(source.rows.map(value=>[value.id,value]));
+      const allocations=allocationRequests.map(allocation=>{const value=sources.get(allocation.sourceOrderId)!;const fields=value.fields;return{sourceOrderId:value.id,sourceOrderVersion:value.latest_version,plannedQuantity:allocation.plannedQuantity,sourceSnapshot:{doNo:fields.doNo,materialCode:fields.materialCode,description:fields.description,quantity:fields.quantity,unit:fields.unit,deliveryDate:fields.deliveryDate,soldToParty:fields.soldToParty,shipToParty:fields.shipToParty}};});
+      next = { ...next, jobs: next.jobs.map(job => job.id === created.id ? row.sourceAllocations ? { ...job, sourceAllocations:allocations,createdAt:nowIso,updatedAt:nowIso } : { ...job,sourceOrderId:allocations[0].sourceOrderId,sourceOrderVersion:allocations[0].sourceOrderVersion,sourceSnapshot:allocations[0].sourceSnapshot,createdAt:nowIso,updatedAt:nowIso } : job) };
     }
   }
   const schedules = new Map(getScheduledJobs(next).map(job => [job.id, job]));
@@ -435,7 +497,7 @@ export async function getOrderProgress(pool: pg.Pool, state: AppState): Promise<
       const delivered = row.historical_status === "out" ? ordered : movementTotals.get(row.source_order_id)?.delivered ?? 0;
       const produced = row.historical_status === "done" ? ordered : movementTotals.get(row.source_order_id)?.produced ?? 0;
       const reserved = numeric(reservations.rows.find(value => value.source_order_id === row.source_order_id)?.quantity_scaled ?? "0");
-      const scheduled = (await Promise.all(state.jobs.filter(job => job.sourceOrderId === row.source_order_id && (job.status === "pending" || job.status === "running")).map(async job => Math.max(0, jobScaled(job, item.unit) - await jobProductionTotal(client, job.id))))).reduce((a,b)=>a+b,0);
+      const scheduled = (await Promise.all(state.jobs.filter(job => jobHasSourceOrder(job,row.source_order_id) && (job.status === "pending" || job.status === "running")).map(async job => Math.max(0, jobAllocationScaled(job,row.source_order_id,item.unit) - await jobSourceProductionTotal(client, job.id,row.source_order_id))))).reduce((a,b)=>a+b,0);
       const need = row.historical_status === "done" ? 0 : orderNeedScaled(ordered, delivered, reserved);
       orders.push({ sourceOrderId: row.source_order_id, itemId: row.item_id, doNo: row.do_no, materialCode: row.material_code,
         description: row.description, dueDate: dbDate(row.due_date), unit: row.unit, medication: row.medication, fmrOmed: row.fmr_omed,
@@ -465,7 +527,7 @@ export async function buildPlanningDemand(client: pg.PoolClient, state: AppState
     const ordered=numeric(order.ordered_quantity_scaled),delivered=deliveredByOrder.get(order.source_order_id)??0;
     const reserved=numeric(reservationRows.rows.find(row=>row.source_order_id===order.source_order_id)?.quantity_scaled??"0");
     const core=orderNeedScaled(ordered,delivered,reserved);if(!core)continue;
-    const scheduled=state.jobs.filter(job=>job.sourceOrderId===order.source_order_id&&(job.status==="pending"||job.status==="running")).reduce((total,job)=>total+Math.max(0,jobScaled(job,item.unit)-(postedByJob.get(job.id)??0)),0);
+    const scheduled=(await Promise.all(state.jobs.filter(job=>jobHasSourceOrder(job,order.source_order_id)&&(job.status==="pending"||job.status==="running")).map(async job=>Math.max(0,jobAllocationScaled(job,order.source_order_id,item.unit)-await jobSourceProductionTotal(client,job.id,order.source_order_id))))).reduce((total,value)=>total+value,0);
     const cohort=bucketKey(item.id,order.medication,order.fmr_omed);
     details.push({order,item,core,scheduled});coreByItem.set(cohort,(coreByItem.get(cohort)??0)+core);
   }
@@ -474,11 +536,12 @@ export async function buildPlanningDemand(client: pg.PoolClient, state: AppState
     const cohort=bucketKey(detail.item.id,detail.order.medication,detail.order.fmr_omed);
     const ownsExtra=!extraOwner.has(cohort);if(ownsExtra)extraOwner.add(cohort);
     const extra=ownsExtra?extraQuantityScaled(detail.item.unit,coreByItem.get(cohort)??0,itemExtra(detail.item)):0;
+    const orderDemand=Math.max(0,detail.core-detail.scheduled);
     const demand=Math.max(0,detail.core+extra-detail.scheduled);if(!demand)continue;
     const order=detail.order,item=detail.item;
     result.push({key:`order:${order.source_order_id}`,itemId:order.item_id,materialCode:order.material_code,description:order.description,
       unit:order.unit,bagWeightKg:item.bag_weight_kg,strategy:item.strategy??"mto",purpose:"mto",sourceOrderId:order.source_order_id,
-      orderNo:order.do_no,dueDate:dbDate(order.due_date),notBefore:scheduleFloor(request.fromDate,nowIso),quantity:scaledToQuantity(order.unit,demand),medication:order.medication,fmrOmed:order.fmr_omed});
+      orderNo:order.do_no,dueDate:dbDate(order.due_date),notBefore:scheduleFloor(request.fromDate,nowIso),sourceAllocationQuantity:scaledToQuantity(order.unit,orderDemand),quantity:scaledToQuantity(order.unit,demand),medication:order.medication,fmrOmed:order.fmr_omed});
   }
   for(const item of items.values()){
     if(item.strategy!=="mts"||item.needs_review||!item.target_quantity_scaled||(item.unit==="Bags"&&!item.bag_weight_kg))continue;
@@ -486,7 +549,7 @@ export async function buildPlanningDemand(client: pg.PoolClient, state: AppState
     const itemOrderIds=new Set(rows.filter(order=>order.item_id===item.id&&!order.medication&&!order.fmr_omed).map(order=>order.source_order_id));
     const reserved=reservationRows.rows.filter(row=>itemOrderIds.has(row.source_order_id)).reduce((total,row)=>total+numeric(row.quantity_scaled),0);
     const relevantOrders=new Set(details.filter(detail=>detail.item.id===item.id&&!detail.order.medication&&!detail.order.fmr_omed).map(detail=>detail.order.source_order_id));
-    const scheduledAll=state.jobs.filter(job=>job.inventoryItemId===item.id&&!job.medication&&!job.fmrOmed&&(job.status==="pending"||job.status==="running")&&job.date<=request.toDate&&(!job.sourceOrderId||relevantOrders.has(job.sourceOrderId)))
+    const scheduledAll=state.jobs.filter(job=>job.inventoryItemId===item.id&&!job.medication&&!job.fmrOmed&&(job.status==="pending"||job.status==="running")&&job.date<=request.toDate&&(!getJobSourceAllocations(job).length||getJobSourceAllocations(job).some(allocation=>relevantOrders.has(allocation.sourceOrderId))))
       .reduce((total,job)=>total+Math.max(0,jobScaled(job,item.unit)-(postedByJob.get(job.id)??0)),0);
     const newMto=result.filter(row=>row.itemId===item.id&&!row.medication&&!row.fmrOmed&&row.purpose==="mto").reduce((total,row)=>total+quantityToScaled(item.unit,row.quantity),0);
     const projectedFree=Math.max(0,(physical-reserved)+scheduledAll+newMto-(coreByItem.get(bucketKey(item.id,"",""))??0));
@@ -631,12 +694,12 @@ export async function validateInventoryJobs(client:pg.PoolClient,state:AppState)
   const jobs=new Map(state.jobs.map(job=>[job.id,job]));
   for(const job of state.jobs){
     if(!job.inventoryItemId)continue;
-    const item=items.get(job.inventoryItemId),order=job.sourceOrderId?orders.get(job.sourceOrderId):undefined;
+    const item=items.get(job.inventoryItemId),jobOrders=getJobSourceAllocations(job).map(allocation=>orders.get(allocation.sourceOrderId));
     if(!item||item.material_code.trim().toUpperCase()!==job.productCode.trim().toUpperCase()||(item.unit==="Bags")!==(job.mode==="bags"))throw new ApiError(409,"JOB_STOCK_IDENTITY_MISMATCH","A stock card must retain its linked product and packaging.");
-    if(order&&(order.item_id!==item.id||bucketIdentity(order.medication,order.fmr_omed)!==bucketIdentity(job.medication??"",job.fmrOmed??"")))throw new ApiError(409,"JOB_ORDER_VARIANT_MISMATCH","The card must match its order's Medication and FMR/OMED.");
+    if(jobOrders.some(order=>!order||order.item_id!==item.id||bucketIdentity(order.medication,order.fmr_omed)!==bucketIdentity(job.medication??"",job.fmrOmed??"")))throw new ApiError(409,"JOB_ORDER_VARIANT_MISMATCH","The card must match every order's Medication and FMR/OMED.");
   }
   const posted=await client.query<{job_id:string;item_id:string;medication:string;fmr_omed:string;source_order_id:string|null}>("SELECT DISTINCT job_id,item_id,medication,fmr_omed,source_order_id FROM inventory_ledger WHERE job_id IS NOT NULL");
-  for(const row of posted.rows){const job=jobs.get(row.job_id);if(!job||job.inventoryItemId!==row.item_id||(job.sourceOrderId??null)!==row.source_order_id||bucketIdentity(job.medication??"",job.fmrOmed??"")!==bucketIdentity(row.medication,row.fmr_omed))throw new ApiError(409,"POSTED_JOB_IMMUTABLE","Cards with inventory movements cannot be deleted or assigned another product, order or variant. Correct their original movements instead.");}
+  for(const row of posted.rows){const job=jobs.get(row.job_id),sourceIds=job?new Set(getJobSourceAllocations(job).map(allocation=>allocation.sourceOrderId)):new Set<string>();if(!job||job.inventoryItemId!==row.item_id||(row.source_order_id!==null&&!sourceIds.has(row.source_order_id))||bucketIdentity(job.medication??"",job.fmrOmed??"")!==bucketIdentity(row.medication,row.fmr_omed))throw new ApiError(409,"POSTED_JOB_IMMUTABLE","Cards with inventory movements cannot be deleted or assigned another product, order or variant. Correct their original movements instead.");}
 }
 async function findItemByMaterial(client: pg.PoolClient, materialCode: string, lock: boolean): Promise<ItemRow | null> {
   const result = await client.query<ItemRow>(`SELECT * FROM inventory_items WHERE workspace_id=1 AND lower(btrim(material_code))=lower(btrim($1))${lock ? " FOR UPDATE" : ""}`, [materialCode]);
@@ -686,10 +749,13 @@ async function movementTotalsByOrder(client:pg.PoolClient):Promise<Map<string,{d
   COALESCE(sum(CASE WHEN l.movement_type='production' THEN l.quantity_delta_scaled WHEN l.movement_type='reversal' AND original.movement_type='production' THEN l.quantity_delta_scaled ELSE 0 END),0)::text produced
   FROM inventory_ledger l LEFT JOIN inventory_ledger original ON original.id=l.reverses_movement_id WHERE l.source_order_id IS NOT NULL GROUP BY l.source_order_id`);return new Map(rows.rows.map(row=>[row.source_order_id,{delivered:numeric(row.delivered),produced:numeric(row.produced)}]));}
 export async function jobProductionTotal(client:pg.PoolClient,jobId:string):Promise<number>{const r=await client.query<{total:string}>(`SELECT COALESCE(sum(CASE WHEN l.movement_type='production' THEN l.quantity_delta_scaled WHEN l.movement_type='reversal' AND original.movement_type='production' THEN l.quantity_delta_scaled ELSE 0 END),0)::text total FROM inventory_ledger l LEFT JOIN inventory_ledger original ON original.id=l.reverses_movement_id WHERE l.job_id=$1`,[jobId]);return numeric(r.rows[0].total);}
+export async function jobProductionTotalsBySource(client:pg.PoolClient,jobId:string):Promise<Array<{sourceOrderId:string|null;total:number}>>{const r=await client.query<{source_order_id:string|null;total:string}>(`SELECT l.source_order_id,COALESCE(sum(CASE WHEN l.movement_type='production' THEN l.quantity_delta_scaled WHEN l.movement_type='reversal' AND original.movement_type='production' THEN l.quantity_delta_scaled ELSE 0 END),0)::text total FROM inventory_ledger l LEFT JOIN inventory_ledger original ON original.id=l.reverses_movement_id WHERE l.job_id=$1 GROUP BY l.source_order_id ORDER BY l.source_order_id NULLS LAST`,[jobId]);return r.rows.map(row=>({sourceOrderId:row.source_order_id,total:numeric(row.total)}));}
 async function reversedTotal(client:pg.PoolClient,id:string):Promise<number>{const r=await client.query<{total:string}>("SELECT COALESCE(sum(quantity_delta_scaled),0)::text total FROM inventory_ledger WHERE reverses_movement_id=$1",[id]);return numeric(r.rows[0].total);}
 async function movementById(client:pg.PoolClient,id:string,lock:boolean):Promise<any>{const r=await client.query(`SELECT * FROM inventory_ledger WHERE workspace_id=1 AND id=$1${lock?" FOR UPDATE":""}`,[id]);if(!r.rowCount)throw new ApiError(400,"MOVEMENT_NOT_FOUND","Inventory movement not found.");return r.rows[0];}
 
-function scheduledForOrder(jobs:Job[],sourceOrderId:string,item:ItemRow):number{return jobs.filter(job=>job.sourceOrderId===sourceOrderId&&(job.status==="pending"||job.status==="running")).reduce((total,job)=>total+jobScaled(job,item.unit),0);}
+function jobAllocationScaled(job:Job,sourceOrderId:string,unit:InventoryUnit):number{const allocation=getJobSourceAllocations(job).find(row=>row.sourceOrderId===sourceOrderId);return allocation?quantityToScaled(unit,allocation.plannedQuantity,"source allocation"):0;}
+async function jobSourceProductionTotal(client:pg.PoolClient,jobId:string,sourceOrderId:string):Promise<number>{const r=await client.query<{total:string}>(`SELECT COALESCE(sum(CASE WHEN l.movement_type='production' THEN l.quantity_delta_scaled WHEN l.movement_type='reversal' AND original.movement_type='production' THEN l.quantity_delta_scaled ELSE 0 END),0)::text total FROM inventory_ledger l LEFT JOIN inventory_ledger original ON original.id=l.reverses_movement_id WHERE l.job_id=$1 AND l.source_order_id=$2`,[jobId,sourceOrderId]);return numeric(r.rows[0].total);}
+function scheduledForOrder(jobs:Job[],sourceOrderId:string,item:ItemRow):number{return jobs.filter(job=>jobHasSourceOrder(job,sourceOrderId)&&(job.status==="pending"||job.status==="running")).reduce((total,job)=>total+jobAllocationScaled(job,sourceOrderId,item.unit),0);}
 function jobScaled(job:Job,unit:InventoryUnit):number{if(unit==="Bags")return quantityToScaled(unit,job.bagCount??0);return quantityToScaled(unit,job.quantityMt);}
 function itemView(item:ItemRow):Omit<InventoryItemSnapshot,"buckets"|"totalOnHand"|"totalReserved"|"totalAvailable">{return{itemId:item.id,materialCode:item.material_code,description:item.description,unit:item.unit,bagWeightKg:item.bag_weight_kg,strategy:item.strategy,targetQuantity:item.target_quantity_scaled===null?null:scaledToQuantity(item.unit,numeric(item.target_quantity_scaled)),defaultExtra:itemExtra(item),needsReview:item.needs_review};}
 function itemExtra(item:ItemRow){if(!item.extra_type||item.extra_value_scaled===null)return null;return item.extra_type==="fixed"?{type:"fixed" as const,quantity:scaledToQuantity(item.unit,numeric(item.extra_value_scaled))}:{type:"percent" as const,percent:numeric(item.extra_value_scaled)/1_000};}

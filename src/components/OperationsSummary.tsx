@@ -1,3 +1,4 @@
+import { productLabel } from '../lib/productLabel';
 import { useEffect,useState } from 'react';
 import { AlertTriangle,ArrowUpRight,CheckCircle2,ChevronDown } from 'lucide-react';
 import type { Job } from '../domain/types';
@@ -20,8 +21,8 @@ export function NeedsAttention() {
   const visible=expanded?items:items.slice(0,3);
   return <section className="panel attention-panel" aria-labelledby="attention-title">
     <div className="operations-heading"><div><h2 id="attention-title">{items.length?<AlertTriangle size={17}/>:<CheckCircle2 size={17}/>}Needs attention<span className="count-tag">{items.length} tasks</span></h2><p>Quantity, bin and issue checks for this plan. Time checks refresh automatically.</p></div></div>
-    {items.length?<><div className="attention-list">{visible.map(({job,kinds,plannedEnd})=><button type="button" className="attention-item" key={job.id} data-attention-job={job.id} onClick={()=>openJob(job.id)} aria-label={`Review ${job.productCode} on ${job.lineId}: ${kinds.map(kind=>REASONS[kind]).join(', ')}`}>
-      <span className="attention-product"><strong>{job.productCode}</strong><small>{job.lineId} · {job.orderNo||'No order reference'}</small></span>
+    {items.length?<><div className="attention-list">{visible.map(({job,kinds,plannedEnd})=><button type="button" className="attention-item" key={job.id} data-attention-job={job.id} onClick={()=>openJob(job.id)} aria-label={`Review ${productLabel(job)} on ${job.lineId}: ${kinds.map(kind=>REASONS[kind]).join(', ')}`}>
+      <span className="attention-product"><strong>{productLabel(job)}</strong><small>{job.lineId} · {job.orderNo||'No order reference'}</small></span>
       <span className="attention-reasons">{kinds.map(kind=><span key={kind} className={'attention-reason '+kind}>{REASONS[kind]}</span>)}{job.issue?<small>{job.issue.reason}</small>:kinds.includes('completion')&&<small>Expected end {fullDateTime(plannedEnd)} · completion not recorded</small>}</span><ArrowUpRight size={16}/>
     </button>)}</div>{items.length>3&&<button type="button" className="attention-expand" aria-expanded={expanded} onClick={()=>setExpanded(!expanded)}>{expanded?'Show fewer':`View all ${items.length} tasks`}<ChevronDown size={14}/></button>}</>:<p className="attention-clear"><CheckCircle2 size={18}/>No tasks need attention for this plan.</p>}
   </section>;

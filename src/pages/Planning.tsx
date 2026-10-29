@@ -1,3 +1,4 @@
+import { getJobSourceAllocations } from '../domain/jobSources';
 import { LegacyCarryoverNotice } from '../components/LegacyCarryoverNotice';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -12,6 +13,8 @@ import { isJobPaused } from '../domain/production-results';
 import type { Downtime, LineId, LineSchedule, ScheduledJob, ScheduleSegment } from '../domain/types';
 import { downtimeRange, durationLabel, numberLabel, timeLabel } from '../lib/format';
 import { useWorkspace } from '../lib/workspace';
+import { productLabel } from '../lib/productLabel';
+import { CombinePlanningButton } from '../components/CombinePlanningDialog';
 import './Planning.css';
 import { AutoPlanningButton } from '../components/InventoryDraftDialog';
 import { usePlanningCardPreview } from '../components/PlanningCardPreview';
@@ -49,13 +52,13 @@ export function Planning() {
 
   function dragName(item: Active) {
     const job = jobs.find(job => job.id === item.data.current?.jobId);
-    return job ? `${job.productCode} on ${job.lineId}` : 'Production card';
+    return job ? `${productLabel(job)} on ${job.lineId}` : 'Production card';
   }
 
   function dropName(over: Over | null) {
     if (!over) return 'outside the production lines';
     const target = jobs.find(job => job.id === over.data.current?.beforeId);
-    return target ? `before ${target.productCode} on ${target.lineId}` : `at the end of ${over.data.current?.lineId}`;
+    return target ? `before ${productLabel(target)} on ${target.lineId}` : `at the end of ${over.data.current?.lineId}`;
   }
 
   useEffect(() => {
@@ -91,6 +94,7 @@ export function Planning() {
       <div><h1>Planning board</h1><p>Drag a not-started card to another line. Click for details.</p></div>
       <div className="hplan-actions">
         <AutoPlanningButton/>
+        <CombinePlanningButton/>
         {storageMode === 'database' && <button type="button" className="button secondary" disabled={mutationLocked || hasConflict} onClick={() => openSource()}><Plus size={15}/>Plan from Data</button>}
         <button type="button" className="button secondary" disabled={mutationLocked || hasConflict} onClick={openCopy}><Copy size={15}/>Copy planning</button>
         <button type="button" className="button secondary" disabled={!canUndo} onClick={undo}><Undo2 size={15}/>Undo</button>
@@ -115,12 +119,12 @@ export function Planning() {
         <div className="hplan-axis" aria-hidden="true">{ticks.map(hour => <div key={hour} className="hplan-axis-tick" style={{ left: `${hour / hours * 100}%` }}><span>{timeLabel(board.start + hour * 3_600_000)}</span>{hour >= 24 && hour % 24 === 0 && <small>+{hour / 24}d</small>}</div>)}</div>
         {board.lines.map(line => <LineRow key={line.lineId} line={line} start={board.start} end={windowEnd} hours={hours} downtime={state.settings.downtime} dayStart={calendar.dayStart} availableHours={calendar.availableHours} activeId={activeId} selectedId={selectedId} onOpen={openJob} onAdd={openInput}/>) }
       </section>
-      <DragOverlay dropAnimation={null}>{active ? <div className={`hplan-drag-card ${active.issue ? 'issue' : active.status}`}><GripVertical size={17}/><div><strong>{active.productCode}</strong><span>{numberLabel(active.quantityMt)} MT</span></div><small>{active.lineId}</small></div> : null}</DragOverlay>
+      <DragOverlay dropAnimation={null}>{active ? <div className={`hplan-drag-card ${active.issue ? 'issue' : active.status}`}><GripVertical size={17}/><div><strong>{productLabel(active)}</strong><span>{numberLabel(active.quantityMt)} MT</span></div><small>{active.lineId}</small></div> : null}</DragOverlay>
     </DndContext>
 
     <div className="hplan-below"><div className="hplan-legend"><StatusLegend/>{state.settings.changeoverMinutes>0&&<span className="hplan-interval-key"><i className="changeover-key"/>Changeover / line clean-up · {durationLabel(state.settings.changeoverMinutes)}</span>}<span className="hplan-interval-key"><i className="unavailable-key"/>Unavailable</span></div>{fullHours > dayHours && range === 'day' && <span className="hplan-carry-note">Carry-over continues for up to {fullHours} hours. Use Full plan to view it.</span>}</div>
     <LegacyCarryoverNotice/>
-    {board.backlog.length > 0 && <details className="hplan-backlog"><summary><span><AlertTriangle size={16}/>Awaiting quantity</span><strong>{board.backlog.length}</strong><ChevronDown size={16}/></summary><div className="hplan-backlog-grid">{board.backlog.map(job => <button type="button" key={job.id} className={job.issue ? 'issue' : ''} onClick={() => openJob(job.id)}><div><strong>{job.productCode}</strong><span>{job.lineId} · {job.orderNo || 'No order reference'}</span></div><small>{job.issue ? 'Issue' : 'Add quantity'}</small><ArrowUpRight size={15}/></button>)}</div></details>}
+    {board.backlog.length > 0 && <details className="hplan-backlog"><summary><span><AlertTriangle size={16}/>Awaiting quantity</span><strong>{board.backlog.length}</strong><ChevronDown size={16}/></summary><div className="hplan-backlog-grid">{board.backlog.map(job => <button type="button" key={job.id} className={job.issue ? 'issue' : ''} onClick={() => openJob(job.id)}><div><strong>{productLabel(job)}</strong><span>{job.lineId} · {job.orderNo || 'No order reference'}</span></div><small>{job.issue ? 'Issue' : 'Add quantity'}</small><ArrowUpRight size={15}/></button>)}</div></details>}
   </div>;
 }
 
@@ -184,12 +188,12 @@ function ProductionSegment({ segment, job, start, end, primary, activeId, select
   const clippedEnd = Math.min(end, segment.end);
   const paused = isJobPaused(job);
   const status = job.issue ? 'issue' : paused ? 'paused' : job.status;
-  const detail = `${job.productCode} · ${numberLabel(job.quantityMt)} MT · ${timeLabel(segment.start)}–${timeLabel(segment.end)} · ${job.issue ? `Issue: ${job.issue.reason}` : paused ? 'Paused' : job.status}`;
+  const detail = `${productLabel(job)} · ${numberLabel(job.quantityMt)} MT · ${getJobSourceAllocations(job).length} orders · ${timeLabel(segment.start)}–${timeLabel(segment.end)} · ${job.issue ? `Issue: ${job.issue.reason}` : paused ? 'Paused' : job.status}`;
   const insert=isOver&&activeId&&activeId!==job.id;
   const preview=usePlanningCardPreview(job,!!activeId);
   return <div ref={node => {dragRef(node);dropRef(node);preview.anchor.current=node;}} {...preview.events} data-job-id={primary ? job.id : undefined} data-production-job={job.id} data-draggable={!locked} className={`hplan-card ${status} ${selected ? 'selected' : ''} ${activeId===job.id ? 'dragging' : ''} ${insert ? 'drop-before' : ''} ${segment.end > end ? 'clipped-end' : ''}`} style={intervalStyle(clippedStart, clippedEnd, start, end)}>
-    <button type="button" className="hplan-card-open" {...(!locked?attributes:{})} {...(!locked?listeners:{})} onClick={()=>{preview.close();onOpen();}} aria-describedby={[!locked?attributes['aria-describedby']:undefined,preview.descriptionId].filter(Boolean).join(' ')||undefined} aria-label={`Open ${job.productCode} on ${job.lineId}${primary?'':' continued segment'}`} aria-description={`${detail}. ${locked?'This production plan is locked.':'Drag anywhere on this card to move it. On touch screens, hold briefly then drag. Enter opens details; Space starts a keyboard move.'}`}/>
-    <div className="hplan-card-content" aria-hidden="true"><strong className="hplan-code-short">{job.productCode.trim().slice(0, 4)}</strong><strong className="hplan-code-full">{job.productCode}</strong><span className="hplan-quantity">{numberLabel(job.quantityMt)} MT</span><span className="hplan-time">{timeLabel(segment.start)}–{timeLabel(segment.end)}</span><span className="hplan-state">{job.issue ? <AlertTriangle size={12}/> : locked ? <LockKeyhole size={11}/> : null}{job.issue ? 'Issue' + (paused ? ' · Paused' : '') : paused ? 'Paused' : job.status === 'running' ? 'Running' : job.status === 'completed' ? 'Done' : primary ? 'Planned' : 'Continued'}</span></div>
+    <button type="button" className="hplan-card-open" {...(!locked?attributes:{})} {...(!locked?listeners:{})} onClick={()=>{preview.close();onOpen();}} aria-describedby={[!locked?attributes['aria-describedby']:undefined,preview.descriptionId].filter(Boolean).join(' ')||undefined} aria-label={`Open ${productLabel(job)} on ${job.lineId}${primary?'':' continued segment'}`} aria-description={`${detail}. ${locked?'This production plan is locked.':'Drag anywhere on this card to move it. On touch screens, hold briefly then drag. Enter opens details; Space starts a keyboard move.'}`}/>
+    <div className="hplan-card-content" aria-hidden="true"><strong className="hplan-code-short">{productLabel(job)}</strong><strong className="hplan-code-full">{productLabel(job)}</strong><span className="hplan-quantity">{numberLabel(job.quantityMt)} MT</span><span className="hplan-time">{timeLabel(segment.start)}–{timeLabel(segment.end)}</span><span className="hplan-state">{job.issue ? <AlertTriangle size={12}/> : locked ? <LockKeyhole size={11}/> : null}{job.issue ? 'Issue' + (paused ? ' · Paused' : '') : paused ? 'Paused' : job.status === 'running' ? 'Running' : job.status === 'completed' ? 'Done' : primary ? 'Planned' : 'Continued'}</span></div>
     {!locked && <span className="hplan-drag-handle" aria-hidden="true"><GripVertical size={15}/></span>}
     {insert && <span className="hplan-insert">Insert</span>}
     {preview.preview}
@@ -199,7 +203,7 @@ function ProductionSegment({ segment, job, start, end, primary, activeId, select
 function ChangeoverSegment({ segment, job, start, end, onOpen }: { segment: ScheduleSegment; job: ScheduledJob; start: number; end: number; onOpen: () => void }) {
   const clippedStart = Math.max(start, segment.start);
   const clippedEnd = Math.min(end, segment.end);
-  const detail=`Changeover / line clean-up before ${job.productCode} on ${job.lineId} · ${durationLabel((segment.end - segment.start) / 60_000)}`;
+  const detail=`Changeover / line clean-up before ${productLabel(job)} on ${job.lineId} · ${durationLabel((segment.end - segment.start) / 60_000)}`;
   return <button type="button" className="hplan-changeover" style={intervalStyle(clippedStart, clippedEnd, start, end)} onClick={onOpen} aria-label={detail} title={detail}/>;
 }
 

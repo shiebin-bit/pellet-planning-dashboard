@@ -80,15 +80,15 @@ Settings → **Backup & recovery** → Download backup 下载整个 workspace JS
 1. 打开 Data → Import Excel，选择 `.xlsx` 文件（最多 5 MB、2,000 行）。
 2. 确认工作表、表头行和 13 个栏位的对应关系。文本日期可选 MM/DD/YYYY、DD/MM/YYYY 或 YYYY/MM/DD；请核对 Excel 实际格式。
 3. 填写 Excel as-of date（这些剩余天数是哪一天的数据），默认今天。
-4. 预览新增、修改和未变更的订单；修改项逐一列出 Before／After，包括 Excel as-of date。0、空白（Empty）和未提供（Not provided）分开显示。现有库存订单的 Medication／FMR 及人工交期保留，原始 Excel 版本另行记录；仅原始版本有变更时会明确说明。错误会显示行号及原因，须全部修正才可保存。勾选确认后整批导入，导入不会自动排产。
+4. 预览新订单和会跳过的已有订单。差异列出 Saved · retained（保留）与 Excel · skipped（跳过），只供核对，不会覆盖旧值。0、空白（Empty）和未提供（Not provided）分开显示。错误须全部修正才可保存；确认后只添加新订单，不自动排产。
 5. 在 Data 搜寻 DO、客户、物料或描述。快捷视图为 All orders（全部）、Needs production（扣除预留库存及已有未完成排程后仍有缺口）、Ready for pickup（预留现货已覆盖剩余未取数量）及 Needs review（待核对）。没有库存基准的旧订单按关联卡片及生产状态判断。Advanced filters 可展开交期、单位、生产状态、交货状态、逾期及导入批次；快捷视图、搜索和高级筛选同时生效，Clear filters 全部清除。每页 50 条，顶部统计包含所有匹配订单。点击 DO 编号会弹出订单详情，关闭后回到原来的列表位置。主列表会按栏宽换行；窄屏可用表格上方的 Left／Right 按钮左右查看，操作栏固定在右侧。
 6. 点 DO 查看完整字段、原始天数、来源版本、Medication、FMR / OMED 和导入历史。
 
-DO no + Material code 是订单唯一组合。重复导入相同资料会跳过；修改过的订单保存新版本。后续文件缺少某订单时，原记录仍会保留。编码中的前导零会保留；Excel 数字精度已经丢失的长编码无法恢复，应在 Excel 中用文本保存。公式需先在 Excel 计算并保存结果。
+DO no + Material code 是订单唯一组合。已有订单无论 Excel 是否修改都跳过，原记录和版本保留。后续文件缺少某订单时，原记录仍会保留。编码中的前导零会保留；Excel 数字精度已经丢失的长编码无法恢复，应在 Excel 中用文本保存。公式需先在 Excel 计算并保存结果。
 
 ## 从订单排产
 
-Data 的 Plan production 或 Planning board 的 Plan from Data 使用同一个排产弹窗。选单使用独立筛选，不继承 Orders 主列表的搜索或快捷视图。可按 Filters 展开筛选；表格在固定区域内上下及左右滚动，右侧排产按钮固定可见。选择日期、产线、bin 和备注后，把整张订单追加到该线最后。MT 直接作为重量；Bags 按排产时的每袋重量换算，并保留快照。已有卡片的来源订单、物料和数量不能手动覆盖。来源数量修改后会显示 Needs review；尚未开始的卡片可取消后重新排产。取消后允许重新选择订单。Add production 仍可手动新增。
+Data 的 Plan production 或 Planning board 的 Plan from Data 使用同一个排产弹窗。选择第一张订单后，可按 Add same-product order 添加相同完整 Material code、包装、袋重、Medication 及 FMR／OMED 的其他订单，逐张填写生产数量，再一起保存为一张卡片。卡片详情列出每张订单的 DO、客户、交期及分配数量。MT 直接作为重量；Bags 按保存的袋重换算。Combine cards 可把同日、同线、未开始的兼容订单卡片合并，最前方卡片保留，其余原卡片以取消状态留在 History。已有卡片的来源和分配数量不能手动覆盖；需取消未开始卡片再重新排产。Add production 保留手动新增。
 
 已关联的 Excel 订单不参加 Copy planning，防止同一订单重复生产。不同完整 Material code 会计算换料时间；两张手动卡片沿用原来的前四位产品系列规则。
 
@@ -116,11 +116,11 @@ Data 页面专门查看 Orders；左侧独立的 Stock 页面包含 Stock 和 Da
 
 Orders 分开显示订单量、现货预留、累计生产、已取货、仍需生产和已排未入库数量。历史 DONE 表示已备齐，OUT 表示已取走；它们不会再次增加或扣减基准库存。Medication、FMR／OMED 后续由人工维护，SAP 再导入不会覆盖。
 
-每天重复导入按 DO no + 完整 Material code 对应同一张订单，不会累加订单数量或重复入库。例如订单原为 100 袋，Dashboard 已生产并预留 70 袋，SAP 次日仍显示 100 袋，仍按总订单 100 袋计算，缺口为 30 袋。Excel 的数量或交期改变时，确认导入会更新来源资料并保留旧版本；已发生的生产和取货流水、人工 Medication／FMR 及现有排产不会被清空。文件缺少某张订单也不会自动删除或标记 OUT。当前没有按 SAP 导出时间阻挡旧文件的机制，导入旧快照可能把来源数量／交期改回旧值，确认前须核对文件日期和变更预览。库存默认不随重复订单导入覆盖；盘点对账须另行确认差异。
+每天导入按 DO no + 完整 Material code 识别订单。**只添加新订单，已有订单一律跳过，不覆盖。** 即使 SAP 仍显示旧数量、旧交期或旧 DONE／OUT 状态，Dashboard 的数量、交期、状态、手动资料、版本、原导入日期及生产／取货流水都保留。预览中的 Saved · retained 是保留值，Excel · skipped 是不会套用的差异。文件缺少某张订单不会删除或自动标记 OUT。更正已有订单不能靠重新导入；先核对后通过系统允许的人工操作处理。库存盘点对账仍须单独勾选并确认差异。
 
 Stock 的 Manage stock 会弹出管理窗口，关闭后保留列表位置；可以在窗口内修改政策或记录库存变动。Stock 可按产品、策略和 Medication／FMR 筛选，修改 25／50kg 袋重、安全库存及固定／百分比超产设置。袋装、散装独立核算。数字安全库存为 Make for stock；PER ADVICE 为 Make for order；空白政策须确认后才自动补库存。安全库存适用于标准版本，药物／FMR 版本按其独立订单排产。
 
-Daily stock 可选日期查看 Opening、Production、Received、Return、Rework、Issue、Adjustment、Closing，并按 Enter physical count 输入盘点数量及原因，预览差异后确认。后续库存 Excel 导入默认只更新订单；如需盘点对账，勾选 Reconcile physical Closing，核对每项差异后确认，不会覆盖原流水。
+Daily stock 可选日期查看 Opening、Production、Received、Return、Rework、Issue、Adjustment、Closing，并按 Enter physical count 输入盘点数量及原因，预览差异后确认。后续库存 Excel 导入默认只添加新订单；如需盘点对账，勾选 Reconcile physical Closing，核对每项差异后确认，不会覆盖原流水。
 
 ## 自动排程与分批生产
 
@@ -135,3 +135,8 @@ Daily stock 可选日期查看 Opening、Production、Received、Return、Rework
 Settings 分为 Workspace、Production rules、Unavailable periods、Products、Stock policies（数据库版）及 Backup & recovery。切换这些标签保留输入草稿，页面上方会固定显示 Save settings 和未保存提示。Save settings 只保存工作区、产能及停机列表；产品清单和库存政策各自保存，互不覆盖。如果其他标签有无效栏位，保存会自动打开对应标签并聚焦栏位。离开 Settings 页面仍会丢弃未保存草稿。
 
 排程卡片太窄时，鼠标悬停或用 Tab 聚焦可预览完整产品编号、说明、数量、订单、完整计划起止日期、状态及 bin。Escape 收起预览，Enter／点击打开完整详情；Space 开始键盘移动，方向键移动，Escape 取消移动。触屏继续点击查看详情，长按拖动。
+
+生产卡片标题从产品说明提取短编号，例如 `FS 5220 BROILER FIN PELLET II IN BULK` 显示为 `5220`，不会从长 Material code 的中间截取数字。详情下方仍显示完整 Material code 和产品说明；库存及导入匹配继续使用完整编号。
+合并卡片的实际产量只入库一次，按详情中的订单顺序分配，超过分配总数的部分计入库存。分批记录产量后，Done 输入最终累计数量，避免重复入库。
+
+自动草稿的订单分配量与额外库存分开显示。例如现货 30、订单 100、预设多生产 20，卡片总量为 90，其中订单分配 70、额外库存 20。展开 order allocation 可核对或调整；拆分卡片不会重复添加余量，未能安排的余量也会列在 Unscheduled demand。

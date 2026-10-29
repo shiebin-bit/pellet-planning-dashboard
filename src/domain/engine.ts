@@ -24,6 +24,7 @@ import type {
   CatalogUpdatePatch,
   CopyBatchItem,
 } from "./commands";
+import { getJobSourceAllocations } from "./jobSources";
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -198,7 +199,7 @@ export function updateJob(
 ): AppState {
   const current = requireJob(state, id);
   requirePending(current, "edit");
-  if (current.sourceOrderId) {
+  if (getJobSourceAllocations(current).length) {
     const protectedFields: Array<keyof JobInput> = ["orderNo", "productCode", "description", "mode", "bagCount", "quantityMt"];
     if (protectedFields.some(field => Object.prototype.hasOwnProperty.call(patch, field))) {
       throw new Error("Imported order, product, unit, and quantity fields cannot be edited on the production card.");
@@ -792,7 +793,7 @@ export function copyJobBatch(
     const source = requireJob(state, sourceJobId);
     if (source.date !== sourceDate) throw new Error(`Source job ${sourceJobId} is not on ${sourceDate}.`);
     if (source.status === "cancelled") throw new Error(`Cancelled source job ${sourceJobId} cannot be copied.`);
-    if (source.sourceOrderId) throw new Error(`Imported source job ${sourceJobId} cannot be copied.`);
+    if (getJobSourceAllocations(source).length) throw new Error(`Imported source job ${sourceJobId} cannot be copied.`);
     if (!item.quantity || item.quantity.mode !== source.mode) {
       throw new Error(`Copy quantity mode for source job ${sourceJobId} must match ${source.mode}.`);
     }
@@ -856,6 +857,72 @@ export function copyJobBatch(
       nowIso,
     ),
   );
+}
+
+export function combinePendingJobs(
+  state: AppState,
+  jobIds: string[],
+  bin: string,
+  remarks: string,
+  nowIso = new Date().toISOString(),
+): AppState {
+  assertIsoDateTime(nowIso, "Combine time");
+  if (!Array.isArray(jobIds) || jobIds.length < 2 || jobIds.length > 500) {
+    throw new Error("Choose between 2 and 500 production cards to combine.");
+  }
+  const uniqueIds = [...new Set(jobIds)];
+  if (uniqueIds.length !== jobIds.length) throw new Error("A production card cannot be selected more than once.");
+  const members = uniqueIds.map(id => requireJob(state, id)).sort(compareJobs);
+  for (const member of members) requirePending(member, "combine");
+  const survivor = members[0];
+  const identity = (job: Job) => [
+    job.date, job.lineId, normalizedProduct(job.productCode), job.mode,
+    job.inventoryItemId ?? "", job.medication?.trim() ?? "", job.fmrOmed?.trim() ?? "",
+    String(job.bagWeightKgSnapshot ?? ""), job.productionPurpose ?? "",
+  ].join("\u0000");
+  if (members.some(job => identity(job) !== identity(survivor))) {
+    throw new Error("Combined cards must share the same date, line, product, unit, bag weight and inventory variant.");
+  }
+  const allocations = members.flatMap(getJobSourceAllocations);
+  if (allocations.length > 500) throw new Error("A combined card can contain at most 500 source orders.");
+  if (members.some(job => getJobSourceAllocations(job).length === 0) || new Set(allocations.map(row => row.sourceOrderId)).size !== allocations.length) {
+    throw new Error("Only distinct source-order cards can be combined.");
+  }
+  if (typeof bin !== "string" || bin.length > 200) throw new Error("Destination bin must be text of 200 characters or fewer.");
+  const normalizedBin = bin.trim();
+  const normalizedRemarks = optionalNote(remarks, "Remarks") ?? "";
+  const bagCount = survivor.mode === "bags" ? members.reduce((sum, job) => sum + (job.bagCount ?? 0), 0) : null;
+  const quantityMt = members.reduce((sum, job) => sum + job.quantityMt, 0);
+  const orderNo = `${allocations[0].sourceSnapshot.doNo} +${allocations.length - 1}`;
+  const memberIds = new Set(members.map(job => job.id));
+  let jobs = state.jobs.map(job => {
+    if (!memberIds.has(job.id)) return job;
+    if (job.id !== survivor.id) return { ...job, status: "cancelled" as const, updatedAt: nowIso };
+    const {
+      sourceOrderId: _sourceOrderId,
+      sourceOrderVersion: _sourceOrderVersion,
+      sourceSnapshot: _sourceSnapshot,
+      ...withoutLegacySource
+    } = job;
+    return {
+      ...withoutLegacySource,
+      orderNo,
+      bin: normalizedBin,
+      remarks: normalizedRemarks,
+      bagCount,
+      quantityMt,
+      sourceAllocations: allocations.map(allocation => ({ ...allocation, sourceSnapshot: { ...allocation.sourceSnapshot } })),
+      updatedAt: nowIso,
+    };
+  });
+  jobs = resequence(jobs, survivor.lineId, survivor.date);
+  return finalizeMutation(state, jobs, event(
+    "job.combined",
+    `Combined ${members.length} source-order cards into ${orderNo}.`,
+    survivor.id,
+    nowIso,
+    getJobHistoryChanges(survivor, jobFrom(jobs, survivor.id)),
+  ));
 }
 
 function normalizeCatalogInput(input: CatalogCreateInput): CatalogCreateInput {
@@ -1296,6 +1363,7 @@ function requirePending(job: Job, action: string): void {
       move: "moved",
       start: "started",
       cancel: "cancelled",
+      combine: "combined",
     };
     throw new Error(`Only a pending job can be ${wording[action] ?? action}.`);
   }
@@ -1329,6 +1397,7 @@ function cloneJob(job: Job): Job {
     ...(job.issue ? { issue: { ...job.issue } } : {}),
     ...(job.pauseIntervals ? { pauseIntervals: job.pauseIntervals.map((pause) => ({ ...pause })) } : {}),
     ...(job.sourceSnapshot ? { sourceSnapshot: { ...job.sourceSnapshot } } : {}),
+    ...(job.sourceAllocations ? { sourceAllocations: job.sourceAllocations.map(allocation => ({ ...allocation, sourceSnapshot: { ...allocation.sourceSnapshot } })) } : {}),
   };
 }
 

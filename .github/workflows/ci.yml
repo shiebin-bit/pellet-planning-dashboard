@@ -68,4 +68,5 @@ jobs:
             output/playwright/data/
             output/playwright/inventory/
             output/playwright/list-navigation/
+            output/playwright/combined-production/
           if-no-files-found: ignore

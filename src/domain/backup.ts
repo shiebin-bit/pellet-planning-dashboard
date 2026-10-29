@@ -38,7 +38,7 @@ const JOB_KEYS = [
   "completionNote", "binNeedsReview", "createdAt", "updatedAt",
   "lockedSegments", "issue",
   "pauseIntervals",
-  "sourceOrderId", "sourceOrderVersion", "sourceSnapshot", "bagWeightKgSnapshot",
+  "sourceOrderId", "sourceOrderVersion", "sourceSnapshot", "sourceAllocations", "bagWeightKgSnapshot",
   "inventoryItemId", "medication", "fmrOmed", "productionPurpose", "notBefore",
 ] as const;
 
@@ -288,20 +288,43 @@ function validateJob(value: unknown, path: string): Job {
   if (hasOwn(source, "sourceOrderId")) {
     result.sourceOrderId = nonEmptyString(source.sourceOrderId, `${path}.sourceOrderId`, MAX_ID_LENGTH);
     result.sourceOrderVersion = numberValue(required(source, "sourceOrderVersion", path), `${path}.sourceOrderVersion`, { min: 1, integer: true });
-    const snapshot = objectValue(required(source, "sourceSnapshot", path), `${path}.sourceSnapshot`);
-    onlyKeys(snapshot, ["doNo", "materialCode", "description", "quantity", "unit"], `${path}.sourceSnapshot`);
-    result.sourceSnapshot = {
-      doNo: nonEmptyString(required(snapshot, "doNo", `${path}.sourceSnapshot`), `${path}.sourceSnapshot.doNo`, 120),
-      materialCode: nonEmptyString(required(snapshot, "materialCode", `${path}.sourceSnapshot`), `${path}.sourceSnapshot.materialCode`, 80),
-      description: stringValue(required(snapshot, "description", `${path}.sourceSnapshot`), `${path}.sourceSnapshot.description`, 200),
-      quantity: numberValue(required(snapshot, "quantity", `${path}.sourceSnapshot`), `${path}.sourceSnapshot.quantity`, { min: 0 }),
-      unit: enumValue(required(snapshot, "unit", `${path}.sourceSnapshot`), ["MT", "Bags"], `${path}.sourceSnapshot.unit`),
-    };
+    result.sourceSnapshot = validateSourceSnapshot(required(source, "sourceSnapshot", path), `${path}.sourceSnapshot`);
     if (hasOwn(source, "bagWeightKgSnapshot")) {
       result.bagWeightKgSnapshot = numberValue(source.bagWeightKgSnapshot, `${path}.bagWeightKgSnapshot`, { exclusiveMin: 0 });
     }
   } else if (hasOwn(source, "sourceOrderVersion") || hasOwn(source, "sourceSnapshot")) {
     throw invalid(path, "source metadata requires sourceOrderId");
+  }
+  if (hasOwn(source, "sourceAllocations")) {
+    if (result.sourceOrderId) throw invalid(path, "cannot contain both sourceAllocations and legacy sourceOrderId");
+    const values = arrayValue(source.sourceAllocations, `${path}.sourceAllocations`, 500);
+    if (!values.length) throw invalid(`${path}.sourceAllocations`, "must contain at least one allocation");
+    const seen = new Set<string>();
+    result.sourceAllocations = values.map((value, index) => {
+      const allocationPath = `${path}.sourceAllocations[${index}]`;
+      const allocation = objectValue(value, allocationPath);
+      onlyKeys(allocation, ["sourceOrderId", "sourceOrderVersion", "sourceSnapshot", "plannedQuantity"], allocationPath);
+      const sourceOrderId = nonEmptyString(required(allocation, "sourceOrderId", allocationPath), `${allocationPath}.sourceOrderId`, MAX_ID_LENGTH);
+      if (seen.has(sourceOrderId)) throw invalid(`${path}.sourceAllocations`, `contains duplicate source order ${JSON.stringify(sourceOrderId)}`);
+      seen.add(sourceOrderId);
+      const sourceSnapshot = validateSourceSnapshot(required(allocation, "sourceSnapshot", allocationPath), `${allocationPath}.sourceSnapshot`);
+      if ((sourceSnapshot.unit === "Bags") !== (mode === "bags")) throw invalid(`${allocationPath}.sourceSnapshot.unit`, "must match the job quantity mode");
+      if (sourceSnapshot.materialCode.trim().toUpperCase() !== productCode.trim().toUpperCase()) throw invalid(`${allocationPath}.sourceSnapshot.materialCode`, "must match the job product");
+      const plannedQuantity = numberValue(required(allocation, "plannedQuantity", allocationPath), `${allocationPath}.plannedQuantity`, { exclusiveMin: 0 });
+      const scaledQuantity = plannedQuantity * (sourceSnapshot.unit === "MT" ? 1_000 : 1);
+      if (!Number.isSafeInteger(Math.round(scaledQuantity)) || Math.abs(scaledQuantity - Math.round(scaledQuantity)) > 1e-8) {
+        throw invalid(`${allocationPath}.plannedQuantity`, sourceSnapshot.unit === "Bags" ? "must be a whole number of bags" : "must have no more than three decimal places");
+      }
+      return {
+        sourceOrderId,
+        sourceOrderVersion: numberValue(required(allocation, "sourceOrderVersion", allocationPath), `${allocationPath}.sourceOrderVersion`, { min: 1, integer: true }),
+        sourceSnapshot,
+        plannedQuantity,
+      };
+    });
+    const allocationTotal = result.sourceAllocations.reduce((sum, allocation) => sum + allocation.plannedQuantity, 0);
+    const jobTotal = mode === "bags" ? bagCount! : quantityMt;
+    if (allocationTotal - jobTotal > 1e-6) throw invalid(`${path}.sourceAllocations`, "planned quantities cannot exceed the job quantity");
   }
   if (hasOwn(source, "bagWeightKgSnapshot")) result.bagWeightKgSnapshot = numberValue(source.bagWeightKgSnapshot, `${path}.bagWeightKgSnapshot`, { exclusiveMin: 0 });
   if (hasOwn(source, "inventoryItemId")) result.inventoryItemId = nonEmptyString(source.inventoryItemId, `${path}.inventoryItemId`, MAX_ID_LENGTH);
@@ -311,6 +334,21 @@ function validateJob(value: unknown, path: string): Job {
   if (hasOwn(source, "notBefore")) result.notBefore = timestampValue(source.notBefore, `${path}.notBefore`);
 
   return result;
+}
+
+function validateSourceSnapshot(value: unknown, path: string): NonNullable<Job["sourceSnapshot"]> {
+  const snapshot = objectValue(value, path);
+  onlyKeys(snapshot, ["doNo", "materialCode", "description", "quantity", "unit", "deliveryDate", "soldToParty", "shipToParty"], path);
+  return {
+    doNo: nonEmptyString(required(snapshot, "doNo", path), `${path}.doNo`, 120),
+    materialCode: nonEmptyString(required(snapshot, "materialCode", path), `${path}.materialCode`, 120),
+    description: stringValue(required(snapshot, "description", path), `${path}.description`, 200),
+    quantity: numberValue(required(snapshot, "quantity", path), `${path}.quantity`, { min: 0 }),
+    unit: enumValue(required(snapshot, "unit", path), ["MT", "Bags"], `${path}.unit`),
+    ...(hasOwn(snapshot, "deliveryDate") ? { deliveryDate: dateValue(snapshot.deliveryDate, `${path}.deliveryDate`) } : {}),
+    ...(hasOwn(snapshot, "soldToParty") ? { soldToParty: stringValue(snapshot.soldToParty, `${path}.soldToParty`, 1_000) } : {}),
+    ...(hasOwn(snapshot, "shipToParty") ? { shipToParty: stringValue(snapshot.shipToParty, `${path}.shipToParty`, 1_000) } : {}),
+  };
 }
 
 function validateProductionPause(value: unknown, path: string): ProductionPause {

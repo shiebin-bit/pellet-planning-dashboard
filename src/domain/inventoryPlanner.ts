@@ -26,6 +26,7 @@ export function planInventoryDraft(state: AppState, demands: InventoryPlanningDe
   for (const demand of ordered) {
     let remaining = Math.round(demand.quantity * (demand.unit === 'Bags' ? 1 : 1000));
     const scale = demand.unit === 'Bags' ? 1 : 1000;
+    let allocationRemaining = demand.sourceOrderId ? Math.round((demand.sourceAllocationQuantity ?? demand.quantity) * scale) : 0;
     const mtPerBase = demand.unit === 'Bags' ? (demand.bagWeightKg ?? 0) / 1000 : 1;
     if (mtPerBase <= 0) { backlog.push({ ...demand }); continue; }
     while (remaining > 0 && jobs.length < 2000) {
@@ -50,24 +51,51 @@ export function planInventoryDraft(state: AppState, demands: InventoryPlanningDe
       candidates.sort((a, b) => a.start - b.start || a.end - b.end || a.lineId.localeCompare(b.lineId));
       const best = candidates[0];
       if (!best) break;
-      jobs.push({ draftId: `draft-${jobs.length + 1}`, itemId: demand.itemId, sourceOrderId: demand.sourceOrderId, orderNo: demand.orderNo ?? `STOCK-${demand.materialCode}`, materialCode: demand.materialCode, description: demand.description, unit: demand.unit, bagWeightKg: demand.bagWeightKg, productionPurpose: demand.purpose, date: best.date, lineId: best.lineId, quantity: best.quantity, notBefore: new Date(best.start).toISOString(), bin: '', remarks: '', medication: demand.medication, fmrOmed: demand.fmrOmed });
+      const allocationScaled = Math.min(Math.round(best.quantity * scale), allocationRemaining);
+      const allocationQuantity = allocationScaled / scale;
+      const draft: InventoryDraftJob = { draftId: `draft-${jobs.length + 1}`, itemId: demand.itemId, sourceOrderId: allocationQuantity > 0 ? demand.sourceOrderId : null, ...(demand.sourceOrderId && allocationQuantity > 0 ? { sourceAllocations: [{ sourceOrderId: demand.sourceOrderId, plannedQuantity: allocationQuantity }] } : {}), orderNo: demand.orderNo ?? `STOCK-${demand.materialCode}`, materialCode: demand.materialCode, description: demand.description, unit: demand.unit, bagWeightKg: demand.bagWeightKg, productionPurpose: demand.purpose, date: best.date, lineId: best.lineId, quantity: best.quantity, notBefore: new Date(best.start).toISOString(), bin: '', remarks: '', medication: demand.medication, fmrOmed: demand.fmrOmed };
+      const prior = [...jobs].reverse().find(job => job.date === draft.date && job.lineId === draft.lineId);
+      if (prior && draftAllocations(prior).length > 0 && draftAllocations(prior).length < 500 && canCombineDrafts(prior, draft) && demand.sourceOrderId && allocationQuantity > 0 && !draftAllocationIds(prior).has(demand.sourceOrderId)) {
+        const allocations = [...draftAllocations(prior), { sourceOrderId: demand.sourceOrderId, plannedQuantity: allocationQuantity }];
+        prior.sourceOrderId = null;
+        prior.sourceAllocations = allocations;
+        prior.quantity += best.quantity;
+        prior.orderNo = `${prior.orderNo.split(' +')[0]} +${allocations.length - 1}`;
+      } else {
+        jobs.push(draft);
+      }
       remaining -= Math.round(best.quantity * scale);
+      allocationRemaining -= allocationScaled;
       cursor[best.lineId] = best.end;
       previous[best.lineId] = identity(demand);
     }
-    if (remaining > 0) backlog.push({ ...demand, quantity: remaining / scale });
+    if (remaining > 0) backlog.push({ ...demand, quantity: remaining / scale, ...(demand.sourceOrderId ? { sourceAllocationQuantity: allocationRemaining / scale } : {}) });
   }
   const utilization = days.flatMap(date => getBoard(state, date).lines.map(line => {
     const extra = jobs.filter(j => j.date === date && j.lineId === line.lineId).reduce((sum, j) => sum + (j.unit === 'Bags' ? j.quantity * j.bagWeightKg! / 1000 : j.quantity) / getRate(state.settings, line.lineId, j.materialCode), 0);
     return { date, lineId: line.lineId, hours: line.productionMinutes / 60 + extra, availableHours: line.availableMinutes / 60 };
   }));
   const late = ordered.flatMap(d => {
-    const matched = jobs.filter(j => j.itemId === d.itemId && j.sourceOrderId === d.sourceOrderId && j.productionPurpose === d.purpose);
+    const matched = jobs.filter(j => j.itemId === d.itemId && (j.sourceOrderId === d.sourceOrderId || j.sourceAllocations?.some(row => row.sourceOrderId === d.sourceOrderId)) && j.productionPurpose === d.purpose);
     const plannedDate = matched.at(-1)?.date ?? null;
     const unplanned = backlog.find(b => b.key === d.key)?.quantity ?? 0;
     return unplanned > 0 || plannedDate && plannedDate > d.dueDate ? [{ key: d.key, dueDate: d.dueDate, plannedDate, quantity: unplanned || d.quantity }] : [];
   });
   return { revision, generatedAt: nowIso, request, demand: ordered, jobs, backlog, utilization, late };
+}
+
+function draftAllocations(job: InventoryDraftJob): Array<{ sourceOrderId: string; plannedQuantity: number }> {
+  return job.sourceAllocations?.length ? job.sourceAllocations : job.sourceOrderId ? [{ sourceOrderId: job.sourceOrderId, plannedQuantity: job.quantity }] : [];
+}
+
+function draftAllocationIds(job: InventoryDraftJob): Set<string> {
+  return new Set(draftAllocations(job).map(row => row.sourceOrderId));
+}
+
+function canCombineDrafts(left: InventoryDraftJob, right: InventoryDraftJob): boolean {
+  return left.productionPurpose === 'mto' && right.productionPurpose === 'mto' && left.date === right.date && left.lineId === right.lineId &&
+    left.itemId === right.itemId && left.unit === right.unit && left.bagWeightKg === right.bagWeightKg &&
+    identity(left) === identity(right);
 }
 
 function freeSlots(start: number, end: number, blocked: number[][]): number[][] {

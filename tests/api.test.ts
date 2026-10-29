@@ -418,7 +418,7 @@ integration("PostgreSQL workspace API", () => {
       method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify(sourceImport),
     });
     assert.equal(preview.status, 200);
-    assert.deepEqual(await preview.json(), { added: 1, unchanged: 0, changed: 0, rows: [{ key: "001039192030 / 7.0313008513800", disposition: "added", existingOrderId: null, fields: sourceImport.rows[0], changedFields: [] }] });
+    assert.deepEqual(await preview.json(), { added: 1, skipped: 0, unchanged: 0, changed: 0, rows: [{ key: "001039192030 / 7.0313008513800", disposition: "added", importAction: "insert", existingOrderId: null, fields: sourceImport.rows[0], changedFields: [] }] });
 
     const imported = await postCommand(0, "source-import-1", { type: "data.import", input: sourceImport });
     assert.equal(imported.status, 200);
@@ -439,6 +439,8 @@ integration("PostgreSQL workspace API", () => {
     });
     const laterPreviewBody = await laterPreview.json();
     assert.equal(laterPreviewBody.changed, 1);
+    assert.equal(laterPreviewBody.skipped, 1);
+    assert.equal(laterPreviewBody.rows[0].importAction, "skip-existing");
     assert.deepEqual(laterPreviewBody.rows[0].changedFields, ["asOfDate"]);
     assert.deepEqual(laterPreviewBody.rows[0].previousFields, sourceImport.rows[0]);
     assert.equal(laterPreviewBody.rows[0].previousFields.deliveryLeadDays, 0);
@@ -453,13 +455,13 @@ integration("PostgreSQL workspace API", () => {
     assert.equal(importBatches.length, 2);
     const baselineRow = await pool.query<{ as_of_date: string; latest: boolean }>("SELECT i.as_of_date::text AS as_of_date, i.id = o.latest_import_id AS latest FROM source_imports i CROSS JOIN source_orders o WHERE i.workspace_id = 1 ORDER BY i.as_of_date");
     assert.deepEqual(baselineRow.rows.map(row => ({ date: row.as_of_date, latest: row.latest })), [
-      { date: "2026-10-22", latest: false },
-      { date: "2026-10-23", latest: true },
+      { date: "2026-10-22", latest: true },
+      { date: "2026-10-23", latest: false },
     ]);
     const refreshedPage = await (await fetch(`${baseUrl}/api/data?search=001039192030`)).json() as SourceOrderPage;
     source = refreshedPage.items[0];
     assert.equal(source.version, 1);
-    assert.equal(source.importAsOfDate, "2026-10-23");
+    assert.equal(source.importAsOfDate, "2026-10-22");
 
     const planned = await postCommand(2, "source-plan-1", {
       type: "job.createFromSource",
@@ -528,6 +530,165 @@ integration("PostgreSQL workspace API", () => {
     assert.equal((await (await fetch(`${baseUrl}/api/data`)).json() as SourceOrderPage).total, 1);
   });
 
+  it("keeps existing orders immutable while a mixed import inserts only new full-code identities", async () => {
+    const original: SourceImportInput = {
+      fileName: "append-only-a.xlsx", sheetName: "Orders", digest: "1".repeat(64), asOfDate: "2026-10-20",
+      rows: [{
+        doNo: "DO-STABLE", deliveryDate: "2026-10-24", soldToParty: "Original customer", shipToParty: "Original plant",
+        materialCode: "000070313008513800", description: "Original feed", quantity: 12, unit: "MT",
+        deliveryLeadDays: 4, remark: "", daysOutstanding: null, medication: "SAP-ORIGINAL", fmrOmed: "FMR-ORIGINAL",
+      }],
+    };
+    assert.equal((await postCommand(0, "append-only-initial", { type: "data.import", input: original })).status, 200);
+    const initialPage = await (await fetch(`${baseUrl}/api/data?search=DO-STABLE`)).json() as SourceOrderPage;
+    const stable = initialPage.items[0];
+    assert.equal((await postCommand(1, "append-only-manual", {
+      type: "data.updateManualFields", sourceOrderId: stable.id,
+      patch: { medication: "MANUAL-MED", fmrOmed: "MANUAL-FMR", dueDate: "2026-10-26" },
+    })).status, 200);
+    const before = await pool.query<{
+      latest_import_id: string; latest_version: number; source_updated_at: string;
+      inventory_updated_at: string; ordered_quantity_scaled: string; due_date: string;
+      medication: string; fmr_omed: string; historical_status: string;
+    }>(`SELECT o.latest_import_id, o.latest_version, o.updated_at::text AS source_updated_at,
+        io.updated_at::text AS inventory_updated_at, io.ordered_quantity_scaled::text,
+        io.due_date::text, io.medication, io.fmr_omed, io.historical_status
+      FROM source_orders o JOIN inventory_orders io ON io.source_order_id=o.id WHERE o.id=$1`, [stable.id]);
+
+    const changedExisting = {
+      ...original.rows[0], deliveryDate: "2026-11-15", soldToParty: "Changed customer", description: "Changed feed",
+      quantity: 99, remark: "DONE", daysOutstanding: 22, medication: "SAP-CHANGED", fmrOmed: "FMR-CHANGED",
+    };
+    const newOrder = {
+      ...original.rows[0], doNo: "DO-NEW", materialCode: "000070313008513801", deliveryDate: "2026-11-01",
+      description: "New full-code feed", quantity: 7, medication: "", fmrOmed: "",
+    };
+    const mixed: SourceImportInput = {
+      fileName: "append-only-mixed.xlsx", sheetName: "Orders", digest: "2".repeat(64), asOfDate: "2026-10-29",
+      rows: [changedExisting, newOrder],
+    };
+    const previewResponse = await fetch(`${baseUrl}/api/data/preview`, {
+      method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify(mixed),
+    });
+    assert.equal(previewResponse.status, 200);
+    const preview = await previewResponse.json();
+    assert.deepEqual({ added: preview.added, changed: preview.changed, unchanged: preview.unchanged, skipped: preview.skipped },
+      { added: 1, changed: 1, unchanged: 0, skipped: 1 });
+    assert.equal(preview.rows.find((row: any) => row.fields.doNo === "DO-STABLE").importAction, "skip-existing");
+    assert.equal(preview.rows.find((row: any) => row.fields.doNo === "DO-NEW").importAction, "insert");
+
+    assert.equal((await postCommand(2, "append-only-mixed", { type: "data.import", input: mixed })).status, 200);
+    const insertedBeforeDuplicate = await pool.query<{
+      latest_import_id: string; latest_version: number; source_updated_at: string; inventory_updated_at: string;
+    }>(`SELECT o.latest_import_id, o.latest_version, o.updated_at::text AS source_updated_at,
+        io.updated_at::text AS inventory_updated_at
+      FROM source_orders o JOIN inventory_orders io ON io.source_order_id=o.id
+      WHERE o.workspace_id=1 AND o.do_no='DO-NEW'`);
+    const duplicate = await postCommand(3, "append-only-semantic-duplicate", { type: "data.import", input: mixed });
+    assert.equal(duplicate.status, 200);
+    assert.equal((await duplicate.json() as WorkspaceEnvelope).state.events.at(-1)?.type, "data.import.duplicate");
+    const insertedAfterDuplicate = await pool.query<typeof insertedBeforeDuplicate.rows[number]>(`SELECT o.latest_import_id, o.latest_version, o.updated_at::text AS source_updated_at,
+        io.updated_at::text AS inventory_updated_at
+      FROM source_orders o JOIN inventory_orders io ON io.source_order_id=o.id
+      WHERE o.workspace_id=1 AND o.do_no='DO-NEW'`);
+    assert.deepEqual(insertedAfterDuplicate.rows[0], insertedBeforeDuplicate.rows[0]);
+
+    const stableDetail = await (await fetch(`${baseUrl}/api/data/${encodeURIComponent(stable.id)}`)).json();
+    assert.equal(stableDetail.version, 1);
+    assert.equal(stableDetail.versionTotal, 1);
+    assert.equal(stableDetail.importAsOfDate, original.asOfDate);
+    assert.equal(stableDetail.quantity, original.rows[0].quantity);
+    assert.equal(stableDetail.deliveryDate, "2026-10-26");
+    assert.equal(stableDetail.medication, "MANUAL-MED");
+    assert.equal(stableDetail.fmrOmed, "MANUAL-FMR");
+    assert.equal(stableDetail.deliveryStatus, "pending");
+    assert.deepEqual(stableDetail.versions[0].fields, original.rows[0]);
+
+    const after = await pool.query<typeof before.rows[number]>(`SELECT o.latest_import_id, o.latest_version, o.updated_at::text AS source_updated_at,
+        io.updated_at::text AS inventory_updated_at, io.ordered_quantity_scaled::text,
+        io.due_date::text, io.medication, io.fmr_omed, io.historical_status
+      FROM source_orders o JOIN inventory_orders io ON io.source_order_id=o.id WHERE o.id=$1`, [stable.id]);
+    assert.deepEqual(after.rows[0], before.rows[0]);
+    const allOrders = await (await fetch(`${baseUrl}/api/data`)).json() as SourceOrderPage;
+    assert.equal(allOrders.total, 2);
+    assert.equal(allOrders.items.find(row => row.doNo === "DO-NEW")?.materialCode, "000070313008513801");
+    assert.equal((await (await fetch(`${baseUrl}/api/data/imports`)).json()).length, 2);
+  });
+
+  it("allows multiple partial cards for an untracked order and reports the true remaining quantity", async () => {
+    const input: SourceImportInput = {
+      fileName: "partial-orders.xlsx", sheetName: "bag order", digest: "9".repeat(64), asOfDate: malaysiaToday(),
+      rows: [{
+        doNo: "DO-PARTIAL", deliveryDate: addDays(malaysiaToday(), 2), soldToParty: "Test customer", shipToParty: "Test farm",
+        materialCode: "7.TEST.5220", description: "FS 5220 TEST FEED 50KG", quantity: 20, unit: "Bags",
+        deliveryLeadDays: 2, remark: "", daysOutstanding: null, medication: "", fmrOmed: "",
+      }],
+    };
+    assert.equal((await postCommand(0, "partial-import", { type: "data.import", input })).status, 200);
+    let source = ((await (await fetch(`${baseUrl}/api/data?search=DO-PARTIAL`)).json()) as SourceOrderPage).items[0];
+    assert.equal(source.inventoryTracked, false);
+    assert.equal(source.netToPlan, 20);
+
+    const fractional = await postCommand(1, "partial-fractional", { type: "job.createFromSources", input: {
+      orders: [{ sourceOrderId: source.id, sourceOrderVersion: source.version, plannedQuantity: 1.5 }],
+      date: addDays(malaysiaToday(), 1), lineId: "PM1", bin: "", remarks: "",
+    } });
+    assert.equal(fractional.status, 400);
+    assert.equal((await fractional.json()).error.code, "SOURCE_QUANTITY_PRECISION");
+
+    const first = await postCommand(1, "partial-first", { type: "job.createFromSources", input: {
+      orders: [{ sourceOrderId: source.id, sourceOrderVersion: source.version, plannedQuantity: 8 }],
+      date: addDays(malaysiaToday(), 1), lineId: "PM1", bin: "", remarks: "First partial run",
+    } });
+    assert.equal(first.status, 200);
+    const firstWorkspace = await first.json() as WorkspaceEnvelope;
+    const firstJob = firstWorkspace.state.jobs[0];
+    assert.equal((await postCommand(2, "partial-start", { type: "job.start", jobId: firstJob.id })).status, 200);
+    assert.equal((await postCommand(3, "partial-complete", { type: "job.complete", jobId: firstJob.id, actualQuantityMt: 8 * firstWorkspace.state.settings.bagWeightKg / 1_000 })).status, 200);
+    source = ((await (await fetch(`${baseUrl}/api/data?search=DO-PARTIAL`)).json()) as SourceOrderPage).items[0];
+    assert.equal(source.productionStatus, "unplanned");
+    assert.equal(source.netToPlan, 12);
+    const earlyDelivery = await postCommand(4, "partial-delivery", { type: "data.setDeliveryStatus", sourceOrderId: source.id, delivered: true });
+    assert.equal(earlyDelivery.status, 400);
+    assert.equal((await earlyDelivery.json()).error.code, "PRODUCTION_NOT_COMPLETE");
+
+    const second = await postCommand(4, "partial-second", { type: "job.createFromSources", input: {
+      orders: [{ sourceOrderId: source.id, sourceOrderVersion: source.version, plannedQuantity: 12 }],
+      date: addDays(malaysiaToday(), 1), lineId: "PM2", bin: "", remarks: "Second partial run",
+    } });
+    assert.equal(second.status, 200);
+    source = ((await (await fetch(`${baseUrl}/api/data?search=DO-PARTIAL`)).json()) as SourceOrderPage).items[0];
+    assert.equal(source.netToPlan, 0);
+    assert.equal(source.productionStatus, "pending");
+    assert.equal((await getWorkspace()).state.jobs.filter(job => job.sourceAllocations?.some(allocation => allocation.sourceOrderId === source.id)).length, 2);
+
+    const excess = await postCommand(5, "partial-excess", { type: "job.createFromSources", input: {
+      orders: [{ sourceOrderId: source.id, sourceOrderVersion: source.version, plannedQuantity: 1 }],
+      date: addDays(malaysiaToday(), 1), lineId: "PM3", bin: "", remarks: "",
+    } });
+    assert.equal(excess.status, 409);
+    assert.equal((await excess.json()).error.code, "SOURCE_QUANTITY_ALREADY_PLANNED");
+    assert.equal((await getWorkspace()).revision, 5);
+  });
+
+  it("does not combine untracked orders from different Medication or FMR variants", async () => {
+    const row: SourceImportInput["rows"][number] = {
+      doNo: "DO-VARIANT-A", deliveryDate: addDays(malaysiaToday(), 2), soldToParty: "Test A", shipToParty: "Farm A",
+      materialCode: "7.TEST.VARIANT", description: "FS 5220 TEST VARIANT", quantity: 5, unit: "MT",
+      deliveryLeadDays: 2, remark: "", daysOutstanding: null, medication: "MED-A", fmrOmed: "FMR-1",
+    };
+    const input: SourceImportInput = { fileName: "variants.xlsx", sheetName: "bulk order", digest: "8".repeat(64), asOfDate: malaysiaToday(), rows: [row, { ...row, doNo: "DO-VARIANT-B", medication: "MED-B" }] };
+    assert.equal((await postCommand(0, "variant-import", { type: "data.import", input })).status, 200);
+    const sources = ((await (await fetch(`${baseUrl}/api/data?search=DO-VARIANT`)).json()) as SourceOrderPage).items.sort((a,b)=>a.doNo.localeCompare(b.doNo));
+    const rejected = await postCommand(1, "variant-combine", { type: "job.createFromSources", input: {
+      orders: sources.map(source => ({ sourceOrderId: source.id, sourceOrderVersion: source.version, plannedQuantity: 5 })),
+      date: addDays(malaysiaToday(), 1), lineId: "PM1", bin: "", remarks: "",
+    } });
+    assert.equal(rejected.status, 400);
+    assert.equal((await rejected.json()).error.code, "SOURCE_VARIANT_MISMATCH");
+    assert.equal((await getWorkspace()).state.jobs.length, 0);
+  });
+
   it("uses case-insensitive source identity and validates Data query filters", async () => {
     const base: SourceImportInput = {
       fileName: "case-a.xlsx", sheetName: "Orders", digest: "c".repeat(64), asOfDate: "2026-10-22",
@@ -547,10 +708,12 @@ integration("PostgreSQL workspace API", () => {
     const page = await (await fetch(`${baseUrl}/api/data?page=999`)).json() as SourceOrderPage;
     assert.equal(page.total, 1);
     assert.equal(page.page, 1);
-    assert.equal(page.items[0].version, 2);
+    assert.equal(page.items[0].version, 1);
+    assert.equal(page.items[0].doNo, "DO-CASE");
+    assert.equal(page.items[0].materialCode, "MAT-ONE");
     const detail = await (await fetch(`${baseUrl}/api/data/${encodeURIComponent(page.items[0].id)}`)).json();
-    assert.equal(detail.versionTotal, 2);
-    assert.equal(detail.versions.length, 2);
+    assert.equal(detail.versionTotal, 1);
+    assert.equal(detail.versions.length, 1);
     assert.equal((await fetch(`${baseUrl}/api/data?deliveryFrom=2026-02-31`)).status, 400);
     assert.equal((await fetch(`${baseUrl}/api/data?productionStatus=unknown`)).status, 400);
     assert.equal((await fetch(`${baseUrl}/api/data?view=unknown`)).status, 400);
@@ -590,14 +753,13 @@ integration("PostgreSQL workspace API", () => {
     await pool.query("UPDATE source_orders SET needs_review=true WHERE workspace_id=1 AND do_no='DO-L-003'");
 
     const filtered = await (await fetch(`${baseUrl}/api/data?view=needs-production&page=2`)).json() as SourceOrderPage;
-    assert.equal(filtered.total, 53);
-    assert.equal(filtered.stats.total, 53);
-    assert.equal(filtered.stats.completed, 1);
+    assert.equal(filtered.total, 52);
+    assert.equal(filtered.stats.total, 52);
+    assert.equal(filtered.stats.completed, 0);
     assert.equal(filtered.page, 2);
-    assert.equal(filtered.items.length, 3);
+    assert.equal(filtered.items.length, 2);
     const combined = await (await fetch(`${baseUrl}/api/data?view=needs-production&productionStatus=external-complete`)).json() as SourceOrderPage;
-    assert.equal(combined.total, 1);
-    assert.equal(combined.items[0].doNo, "DO-L-002");
+    assert.equal(combined.total, 0);
     const ready = await (await fetch(`${baseUrl}/api/data?view=ready-pickup`)).json() as SourceOrderPage;
     assert.equal(ready.total, 1);
     assert.equal(ready.items[0].doNo, "DO-L-002");
@@ -606,7 +768,7 @@ integration("PostgreSQL workspace API", () => {
     assert.equal(review.items[0].doNo, "DO-L-003");
   });
 
-  it("flags linked cards only when imported planning fields change", async () => {
+  it("keeps linked cards stable when later imports change planning fields", async () => {
     const sourceImport: SourceImportInput = {
       fileName: "review-a.xlsx", sheetName: "Orders", digest: "e".repeat(64), asOfDate: "2026-10-22",
       rows: [{
@@ -633,9 +795,20 @@ integration("PostgreSQL workspace API", () => {
       ...operationalUpdate, fileName: "review-c.xlsx", digest: "1".repeat(64),
       rows: [{ ...operationalUpdate.rows[0], quantity: 9 }],
     };
+    const planningPreview = await fetch(`${baseUrl}/api/data/preview`, {
+      method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify(planningUpdate),
+    });
+    assert.equal(planningPreview.status, 200);
+    const planningPreviewBody = await planningPreview.json();
+    assert.equal(planningPreviewBody.changed, 1);
+    assert.equal(planningPreviewBody.skipped, 1);
+    assert.equal(planningPreviewBody.rows[0].importAction, "skip-existing");
+    assert.equal(planningPreviewBody.rows[0].changedFields.includes("quantity"), true);
     assert.equal((await postCommand(3, "review-import-planning", { type: "data.import", input: planningUpdate })).status, 200);
     source = ((await (await fetch(`${baseUrl}/api/data?search=DO-REVIEW`)).json()) as SourceOrderPage).items[0];
-    assert.equal(source.needsReview, true);
+    assert.equal(source.needsReview, false);
+    assert.equal(source.version, 1);
+    assert.equal(source.quantity, sourceImport.rows[0].quantity);
   });
 
   it("enforces the loopback request boundary and JSON size/type limits without mutations", async () => {

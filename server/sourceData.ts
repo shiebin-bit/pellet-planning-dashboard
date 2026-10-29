@@ -4,6 +4,7 @@ import { createJob } from "../src/domain/engine";
 import type { AppState, HistoryEvent, Job } from "../src/domain/types";
 import type {
   CreateJobFromSourceInput,
+  CreateJobFromSourcesInput,
   SourceImportInput,
   SourceImportPreview,
   SourceImportPreviewContext,
@@ -12,6 +13,8 @@ import type {
   SourceOrderPage,
   SourceOrderSummary,
 } from "../src/domain/sourceTypes";
+import type { JobSourceAllocation } from "../src/domain/types";
+import { getJobSourceAllocations, jobHasSourceOrder } from "../src/domain/jobSources";
 import { ApiError } from "./errors";
 
 interface ExistingSourceRow {
@@ -64,9 +67,10 @@ async function buildSourceImportPreview(
     if (current && dbDate(current.as_of_date) !== input.asOfDate) changedFields.push("asOfDate");
     return {
       key: `${fields.doNo} / ${fields.materialCode}`,
-      // Disposition describes what the raw SAP import will persist. changedFields
-      // describes the effective operational values after protected overrides.
+      // Disposition describes the workbook comparison. Import action describes
+      // persistence: an existing business identity is always append-only skipped.
       disposition: (!current ? "added" : current.content_hash === hash && dbDate(current.as_of_date) === input.asOfDate ? "unchanged" : "changed") as "added" | "unchanged" | "changed",
+      importAction: current ? "skip-existing" as const : "insert" as const,
       existingOrderId: current?.id ?? null,
       fields: nextFields,
       ...(current ? { previousFields, previousAsOfDate: dbDate(current.as_of_date) } : {}),
@@ -76,6 +80,7 @@ async function buildSourceImportPreview(
   });
   return {
     added: rows.filter(row => row.disposition === "added").length,
+    skipped: rows.filter(row => row.importAction === "skip-existing").length,
     unchanged: rows.filter(row => row.disposition === "unchanged").length,
     changed: rows.filter(row => row.disposition === "changed").length,
     ...(context ? { operationalChanged: rows.filter(row => row.operationalChanged).length } : {}),
@@ -97,9 +102,9 @@ export async function applySourceImport(
   if (duplicate.rowCount) {
     return { state: appendEvent(state, nowIso, "data.import.duplicate", `Skipped duplicate import ${input.fileName}.`), sourceChanged: false };
   }
-  // Keep import/event semantics based on the raw SAP values. The public preview uses
-  // effective protected fields so a manual Medication/FMR override is not presented
-  // to the operator as if the next workbook would replace it.
+  // Keep audit/event comparison semantics based on raw SAP values. Existing
+  // business identities are never updated; only previously unseen identities
+  // receive an initial source row and version.
   const preview = await buildSourceImportPreview(client, input, false);
   const importId = `import-${randomUUID()}`;
   await client.query(
@@ -121,30 +126,10 @@ export async function applySourceImport(
         [id, fields.doNo, fields.materialCode, importId, nowIso],
       );
       await insertVersion(client, id, 1, importId, fields, hash, nowIso);
-      continue;
     }
-    const baselineUpdate = await client.query(
-      "UPDATE source_orders SET latest_import_id = $2, updated_at = $3::timestamptz WHERE id = $1",
-      [current.id, importId, nowIso],
-    );
-    if (baselineUpdate.rowCount !== 1) throw new Error("The source order changed while applying the import.");
-    if (current.content_hash === hash) {
-      continue;
-    }
-    const nextVersion = current.latest_version + 1;
-    const activeJob = await activeJobForSource(client, current.id);
-    const planningChanged = Boolean(activeJob && sourcePlanningMismatch(fields, activeJob.sourceSnapshot));
-    const deliveryConflict = Boolean(activeJob && activeJob.status !== "completed" && current.delivery_status === "delivered");
-    await client.query(
-      `UPDATE source_orders SET latest_version = $2,
-         needs_review = $3 OR $4, updated_at = $5::timestamptz
-       WHERE id = $1`,
-      [current.id, nextVersion, planningChanged, deliveryConflict, nowIso],
-    );
-    await insertVersion(client, current.id, nextVersion, importId, fields, hash, nowIso);
   }
-  const message = `Imported ${input.rows.length} source orders from ${input.fileName}: ${preview.added} added, ${preview.changed} changed, ${preview.unchanged} unchanged.`;
-  return { state: appendEvent(state, nowIso, "data.imported", message), sourceChanged: true };
+  const message = `Imported source orders from ${input.fileName}: ${preview.added} added, ${preview.skipped} existing skipped (${preview.changed} changed, ${preview.unchanged} unchanged).`;
+  return { state: appendEvent(state, nowIso, "data.imported", message), sourceChanged: preview.added > 0 };
 }
 
 export async function createJobFromSource(
@@ -209,6 +194,127 @@ export async function createJobFromSource(
   return { state: next, sourceChanged: true };
 }
 
+export async function createJobFromSources(
+  client: pg.PoolClient,
+  state: AppState,
+  input: CreateJobFromSourcesInput,
+  nowIso: string,
+): Promise<SourceCommandResult> {
+  const requested = new Map(input.orders.map(order => [order.sourceOrderId, order]));
+  const ids = [...requested.keys()].sort();
+  const result = await client.query<{
+    id: string; latest_version: number; delivery_status: string; fields: SourceOrderFields;
+    item_id: string | null; bag_weight_kg: number | null; medication: string | null; fmr_omed: string | null;
+    historical_status: "pending"|"done"|"out"|null; ordered_quantity_scaled:string|null;
+  }>(
+    `SELECT o.id,o.latest_version,o.delivery_status,v.fields,io.item_id,item.bag_weight_kg,
+       COALESCE(io.medication,v.fields->>'medication','') AS medication,
+       COALESCE(io.fmr_omed,v.fields->>'fmrOmed','') AS fmr_omed,
+       io.historical_status,io.ordered_quantity_scaled::text
+       FROM source_orders o
+       JOIN source_order_versions v ON v.source_order_id=o.id AND v.version=o.latest_version
+       LEFT JOIN inventory_orders io ON io.source_order_id=o.id
+       LEFT JOIN inventory_items item ON item.id=io.item_id
+      WHERE o.workspace_id=1 AND o.id=ANY($1::text[])
+      ORDER BY o.id FOR UPDATE OF o`,
+    [ids],
+  );
+  if (result.rows.length !== ids.length) throw new ApiError(400, "SOURCE_NOT_FOUND", "One or more source orders no longer exist.");
+  const byId = new Map(result.rows.map(row => [row.id, row]));
+  const ordered = input.orders.map(order => ({ request: order, source: byId.get(order.sourceOrderId)! }));
+  const first = ordered[0].source;
+  for (const { request, source } of ordered) {
+    if (source.delivery_status === "delivered") throw new ApiError(400, "SOURCE_DELIVERED", `Order ${source.fields.doNo} is already delivered.`);
+    if (source.latest_version !== request.sourceOrderVersion) throw new ApiError(409, "SOURCE_VERSION_CHANGED", `Order ${source.fields.doNo} changed. Review the latest values.`);
+    if (request.plannedQuantity > source.fields.quantity + 1e-9) throw new ApiError(400, "SOURCE_QUANTITY_EXCEEDED", `Planned quantity exceeds order ${source.fields.doNo}.`);
+    if(source.historical_status==="done"||source.historical_status==="out"||(!source.item_id&&source.fields.remark.trim().toUpperCase()==="DONE"))throw new ApiError(409,"SOURCE_PRODUCTION_COMPLETE",`Order ${source.fields.doNo} is already marked production complete.`);
+    if (source.fields.materialCode.trim().toUpperCase() !== first.fields.materialCode.trim().toUpperCase() || source.fields.unit !== first.fields.unit) {
+      throw new ApiError(400, "SOURCE_PRODUCT_MISMATCH", "Combined orders must have the same material and unit.");
+    }
+    if ((source.item_id ?? null) !== (first.item_id ?? null) || (source.medication ?? "") !== (first.medication ?? "") || (source.fmr_omed ?? "") !== (first.fmr_omed ?? "") || source.bag_weight_kg !== first.bag_weight_kg) {
+      throw new ApiError(400, "SOURCE_VARIANT_MISMATCH", "Combined orders must have the same inventory item, bag weight, Medication and FMR/OMED.");
+    }
+    const scale = source.fields.unit === "MT" ? 1_000 : 1;
+    const requestedScaled=request.plannedQuantity*scale;
+    if(!Number.isSafeInteger(Math.round(requestedScaled))||Math.abs(requestedScaled-Math.round(requestedScaled))>1e-7)throw new ApiError(400,"SOURCE_QUANTITY_PRECISION",`Order ${source.fields.doNo} must use whole Bags or MT with at most 3 decimals.`);
+    const capacity = Math.round(source.fields.quantity * scale);
+    const existing = await client.query<{ committed: string }>(
+      `WITH produced AS (
+         SELECT COALESCE(sum(CASE WHEN l.movement_type='production' THEN l.quantity_delta_scaled
+           WHEN l.movement_type='reversal' AND original.movement_type='production' THEN l.quantity_delta_scaled ELSE 0 END),0)::bigint total
+         FROM inventory_ledger l LEFT JOIN inventory_ledger original ON original.id=l.reverses_movement_id
+         WHERE l.source_order_id=$1
+       ), active AS (
+         SELECT COALESCE(sum(GREATEST(0,a.planned_quantity_scaled-COALESCE(posted.total,0))),0)::bigint total
+         FROM job_source_allocations a JOIN jobs j ON j.id=a.job_id AND j.status IN ('pending','running')
+         LEFT JOIN LATERAL (
+           SELECT COALESCE(sum(CASE WHEN l.movement_type='production' THEN l.quantity_delta_scaled
+             WHEN l.movement_type='reversal' AND original.movement_type='production' THEN l.quantity_delta_scaled ELSE 0 END),0)::bigint total
+           FROM inventory_ledger l LEFT JOIN inventory_ledger original ON original.id=l.reverses_movement_id
+           WHERE l.job_id=j.id AND l.source_order_id=a.source_order_id
+         ) posted ON true WHERE a.source_order_id=$1
+       ) SELECT (produced.total+active.total)::text committed FROM produced,active`,
+      [source.id],
+    );
+    let remainingCapacity=capacity-Number(existing.rows[0].committed);
+    if(!source.item_id){
+      const committed=state.jobs.filter(job=>job.status!=="cancelled"&&jobHasSourceOrder(job,source.id)).reduce((total,job)=>{
+        const allocations=getJobSourceAllocations(job),allocationIndex=allocations.findIndex(row=>row.sourceOrderId===source.id);if(allocationIndex<0)return total;
+        if(job.status!=="completed")return total+Math.round(allocations[allocationIndex].plannedQuantity*scale);
+        const actualNative=job.mode==="bags"?(job.actualQuantityMt??0)*1000/(job.bagWeightKgSnapshot??state.settings.bagWeightKg):(job.actualQuantityMt??0);
+        let remainingActual=Math.round(actualNative*scale);for(let index=0;index<allocationIndex;index++)remainingActual-=Math.round(allocations[index].plannedQuantity*scale);
+        return total+Math.max(0,Math.min(Math.round(allocations[allocationIndex].plannedQuantity*scale),remainingActual));
+      },0);
+      remainingCapacity=Math.max(0,capacity-committed);
+    }
+    if(source.item_id){
+      const progress=await client.query<{ordered:string;reserved:string;delivered:string;scheduled:string}>(`WITH delivered AS(
+          SELECT COALESCE(sum(CASE WHEN l.movement_type='dispatch' THEN -l.quantity_delta_scaled WHEN l.movement_type='reversal' AND original.movement_type='dispatch' THEN -l.quantity_delta_scaled ELSE 0 END),0)::bigint total
+          FROM inventory_ledger l LEFT JOIN inventory_ledger original ON original.id=l.reverses_movement_id WHERE l.source_order_id=$1
+        ), scheduled AS(
+          SELECT COALESCE(sum(GREATEST(0,a.planned_quantity_scaled-COALESCE(posted.total,0))),0)::bigint total
+          FROM job_source_allocations a JOIN jobs j ON j.id=a.job_id AND j.status IN('pending','running')
+          LEFT JOIN LATERAL(SELECT COALESCE(sum(CASE WHEN l.movement_type='production' THEN l.quantity_delta_scaled WHEN l.movement_type='reversal' AND original.movement_type='production' THEN l.quantity_delta_scaled ELSE 0 END),0)::bigint total FROM inventory_ledger l LEFT JOIN inventory_ledger original ON original.id=l.reverses_movement_id WHERE l.job_id=j.id AND l.source_order_id=a.source_order_id)posted ON true
+          WHERE a.source_order_id=$1
+        )SELECT io.ordered_quantity_scaled::text ordered,COALESCE(r.quantity_scaled,0)::text reserved,delivered.total::text delivered,scheduled.total::text scheduled FROM inventory_orders io LEFT JOIN inventory_reservations r ON r.source_order_id=io.source_order_id,delivered,scheduled WHERE io.source_order_id=$1`,[source.id]);
+      if(progress.rowCount){const row=progress.rows[0];remainingCapacity=Math.max(0,Number(row.ordered)-Number(row.delivered)-Number(row.reserved)-Number(row.scheduled));}
+    }
+    if (Math.round(request.plannedQuantity * scale) > remainingCapacity) {
+      throw new ApiError(409, "SOURCE_QUANTITY_ALREADY_PLANNED", `Order ${source.fields.doNo} does not have that much unplanned quantity remaining.`);
+    }
+  }
+  const mode = first.fields.unit === "Bags" ? "bags" : "bulk";
+  const bagWeight = mode === "bags" ? first.bag_weight_kg ?? state.settings.bagWeightKg : null;
+  const plannedTotal = input.orders.reduce((sum, order) => sum + order.plannedQuantity, 0);
+  const allocations: JobSourceAllocation[] = ordered.map(({ request, source }) => ({
+    sourceOrderId: source.id,
+    sourceOrderVersion: source.latest_version,
+    plannedQuantity: request.plannedQuantity,
+    sourceSnapshot: {
+      doNo: source.fields.doNo, materialCode: source.fields.materialCode, description: source.fields.description,
+      quantity: source.fields.quantity, unit: source.fields.unit, deliveryDate: source.fields.deliveryDate,
+      soldToParty: source.fields.soldToParty, shipToParty: source.fields.shipToParty,
+    },
+  }));
+  let next = createJob(state, {
+    date: input.date, lineId: input.lineId,
+    orderNo: allocations.length === 1 ? allocations[0].sourceSnapshot.doNo : `${allocations[0].sourceSnapshot.doNo} +${allocations.length - 1}`,
+    productCode: first.fields.materialCode, description: first.fields.description, bin: input.bin,
+    mode, bagCount: mode === "bags" ? plannedTotal : null,
+    quantityMt: mode === "bags" ? plannedTotal * bagWeight! / 1_000 : plannedTotal,
+    remarks: input.remarks,
+    medication: first.medication ?? "", fmrOmed: first.fmr_omed ?? "", productionPurpose: "mto" as const,
+    ...(first.item_id ? { inventoryItemId: first.item_id } : {}),
+    ...(bagWeight ? { bagWeightKgSnapshot: bagWeight } : {}),
+  });
+  const createdId = next.events.at(-1)?.jobId;
+  if (!createdId) throw new Error("The grouped source job was created without an audit identity.");
+  next = { ...next, jobs: next.jobs.map(job => job.id === createdId ? { ...job, sourceAllocations: allocations, createdAt: nowIso, updatedAt: nowIso } : job),
+    events: next.events.map(event => event.jobId === createdId && event.type === "job.created" ? { ...event, at: nowIso } : event) };
+  await client.query("UPDATE source_orders SET needs_review=false,updated_at=$2::timestamptz WHERE id=ANY($1::text[])", [ids, nowIso]);
+  return { state: next, sourceChanged: true };
+}
+
 export async function setDeliveryStatus(
   client: pg.PoolClient,
   state: AppState,
@@ -226,7 +332,12 @@ export async function setDeliveryStatus(
   if (!current.rowCount) throw new ApiError(400, "SOURCE_NOT_FOUND", "The source order no longer exists.");
   if (delivered) {
     const job = await activeJobForSource(client, sourceOrderId);
-    if (job && job.status !== "completed") throw new ApiError(400, "PRODUCTION_NOT_COMPLETE", "Complete production before marking this order delivered.");
+    if (job) {
+      const progress = await client.query<SourceDbView>(sourceViewSql("o.workspace_id = 1 AND o.id = $1"), [sourceOrderId]);
+      if (!progress.rowCount || !["completed", "external-complete"].includes(progress.rows[0].production_status ?? "unplanned")) {
+        throw new ApiError(400, "PRODUCTION_NOT_COMPLETE", "Complete all planned production for this order before marking it delivered.");
+      }
+    }
   } else if (!reason?.trim()) {
     throw new ApiError(400, "REOPEN_REASON_REQUIRED", "A reason is required to reopen delivery.");
   }
@@ -275,7 +386,7 @@ export async function listSourceOrders(pool: pg.Pool, query: URLSearchParams): P
   if (view === "needs-production") {
     dynamicWhere.push(`delivery_status <> 'delivered' AND source_quantity > 0 AND (
       (is_inventory_tracked AND net_to_plan_scaled > 0) OR
-      (NOT is_inventory_tracked AND job_id IS NULL)
+      (NOT is_inventory_tracked AND source_net_to_plan_scaled > 0)
     )`);
   }
   if (view === "ready-pickup") {
@@ -295,12 +406,13 @@ export async function listSourceOrders(pool: pg.Pool, query: URLSearchParams): P
          (o.needs_review OR ${sourcePlanningMismatchSql()} OR
            (COALESCE(ip.is_inventory_tracked, false) AND COALESCE(ip.inventory_needs_review, false))) AS needs_review,
          o.updated_at,
-         ${effectiveFieldsSql()} AS fields, j.id AS job_id, j.status AS job_status, NULLIF(j.payload->>'sourceOrderVersion','')::integer AS job_source_version,
-         j.payload->'sourceSnapshot' AS job_source_snapshot,
+         ${effectiveFieldsSql()} AS fields, j.id AS job_id, j.status AS job_status, j.source_order_version AS job_source_version,
+         j.source_snapshot AS job_source_snapshot,
          ${effectiveDeliveryDateSql()} AS delivery_date, o.do_no, o.material_code,
          COALESCE((v.fields->>'quantity')::numeric, 0) AS source_quantity,
          COALESCE(ip.is_inventory_tracked, false) AS is_inventory_tracked,
          COALESCE(ip.net_to_plan_scaled, 0) AS net_to_plan_scaled,
+         ${sourceNetToPlanSql()} AS source_net_to_plan_scaled,
          COALESCE(ip.reserved_scaled, 0) AS reserved_scaled,
          COALESCE(ip.remaining_to_collect_scaled, 0) AS remaining_to_collect_scaled,
          ip.inventory_unit,
@@ -310,7 +422,8 @@ export async function listSourceOrders(pool: pg.Pool, query: URLSearchParams): P
        FROM source_orders o
        JOIN source_order_versions v ON v.source_order_id = o.id AND v.version = o.latest_version
        JOIN source_imports i ON i.id = o.latest_import_id
-       LEFT JOIN LATERAL (SELECT id, status, payload FROM jobs WHERE workspace_id = 1 AND source_order_id = o.id AND status <> 'cancelled' ORDER BY ordinal DESC LIMIT 1) j ON true
+       LEFT JOIN LATERAL (SELECT j.id,j.status,j.payload,a.source_order_version,a.source_snapshot FROM job_source_allocations a JOIN jobs j ON j.id=a.job_id WHERE a.source_order_id=o.id AND j.workspace_id=1 AND j.status<>'cancelled' ORDER BY j.ordinal DESC LIMIT 1) j ON true
+       LEFT JOIN source_allocation_progress sp ON sp.source_order_id=o.id
        LEFT JOIN inventory_progress ip ON ip.source_order_id = o.id
        WHERE ${where.join(" AND ")}
      ), filtered AS (
@@ -378,6 +491,7 @@ export async function getSourceOrder(pool: pg.Pool, id: string): Promise<SourceO
 }
 
 export async function clearSourceData(client: pg.PoolClient): Promise<void> {
+  await client.query("DELETE FROM job_source_allocations WHERE job_id IN (SELECT id FROM jobs WHERE workspace_id=1)");
   await client.query("UPDATE jobs SET source_order_id = NULL WHERE workspace_id = 1 AND source_order_id IS NOT NULL");
   await client.query("DELETE FROM source_order_versions WHERE source_order_id IN (SELECT id FROM source_orders WHERE workspace_id = 1)");
   await client.query("DELETE FROM source_orders WHERE workspace_id = 1");
@@ -393,6 +507,7 @@ interface SourceDbView {
   job_source_snapshot: Job["sourceSnapshot"] | null;
   is_inventory_tracked?: boolean;
   net_to_plan_scaled?: string | number;
+  source_net_to_plan_scaled?: string | number;
   inventory_unit?: "MT" | "Bags" | null;
 }
 
@@ -408,15 +523,17 @@ function sourceViewSql(where: string): string {
     (o.needs_review OR ${sourcePlanningMismatchSql()} OR
       (COALESCE(ip.is_inventory_tracked, false) AND COALESCE(ip.inventory_needs_review, false))) AS needs_review,
     o.updated_at,
-    ${effectiveFieldsSql()} AS fields, ${productionStatusSql()} AS production_status, j.id AS job_id, j.status AS job_status, NULLIF(j.payload->>'sourceOrderVersion','')::integer AS job_source_version,
-    j.payload->'sourceSnapshot' AS job_source_snapshot,
+    ${effectiveFieldsSql()} AS fields, ${productionStatusSql()} AS production_status, j.id AS job_id, j.status AS job_status, j.source_order_version AS job_source_version,
+    j.source_snapshot AS job_source_snapshot,
     COALESCE(ip.is_inventory_tracked, false) AS is_inventory_tracked,
     COALESCE(ip.net_to_plan_scaled, 0) AS net_to_plan_scaled,
+    ${sourceNetToPlanSql()} AS source_net_to_plan_scaled,
     ip.inventory_unit
     FROM source_orders o
     JOIN source_order_versions v ON v.source_order_id = o.id AND v.version = o.latest_version
     JOIN source_imports i ON i.id = o.latest_import_id
-    LEFT JOIN LATERAL (SELECT id, status, payload FROM jobs WHERE workspace_id = 1 AND source_order_id = o.id AND status <> 'cancelled' ORDER BY ordinal DESC LIMIT 1) j ON true
+    LEFT JOIN LATERAL (SELECT j.id,j.status,j.payload,a.source_order_version,a.source_snapshot FROM job_source_allocations a JOIN jobs j ON j.id=a.job_id WHERE a.source_order_id=o.id AND j.workspace_id=1 AND j.status<>'cancelled' ORDER BY j.ordinal DESC LIMIT 1) j ON true
+    LEFT JOIN source_allocation_progress sp ON sp.source_order_id=o.id
     LEFT JOIN inventory_progress ip ON ip.source_order_id=o.id
     WHERE ${where} ORDER BY ${effectiveDeliveryDateSql()}, o.do_no, o.material_code`;
 }
@@ -425,15 +542,29 @@ function sourceViewSql(where: string): string {
 function productionStatusSql():string {
   return `CASE WHEN EXISTS(SELECT 1 FROM inventory_orders io WHERE io.source_order_id=o.id AND EXISTS(SELECT 1 FROM inventory_imports WHERE included_baseline)) THEN
     CASE WHEN o.delivery_status='delivered' OR EXISTS(SELECT 1 FROM inventory_orders io LEFT JOIN inventory_reservations ir ON ir.source_order_id=io.source_order_id WHERE io.source_order_id=o.id AND (io.historical_status IN ('done','out') OR io.ordered_quantity_scaled<=COALESCE(ir.quantity_scaled,0)+COALESCE((SELECT sum(-l.quantity_delta_scaled) FROM inventory_ledger l WHERE l.source_order_id=o.id AND (l.movement_type='dispatch' OR (l.movement_type='reversal' AND l.reverses_movement_id IN (SELECT id FROM inventory_ledger WHERE movement_type='dispatch')))),0))) THEN 'external-complete'
-      WHEN EXISTS(SELECT 1 FROM jobs active WHERE active.source_order_id=o.id AND active.status='running') THEN 'running'
-      WHEN EXISTS(SELECT 1 FROM jobs active WHERE active.source_order_id=o.id AND active.status='pending') THEN 'pending' ELSE 'unplanned' END
-    ELSE COALESCE(j.status,CASE WHEN o.delivery_status='delivered' OR upper(btrim(v.fields->>'remark'))='DONE' THEN 'external-complete' ELSE 'unplanned' END) END`;
+      WHEN EXISTS(SELECT 1 FROM job_source_allocations a JOIN jobs active ON active.id=a.job_id WHERE a.source_order_id=o.id AND active.status='running') THEN 'running'
+      WHEN EXISTS(SELECT 1 FROM job_source_allocations a JOIN jobs active ON active.id=a.job_id WHERE a.source_order_id=o.id AND active.status='pending') THEN 'pending' ELSE 'unplanned' END
+    ELSE CASE
+      WHEN COALESCE(sp.has_running,false) THEN 'running'
+      WHEN COALESCE(sp.has_pending,false) THEN 'pending'
+      WHEN ${sourceNetToPlanSql()}=0 AND COALESCE(sp.has_completed,false) THEN 'completed'
+      WHEN o.delivery_status='delivered' OR upper(btrim(v.fields->>'remark'))='DONE' THEN 'external-complete'
+      ELSE 'unplanned' END END`;
+}
+
+function sourceNetToPlanSql(): string {
+  return `CASE WHEN o.delivery_status='delivered' OR upper(btrim(v.fields->>'remark'))='DONE' THEN 0::bigint ELSE GREATEST(0,
+    round(COALESCE((v.fields->>'quantity')::numeric,0) * CASE WHEN v.fields->>'unit'='MT' THEN 1000 ELSE 1 END)::bigint
+    - COALESCE(sp.committed_scaled,0)) END`;
 }
 
 function sourcePlanningMismatchSql(): string {
-  return `(j.payload->'sourceSnapshot' IS NOT NULL AND j.payload->'sourceSnapshot' IS DISTINCT FROM jsonb_build_object(
-    'doNo', v.fields->>'doNo', 'materialCode', v.fields->>'materialCode',
-    'description', v.fields->>'description', 'quantity', v.fields->'quantity', 'unit', v.fields->>'unit'
+  return `(j.source_snapshot IS NOT NULL AND (
+    j.source_snapshot->>'doNo' IS DISTINCT FROM v.fields->>'doNo' OR
+    j.source_snapshot->>'materialCode' IS DISTINCT FROM v.fields->>'materialCode' OR
+    j.source_snapshot->>'description' IS DISTINCT FROM v.fields->>'description' OR
+    j.source_snapshot->'quantity' IS DISTINCT FROM v.fields->'quantity' OR
+    j.source_snapshot->>'unit' IS DISTINCT FROM v.fields->>'unit'
   ))`;
 }
 
@@ -455,7 +586,34 @@ function effectiveFieldsSql(): string {
  * scheduled quantity only includes the unreceived balance of active cards.
  */
 function inventoryProgressCtes(): string {
-  return `inventory_enabled AS (
+  return `source_job_actuals AS (
+      SELECT job.id,
+        CASE WHEN min(allocation.source_snapshot->>'unit')='Bags' THEN
+          COALESCE(round(COALESCE((job.payload->>'actualQuantityMt')::numeric,0)*1000 /
+            NULLIF(COALESCE((job.payload->>'bagWeightKgSnapshot')::numeric,
+              (SELECT (settings->>'bagWeightKg')::numeric FROM workspace WHERE id=1)),0)),0)::bigint
+        ELSE round(COALESCE((job.payload->>'actualQuantityMt')::numeric,0)*1000)::bigint END AS actual_scaled
+      FROM jobs job
+      JOIN job_source_allocations allocation ON allocation.job_id=job.id
+      WHERE job.workspace_id=1 AND job.status='completed'
+      GROUP BY job.id,job.payload
+    ), source_allocation_progress AS (
+      SELECT allocation.source_order_id,
+        COALESCE(sum(CASE
+          WHEN job.status IN ('pending','running') THEN allocation.planned_quantity_scaled
+          WHEN job.status='completed' THEN LEAST(allocation.planned_quantity_scaled,GREATEST(0,
+            actual.actual_scaled-COALESCE((SELECT sum(prior.planned_quantity_scaled)
+              FROM job_source_allocations prior
+              WHERE prior.job_id=allocation.job_id AND prior.ordinal<allocation.ordinal),0)))
+          ELSE 0 END),0)::bigint AS committed_scaled,
+        bool_or(job.status='pending') AS has_pending,
+        bool_or(job.status='running') AS has_running,
+        bool_or(job.status='completed') AS has_completed
+      FROM job_source_allocations allocation
+      JOIN jobs job ON job.id=allocation.job_id AND job.workspace_id=1 AND job.status<>'cancelled'
+      LEFT JOIN source_job_actuals actual ON actual.id=job.id
+      GROUP BY allocation.source_order_id
+    ), inventory_enabled AS (
       SELECT EXISTS(SELECT 1 FROM inventory_imports WHERE workspace_id = 1 AND included_baseline) AS enabled
     ), inventory_movement_totals AS (
       SELECT l.source_order_id,
@@ -466,23 +624,23 @@ function inventoryProgressCtes(): string {
       WHERE l.workspace_id=1 AND l.source_order_id IS NOT NULL
       GROUP BY l.source_order_id
     ), inventory_job_production AS (
-      SELECT l.job_id,
+      SELECT l.job_id,l.source_order_id,
         COALESCE(sum(CASE WHEN l.movement_type='production' THEN l.quantity_delta_scaled
           WHEN l.movement_type='reversal' AND original.movement_type='production' THEN l.quantity_delta_scaled ELSE 0 END),0)::bigint AS produced_scaled
       FROM inventory_ledger l
       LEFT JOIN inventory_ledger original ON original.id=l.reverses_movement_id
       WHERE l.workspace_id=1 AND l.job_id IS NOT NULL
-      GROUP BY l.job_id
+      GROUP BY l.job_id,l.source_order_id
     ), inventory_scheduled AS (
       SELECT io.source_order_id,
         COALESCE(sum(GREATEST(0,
-          CASE WHEN item.unit='Bags' THEN COALESCE((job.payload->>'bagCount')::numeric,0)::bigint
-            ELSE round(COALESCE((job.payload->>'quantityMt')::numeric,0)*1000)::bigint END
+          allocation.planned_quantity_scaled
           - COALESCE(posted.produced_scaled,0))),0)::bigint AS scheduled_scaled
       FROM inventory_orders io
       JOIN inventory_items item ON item.id=io.item_id
-      JOIN jobs job ON job.workspace_id=1 AND job.source_order_id=io.source_order_id AND job.status IN ('pending','running')
-      LEFT JOIN inventory_job_production posted ON posted.job_id=job.id
+       JOIN job_source_allocations allocation ON allocation.source_order_id=io.source_order_id
+       JOIN jobs job ON job.workspace_id=1 AND job.id=allocation.job_id AND job.status IN ('pending','running')
+      LEFT JOIN inventory_job_production posted ON posted.job_id=job.id AND posted.source_order_id=io.source_order_id
       WHERE io.workspace_id=1
       GROUP BY io.source_order_id
     ), inventory_progress_core AS (
@@ -519,7 +677,7 @@ function toSummary(row: SourceDbView, today: string): SourceOrderSummary {
   const productionStatus = row.production_status ?? row.job_status ?? (row.delivery_status === "delivered" || row.fields.remark.trim().toUpperCase()==='DONE' ? "external-complete" : "unplanned");
   const netToPlan = row.is_inventory_tracked
     ? Number(row.net_to_plan_scaled ?? 0) / (row.inventory_unit === "MT" ? 1_000 : 1)
-    : undefined;
+    : Number(row.source_net_to_plan_scaled ?? 0) / (row.fields.unit === "MT" ? 1_000 : 1);
   return {
     id: row.id,
     version: row.latest_version,
@@ -532,7 +690,8 @@ function toSummary(row: SourceDbView, today: string): SourceOrderSummary {
     deliveryRecordedAt: row.delivery_recorded_at ? new Date(row.delivery_recorded_at).toISOString() : null,
     deliveryReason: row.delivery_reason,
     productionStatus,
-    ...(netToPlan === undefined ? {} : { netToPlan }),
+    netToPlan,
+    inventoryTracked: Boolean(row.is_inventory_tracked),
     linkedJobId: row.job_id,
     currentDeliveryLeadDays: calendarDays(today, row.fields.deliveryDate),
     currentDaysOutstanding: row.delivery_status === 'delivered' ? 0 : Math.max(0, calendarDays(row.fields.deliveryDate, today) + 1),
@@ -600,8 +759,10 @@ async function insertVersion(client: pg.PoolClient, orderId: string, version: nu
 
 async function activeJobForSource(client: pg.PoolClient, sourceOrderId: string): Promise<{ id: string; status: Job["status"]; sourceSnapshot: Job["sourceSnapshot"] | null } | null> {
   const result = await client.query<{ id: string; status: Job["status"]; sourceSnapshot: Job["sourceSnapshot"] | null }>(
-    `SELECT id, status, payload->'sourceSnapshot' AS "sourceSnapshot"
-       FROM jobs WHERE workspace_id = 1 AND source_order_id = $1 AND status <> 'cancelled' LIMIT 1`,
+    `SELECT j.id,j.status,a.source_snapshot AS "sourceSnapshot"
+       FROM job_source_allocations a JOIN jobs j ON j.id=a.job_id
+      WHERE j.workspace_id=1 AND a.source_order_id=$1 AND j.status<>'cancelled'
+      ORDER BY CASE WHEN j.status='completed' THEN 1 ELSE 0 END,j.ordinal DESC LIMIT 1`,
     [sourceOrderId],
   );
   return result.rows[0] ?? null;

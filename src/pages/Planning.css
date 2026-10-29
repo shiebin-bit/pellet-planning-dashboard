@@ -116,7 +116,7 @@
   white-space: nowrap;
 }
 .hplan-line-label,.hplan-track {
-  height: clamp(88px,calc((100vh - 315px)/4),110px);
+  height: clamp(88px,calc((100vh - 355px)/4),110px);
   min-height: 78px;
   border-bottom: 1px solid var(--border);
 }

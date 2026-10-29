@@ -1,3 +1,4 @@
+import { getJobSourceAllocations } from '../domain/jobSources';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Copy, X } from 'lucide-react';
 import { useWorkspace } from '../lib/workspace';
@@ -13,7 +14,7 @@ import './CopyPlanningDialog.css';
 
 interface Draft { selected: boolean; orderNo: string; quantity: string; mode: Job['mode'] }
 function sourceJobs(state: AppState, date: string) {
-  return state.jobs.filter(job => job.date === date && job.status !== 'cancelled' && !job.sourceOrderId)
+  return state.jobs.filter(job => job.date === date && job.status !== 'cancelled' && !getJobSourceAllocations(job).length)
     .sort((a, b) => a.lineId.localeCompare(b.lineId) || a.sequence - b.sequence);
 }
 function newDraft(job: Job, selected = true): Draft {

@@ -53,7 +53,7 @@ async function fixture(file) {
   const data=await fetch(base+'/api/inventory/draft',{method:'POST',headers:{'Content-Type':'application/json',Origin:base},body:JSON.stringify({fromDate:tomorrow,toDate:tomorrow})}).then(r=>r.json());
   assert.equal(data.jobs.filter(j=>j.unit==='Bags').reduce((s,j)=>s+j.quantity,0),90);
   const save=draft.getByRole('button',{name:/Confirm \d+ cards/});await save.click();await draft.waitFor({state:'hidden'});
-  let state=(await json('/api/workspace')).state; const job=state.jobs.find(j=>j.sourceOrderId===order.sourceOrderId);
+  let state=(await json('/api/workspace')).state; const job=state.jobs.find(j=>j.sourceOrderId===order.sourceOrderId||j.sourceAllocations?.some(a=>a.sourceOrderId===order.sourceOrderId));
   assert.equal(job.quantityMt,1.75);assert.equal(job.bagWeightKgSnapshot,25);
   await page.locator(`[data-job-id="${job.id}"] .hplan-card-open`).click();
   await page.getByRole('button',{name:'Start production',exact:true}).click();await wait(async()=>(await json('/api/workspace')).state.jobs.find(j=>j.id===job.id).status==='running');

@@ -26,6 +26,25 @@ export interface ProductionPause {
   reason: string;
 }
 
+export interface SourceOrderSnapshot {
+  doNo: string;
+  materialCode: string;
+  description: string;
+  quantity: number;
+  unit: "MT" | "Bags";
+  deliveryDate?: string;
+  soldToParty?: string;
+  shipToParty?: string;
+}
+
+/** A source-order share of one physical production run. Quantity uses sourceSnapshot.unit. */
+export interface JobSourceAllocation {
+  sourceOrderId: string;
+  sourceOrderVersion: number;
+  sourceSnapshot: SourceOrderSnapshot;
+  plannedQuantity: number;
+}
+
 export interface Job {
   inventoryItemId?: string;
   medication?: string;
@@ -60,13 +79,8 @@ export interface Job {
   pauseIntervals?: ProductionPause[];
   sourceOrderId?: string;
   sourceOrderVersion?: number;
-  sourceSnapshot?: {
-    doNo: string;
-    materialCode: string;
-    description: string;
-    quantity: number;
-    unit: "MT" | "Bags";
-  };
+  sourceSnapshot?: SourceOrderSnapshot;
+  sourceAllocations?: JobSourceAllocation[];
   bagWeightKgSnapshot?: number;
 }
 

@@ -1,3 +1,5 @@
+import { getJobSourceAllocations } from '../domain/jobSources';
+import { productLabel } from '../lib/productLabel';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ScheduledJob } from '../domain/types';
@@ -52,9 +54,9 @@ export function usePlanningCardPreview(job: ScheduledJob, dragging: boolean) {
     setPosition({left,top});
   },[open,job]);
   const preview=open&&!dragging?createPortal(<div id={id} ref={tooltip} role="tooltip" className="planning-card-preview" style={{left:position?.left??0,top:position?.top??0,visibility:position?'visible':'hidden'}} onPointerEnter={clearTimer} onPointerLeave={leave}>
-    <div className="planning-preview-heading"><strong>{job.productCode}</strong><span>{job.lineId}</span></div>
-    <p>{job.description||'No product description'}</p>
-    <dl><div><dt>Quantity</dt><dd>{job.mode==='bags'&&job.bagCount!==null?`${numberLabel(job.bagCount,0)} Bags · `:''}{numberLabel(job.quantityMt)} MT</dd></div><div><dt>Order</dt><dd>{job.orderNo||'No order reference'}</dd></div><div><dt>Planned start</dt><dd>{plannedTime(job.plannedStart)}</dd></div><div><dt>Planned end</dt><dd>{plannedTime(job.plannedEnd)}</dd></div><div><dt>Status</dt><dd>{job.issue?'Issue':isJobPaused(job)?'Paused':STATUS_LABELS[job.status]}</dd></div><div><dt>Destination</dt><dd>{job.bin?`Bin ${job.bin}`:'Not assigned'}</dd></div></dl>
+    <div className="planning-preview-heading"><strong>{productLabel(job)}</strong><span>{job.lineId}</span></div>
+    <p>{job.productCode}</p><p>{job.description||'No product description'}</p>
+    <dl><div><dt>Quantity</dt><dd>{job.mode==='bags'&&job.bagCount!==null?`${numberLabel(job.bagCount,0)} Bags · `:''}{numberLabel(job.quantityMt)} MT</dd></div><div><dt>Order</dt><dd>{getJobSourceAllocations(job).length > 1 ? `${getJobSourceAllocations(job).length} orders: ${getJobSourceAllocations(job).map(a=>a.sourceSnapshot.doNo).join(', ')}` : job.orderNo||'No order reference'}</dd></div><div><dt>Planned start</dt><dd>{plannedTime(job.plannedStart)}</dd></div><div><dt>Planned end</dt><dd>{plannedTime(job.plannedEnd)}</dd></div><div><dt>Status</dt><dd>{job.issue?'Issue':isJobPaused(job)?'Paused':STATUS_LABELS[job.status]}</dd></div><div><dt>Destination</dt><dd>{job.bin?`Bin ${job.bin}`:'Not assigned'}</dd></div></dl>
     {job.issue&&<p className="planning-preview-issue">{job.issue.reason}</p>}
     <small>Times in MYT. Click or press Enter for full details.</small>
   </div>,document.body):null;

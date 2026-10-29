@@ -44,6 +44,8 @@ export type ImportRowDisposition = "added" | "unchanged" | "changed";
 export interface SourceImportPreviewRow {
   key: string;
   disposition: ImportRowDisposition;
+  /** Persistence outcome: existing order identities are never changed by an import. */
+  importAction: "insert" | "skip-existing";
   existingOrderId: string | null;
   fields: SourceOrderFields;
   /** Effective values currently retained for this order, including protected manual inventory fields. */
@@ -56,6 +58,8 @@ export interface SourceImportPreviewRow {
 
 export interface SourceImportPreview {
   added: number;
+  /** Existing order identities that will be left unchanged, whether workbook values differ or not. */
+  skipped: number;
   unchanged: number;
   changed: number;
   operationalChanged?: number;
@@ -68,6 +72,8 @@ export type SourceProductionStatus = JobStatus | "unplanned" | "external-complet
 
 export interface SourceOrderSummary extends SourceOrderFields {
   netToPlan?: number;
+  /** True when stock reservations and ledger movements govern this order. */
+  inventoryTracked: boolean;
   id: string;
   version: number;
   importId: string;
@@ -119,6 +125,19 @@ export interface CreateJobFromSourceInput {
   bin: string;
   remarks: string;
   mode?: QuantityMode;
+}
+
+export interface CreateJobFromSourcesInput {
+  orders: Array<{
+    sourceOrderId: string;
+    sourceOrderVersion: number;
+    /** Quantity allocated to this card in the source order's unit. */
+    plannedQuantity: number;
+  }>;
+  date: string;
+  lineId: LineId;
+  bin: string;
+  remarks: string;
 }
 
 export interface PortableSourceData {

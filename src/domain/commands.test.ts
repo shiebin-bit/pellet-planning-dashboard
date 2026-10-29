@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createSampleState } from "./sample";
 import { executeCommand, parseCommand } from "./commands";
+import { createEmptyState } from "./defaults";
+import { createJob } from "./engine";
+import { getJobSourceAllocations } from "./jobSources";
 
 describe("shared workspace commands", () => {
   it("strictly parses commands and rejects unknown fields", () => {
@@ -35,5 +38,30 @@ describe("shared workspace commands", () => {
     const state = createSampleState("2026-10-15");
     expect(() => executeCommand(state, { type: "workspace.undoLastMove" })).toThrow(/trusted workspace provider/i);
     expect(() => executeCommand(state, { type: "workspace.restore", backup: state })).toThrow(/trusted workspace provider/i);
+  });
+
+  it("parses grouped source creation and atomically combines compatible pending source cards", () => {
+    expect(parseCommand({ type: "job.createFromSources", input: { orders: [
+      { sourceOrderId: "source-1", sourceOrderVersion: 1, plannedQuantity: 20 },
+      { sourceOrderId: "source-2", sourceOrderVersion: 2, plannedQuantity: 30 },
+    ], date: "2026-10-29", lineId: "PM1", bin: "B01", remarks: "group" } })).toMatchObject({ type: "job.createFromSources", input: { orders: [{ plannedQuantity: 20 }, { plannedQuantity: 30 }] } });
+    expect(() => parseCommand({ type: "job.createFromSources", input: { orders: [
+      { sourceOrderId: "source-1", sourceOrderVersion: 1, plannedQuantity: 20 },
+      { sourceOrderId: "source-1", sourceOrderVersion: 1, plannedQuantity: 30 },
+    ], date: "2026-10-29", lineId: "PM1", bin: "", remarks: "" } })).toThrow(/duplicate/i);
+
+    let state = createEmptyState();
+    for (const [index, order] of ["DO-1", "DO-2"].entries()) {
+      state = createJob(state, { date: "2026-10-29", lineId: "PM1", orderNo: order, productCode: "7.100", description: "Feed", bin: "B01", mode: "bulk", bagCount: null, quantityMt: index + 1, remarks: "", inventoryItemId: "item-1", medication: "", fmrOmed: "", productionPurpose: "mto" });
+      const id = state.jobs.at(-1)!.id;
+      state = { ...state, jobs: state.jobs.map(job => job.id === id ? { ...job, sourceOrderId: `source-${index + 1}`, sourceOrderVersion: 1, sourceSnapshot: { doNo: order, materialCode: "7.100", description: "Feed", quantity: index + 1, unit: "MT" as const } } : job) };
+    }
+    const ids = state.jobs.map(job => job.id);
+    const combined = executeCommand(state, { type: "job.combinePending", jobIds: ids, bin: "B02", remarks: "Combined" }, { nowIso: "2026-10-29T01:00:00.000Z" });
+    const active = combined.jobs.filter(job => job.status !== "cancelled");
+    expect(active).toHaveLength(1);
+    expect(active[0]).toMatchObject({ id: ids[0], quantityMt: 3, bin: "B02", remarks: "Combined" });
+    expect(getJobSourceAllocations(active[0]).map(row => [row.sourceOrderId, row.plannedQuantity])).toEqual([["source-1", 1], ["source-2", 2]]);
+    expect(combined.jobs.find(job => job.id === ids[1])?.status).toBe("cancelled");
   });
 });

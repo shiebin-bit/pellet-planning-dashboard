@@ -7,7 +7,7 @@ export async function inventoryRequest<T>(path: string, body?: unknown): Promise
   return data as T;
 }
 export const readInventory = () => inventoryRequest<InventorySnapshot>('/api/inventory');
-export const readJobProduction = (jobId: string) => inventoryRequest<{total:number;unit:string}>(`/api/inventory/jobs/${encodeURIComponent(jobId)}/production`);
+export const readJobProduction = (jobId: string) => inventoryRequest<{total:number;unit:string;orderTotals?:Array<{sourceOrderId:string|null;total:number}>}>(`/api/inventory/jobs/${encodeURIComponent(jobId)}/production`);
 export const readInventoryOrders = () => inventoryRequest<InventoryOrderProgressSnapshot>('/api/inventory/orders');
 export const readDailyStock = (date: string) => inventoryRequest<InventoryDailyStockRow[]>(`/api/inventory/daily?date=${encodeURIComponent(date)}`);
 export const readOrderJournal = (id: string) => inventoryRequest<InventoryOrderJournalRow[]>(`/api/inventory/orders/${encodeURIComponent(id)}/journal`);

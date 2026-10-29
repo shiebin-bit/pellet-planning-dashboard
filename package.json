@@ -14,7 +14,7 @@
     "db:migrate": "node --env-file-if-exists=.env --import tsx server/migrate.ts",
     "seed:demo-history": "node --env-file-if-exists=.env --import tsx scripts/seed-demo-history.ts",
     "test:api": "node --env-file-if-exists=.env --import tsx --test --test-concurrency=1 tests/api.test.ts tests/inventory-api.test.ts",
-    "test:browser": "node tests/browser.cjs && node tests/browser-efficiency.cjs && node tests/browser-pause-audit.cjs && node tests/browser-ui.cjs && node tests/browser-data.cjs && node tests/browser-inventory.cjs && node tests/browser-table-ux.cjs && node tests/browser-settings-preview.cjs && node tests/browser-list-navigation.cjs",
+    "test:browser": "node tests/browser.cjs && node tests/browser-efficiency.cjs && node tests/browser-pause-audit.cjs && node tests/browser-ui.cjs && node tests/browser-data.cjs && node tests/browser-inventory.cjs && node tests/browser-table-ux.cjs && node tests/browser-settings-preview.cjs && node tests/browser-list-navigation.cjs && node tests/browser-combined-production.cjs",
     "check": "npm test && npm run build"
   },
   "engines": {

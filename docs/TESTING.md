@@ -94,3 +94,9 @@ Run API files serially (`--test-concurrency=1`) because they reset the same disp
 Order/stock detail dialog regressions verify bottom-row opening, viewport bounds, background isolation, keyboard-reachable disclosures, scroll/focus restoration, in-dialog policy saving and status feedback, and transitions into planning or production details. The order picker is checked at1366/390/320px with bounded table scrolling, keyboard horizontal scrolling when needed, collapsible filters and a visible sticky planning action.
 
 Main Orders-table checks use long fictional customer/product names at1920/1366/1024/390/320px: desktop columns fit without overflow, text remains within cells, narrow-layout scroll controls work and remain visible down the long list, and the page has no horizontal overflow.
+
+## Insert-only imports and combined production
+
+The combined-production suite uses fictional orders and stock in a disposable database. It checks same-product selection while disabling a different full material with the same FS display code, per-order quantity inputs, desktop/320px/390px dialogs, short display codes and retained full material IDs, partial receipts and Done without double posting, combining pending cards while retaining cancelled originals, Excel/print allocation details and portable backup round trips. Reimporting a changed existing order alongside a new one must leave its saved fields, source versions and ledger unchanged and add only the new order. Evidence stays under ignored `output/playwright/combined-production/`.
+
+This release also checks generated extra output end to end: 30 MT on hand plus a 100 MT order and 20 MT extra produces a 90 MT card with a 70 MT order allocation. Editing stock extra changes the unscheduled-extra warning; saving and restoring retain the physical total and source allocation separately. Final local verification passed 110 unit tests, 30 PostgreSQL API tests and all ten browser scripts.

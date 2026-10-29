@@ -1,3 +1,4 @@
+import { getJobSourceAllocations } from '../domain/jobSources';
 import { readInventory } from '../lib/inventoryApi';
 import type { InventoryItemSnapshot } from '../domain/inventoryTypes';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -34,7 +35,7 @@ export function ProductionEditor() {
   const previousFocus=useRef(document.activeElement as HTMLElement | null);
   const suggestions=useMemo(()=>catalogSuggestions(state.catalog,form.productCode),[state.catalog,form.productCode]);
   useEffect(()=>{
-    if(existing?.sourceOrderId)dialog.current?.querySelector<HTMLSelectElement>('select')?.focus();else product.current?.focus();
+    if(existing && getJobSourceAllocations(existing).length)dialog.current?.querySelector<HTMLSelectElement>('select')?.focus();else product.current?.focus();
     const overflow=document.body.style.overflow;
     document.body.style.overflow='hidden';
     return ()=>{
@@ -45,7 +46,7 @@ export function ProductionEditor() {
     };
   },[]);
   const set=<K extends keyof JobInput>(key:K,value:JobInput[K])=>setForm(previous=>({...previous,[key]:value}));
-  const linked=Boolean(existing?.sourceOrderId);
+  const linked=Boolean(existing && getJobSourceAllocations(existing).length);
   const quantity=linked?existing!.quantityMt:form.mode==='bags'?(form.bagCount||0)*bagWeight/1000:form.quantityMt;
   const rate=getRate(state.settings,form.lineId,form.productCode);
   function chooseProduct(selected:CatalogProduct) {
@@ -85,7 +86,7 @@ export function ProductionEditor() {
       <header className="editor-header"><div><h2 id="editor-title">{editing?'Edit production':'Add production'}</h2><p id="editor-description">Enter the task. Production time is calculated automatically.</p></div><button type="button" className="icon-button" onClick={closeInput} aria-label="Close production form" disabled={mutationLocked}><X size={21}/></button></header>
       <form onSubmit={submit}>
         <div className="editor-body" inert={mutationLocked||hasConflict}>
-          <>{linked&&<p className="notice warning">Material, order and quantity come from the imported order. Cancel and replan a pending card to use updated source quantities.</p>}</><div className="field-grid">
+          <>{linked&&<p className="notice warning">The product and order allocations are saved with this card. You can change the date, line, bin and remarks. Cancel and replan to change the order allocations.</p>}</><div className="field-grid">
             <label className="field">Production line<select value={form.lineId} onChange={event=>set('lineId',event.target.value as LineId)}>{LINE_IDS.map(line=><option key={line}>{line}</option>)}</select></label>
             <label className="field">Planning date<input type="date" required value={form.date} onChange={event=>set('date',event.target.value)}/></label>
             <div className="field product-catalog-field" inert={linked}><label htmlFor="production-product-code">Product code <span className="required">*</span></label><div className="product-combobox" onBlur={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node)){setSuggestionsOpen(false);setActiveSuggestion(-1);}}}><input disabled={linked} id="production-product-code" ref={product} required maxLength={80} value={form.productCode} onChange={event=>{set('productCode',event.target.value);setSuggestionsOpen(Boolean(event.target.value.trim()));setActiveSuggestion(-1);}} onFocus={()=>setSuggestionsOpen(Boolean(form.productCode.trim()))} onKeyDown={event=>{

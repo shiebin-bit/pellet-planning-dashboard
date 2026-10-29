@@ -68,7 +68,7 @@ The importer only needs the contract fields above. Keep any other workbook prese
 
 1. Confirm that the workbook has `bag order`, `bulk order`, and one dated daily sheet. Confirm the dated sheet’s `R14` date and review the order and stock counts before saving.
 2. On the first inventory import, select **Establish opening inventory from [as-of date] Closing**. This creates the physical baseline from the dated sheet and checks the baseline balance for every product/bucket.
-3. On a later import, leave the baseline option off. The import updates the source orders, versions, raw statuses, product descriptions, and manual annotations; it does **not** replace physical stock. To reconcile a later verified count, select **Reconcile physical Closing**, review the per-product ledger/count differences and confirm the reasoned adjustments.
+3. On a later import, leave the baseline option off. The import adds only new DO + full-material identities. Existing orders, source versions, raw statuses, descriptions, dates, quantities and manual fields are skipped and retained; it does **not** replace physical stock. To reconcile a later verified count, select **Reconcile physical Closing**, review the per-product ledger/count differences and confirm the reasoned adjustments.
 4. Review **Orders** and **Stock** after the import. Resolve missing bag weights, missing policies, incompatible units, and Medication/FMR mismatches before generating a draft.
 
 The dated baseline is a count boundary. A historical `DONE` row means production was complete before tracking began; it does not create a second production receipt. A historical `OUT` row means the order was fully collected before tracking began; it does not create a dispatch or replay a historical delivery. The 18 October Closing baseline is therefore not replayed through historical `DONE`/`OUT`/other annotations.
@@ -151,3 +151,11 @@ The local Docker/PostgreSQL development connection remains on loopback port **54
 - Use fictional material codes, customers, order numbers, and dates in tests and examples. The handoff documents only the generic source scale (443 orders and 87 stock items).
 - Review `git status` before a commit and keep source workbooks in a protected location outside the repository. The repository’s ignored extensions are a safeguard, not permission to force-add a file.
 - No release, deployment, CI, or test-pass status is asserted by this workflow document. Use the project’s existing installation and disposable-database verification instructions when validating a change.
+
+## Combined production cards
+
+A production card can hold multiple source-order allocations for one exact product/unit/bag-weight/Medication/FMR bucket. **Plan from Data** allows several orders and explicit per-order quantities. **Combine cards** merges pending source cards on the same date and line; the earliest card survives and the remaining originals are cancelled for history. Started or posted production cannot be combined.
+
+The card is scheduled and counted once. Details and the Excel **Order allocations** sheet enumerate DO, customer, delivery and planned quantity. Partial production is attributed in saved allocation order; surplus is unassigned stock. Production correction reverses attributed quantities without replacing the original ledger. Cancelling pending cards releases all their allocations. Source-linked combined cards are excluded from Copy planning.
+
+Short FS codes such as `5220` are display labels parsed from the description. Matching still uses the full material identity, so Bags, bulk and distinct materials never merge just because they share a short label.

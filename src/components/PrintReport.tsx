@@ -1,3 +1,5 @@
+import { getJobSourceAllocations } from '../domain/jobSources';
+import { productLabel } from '../lib/productLabel';
 import { useWorkspace } from '../lib/workspace';
 import { getDowntimeMinutesForWindow, getProductionResult } from '../domain/production-results';
 import type { Job, ScheduledJob } from '../domain/types';
@@ -39,7 +41,7 @@ function RangePrintReport({report,siteName}:{report:ProductionReport;siteName:st
 function ReportRow({job}:{job:ScheduledJob}) {
   const result=getProductionResult(job);
   return <tr>
-    <td><strong>{job.productCode}</strong><br/>{job.orderNo}</td>
+    <td><strong>{productLabel(job)}</strong><br/>{job.productCode}<br/>{getJobSourceAllocations(job).length ? getJobSourceAllocations(job).map(a=><div key={a.sourceOrderId}>DO {a.sourceSnapshot.doNo} · {numberLabel(a.plannedQuantity,a.sourceSnapshot.unit === 'Bags' ? 0 : 3)} {a.sourceSnapshot.unit}<br/>{a.sourceSnapshot.shipToParty || a.sourceSnapshot.soldToParty || ''}{a.sourceSnapshot.deliveryDate && <> · Due {a.sourceSnapshot.deliveryDate}</>}</div>) : job.orderNo}</td>
     <td>{job.bin||'—'}{job.binNeedsReview?' · Review':''}</td>
     <td>{numberLabel(job.quantityMt,2)} MT planned<br/>{job.mode==='bags'?numberLabel(job.bagCount||0,0)+' bags':'Bulk'}{job.status==='completed'&&<><br/><strong>{result.actualQuantityMt===null?'Actual not recorded':`${numberLabel(result.actualQuantityMt,2)} MT actual`}</strong>{result.varianceMt!==null&&<><br/>{outputVarianceLabel(result.varianceMt)}</>}</>}</td>
     <td>{fullDateTime(job.plannedStart)}<br/>→ {fullDateTime(job.plannedEnd)}<br/>{durationLabel(job.durationMinutes)} production</td>

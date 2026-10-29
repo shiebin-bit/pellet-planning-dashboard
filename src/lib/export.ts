@@ -1,3 +1,5 @@
+import { getJobSourceAllocations } from '../domain/jobSources';
+import { productLabel } from './productLabel';
 import type { Workbook } from 'exceljs';
 import type { AppState, Board, Job } from '../domain/types';
 import type { ProductionReport } from '../domain/reports';
@@ -49,7 +51,7 @@ export async function exportExcel(board: Board, state: AppState) {
       ...board.backlog.filter(job => job.lineId === line.lineId).map(job => ({ ...job, exportStart: '', exportEnd: '', exportStatus: job.issue ? 'Issue / awaiting quantity' : 'Awaiting quantity' })),
     ];
     rows.forEach((job, rowIndex) => {
-      [job.orderNo, job.productCode + ' ' + job.description, job.bin, job.bagCount, job.quantityMt, job.exportStart, job.exportEnd, job.exportStatus, job.remarks + (job.issue ? ' · Issue: ' + job.issue.reason : '') + (job.binNeedsReview ? ' · Review destination bin' : '')].forEach((value, column) => {
+      [job.orderNo, productLabel(job) + ' · ' + job.productCode + ' ' + job.description, job.bin, job.bagCount, job.quantityMt, job.exportStart, job.exportEnd, job.exportStatus, job.remarks + (job.issue ? ' · Issue: ' + job.issue.reason : '') + (job.binNeedsReview ? ' · Review destination bin' : '')].forEach((value, column) => {
         const cell = sheet.getCell(8 + rowIndex, offset + column + 1);
         // Values beginning with "=" stay literal text, never executable spreadsheet formulas.
         cell.value = value;
@@ -75,7 +77,7 @@ export async function exportExcel(board: Board, state: AppState) {
   ];
   [...new Map(board.lines.flatMap(line => line.jobs).map(job => [job.id, job])).values()].forEach(job => {
     const result=getProductionResult(job, asOf);
-    actuals.addRow({ line: job.lineId, product: job.productCode, order:job.orderNo, date:job.date, planned:job.quantityMt,
+    actuals.addRow({ line: job.lineId, product: productLabel(job), order:job.orderNo, date:job.date, planned:job.quantityMt,
       actual:result.actualQuantityMt??'',variance:result.varianceMt??'',plannedHours:job.durationMinutes/60,
       elapsedHours:result.elapsedMinutes===null?'':result.elapsedMinutes/60,
       start:job.actualStart?fullDateTime(job.actualStart):'',end:job.actualEnd?fullDateTime(job.actualEnd):'',
@@ -89,6 +91,7 @@ export async function exportExcel(board: Board, state: AppState) {
   actuals.getRow(1).font={bold:true};
   actuals.eachRow(row=>{row.alignment={vertical:'top',wrapText:true};});
   addStopsSheet(workbook, state.jobs, asOf, { start: board.start, end: board.end });
+  addAllocationsSheet(workbook, [...new Map([...board.lines.flatMap(l=>l.jobs),...board.backlog].map(job=>[job.id,job])).values()]);
   const buffer = await workbook.xlsx.writeBuffer();
   saveBlob(new Blob([buffer as BlobPart], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'Millplan_' + board.date + '.xlsx');
 }
@@ -128,7 +131,7 @@ export async function exportRangeExcel(report:ProductionReport,state:AppState) {
   ];
   for(const job of report.jobs){
     const result=getProductionResult(job, asOf);
-    records.addRow({date:job.date,line:job.lineId,order:job.orderNo,product:job.productCode,description:job.description,bin:job.bin,mode:job.mode,bags:job.bagCount??'',planned:job.quantityMt,actual:result.actualQuantityMt??'',variance:result.varianceMt??'',
+    records.addRow({date:job.date,line:job.lineId,order:job.orderNo,product:productLabel(job),description:job.description,bin:job.bin,mode:job.mode,bags:job.bagCount??'',planned:job.quantityMt,actual:result.actualQuantityMt??'',variance:result.varianceMt??'',
       plannedStart:job.plannedStart===null?'':fullDateTime(job.plannedStart),plannedEnd:job.plannedEnd===null?'':fullDateTime(job.plannedEnd),actualStart:job.actualStart?fullDateTime(job.actualStart):'',actualEnd:job.actualEnd?fullDateTime(job.actualEnd):'',
       plannedHours:job.durationMinutes/60,elapsedHours:result.elapsedMinutes===null?'':result.elapsedMinutes/60,
       downtimeHours:result.downtimeMinutes/60,netHours:result.netProductionMinutes===null?'':result.netProductionMinutes/60,
@@ -138,6 +141,7 @@ export async function exportRangeExcel(report:ProductionReport,state:AppState) {
   for(const key of ['planned','actual','variance','plannedHours','elapsedHours','downtimeHours','netHours'])records.getColumn(key).numFmt='#,##0.00';
   records.eachRow(row=>{row.alignment={vertical:'top',wrapText:true};});
   addStopsSheet(workbook,report.jobs,asOf);
+  addAllocationsSheet(workbook,report.jobs);
   const buffer=await workbook.xlsx.writeBuffer();
   saveBlob(new Blob([buffer as BlobPart],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),`Millplan_${report.selection.from}_${report.selection.to}_${report.selection.lineId}.xlsx`);
 }
@@ -159,7 +163,7 @@ function addStopsSheet(workbook: Workbook, jobs: readonly Job[], asOf: number, w
     const left = Math.max(start, window?.start ?? start);
     const right = Math.min(end, window?.end ?? end);
     if (window && (start >= window.end || end <= window.start)) continue;
-    sheet.addRow({ date: job.date, line: job.lineId, product: job.productCode, order: job.orderNo,
+    sheet.addRow({ date: job.date, line: job.lineId, product: productLabel(job), order: job.orderNo,
       start: fullDateTime(pause.pausedAt), end: pause.resumedAt ? fullDateTime(pause.resumedAt) : '',
       minutes: Math.max(0, right - left) / 60_000, reason: pause.reason, state: pause.resumedAt ? 'Closed' : 'Ongoing', asOf: fullDateTime(asOf) });
   }
@@ -167,4 +171,25 @@ function addStopsSheet(workbook: Workbook, jobs: readonly Job[], asOf: number, w
   sheet.views = [{ state: 'frozen', ySplit: 1 }]; sheet.autoFilter = 'A1:J1';
   sheet.getRow(1).font = { bold: true };
   sheet.eachRow(row => { row.alignment = { vertical: 'top', wrapText: true }; });
+}
+
+/** Detail rows explain the card total; they are not additional production. */
+function addAllocationsSheet(workbook: Workbook, jobs: readonly Job[]) {
+  const sheet = workbook.addWorksheet('Order allocations');
+  sheet.columns = [
+    {header:'Card ID',key:'card',width:40}, {header:'Planning date',key:'date',width:16},
+    {header:'Line',key:'line',width:10}, {header:'Product',key:'product',width:16},
+    {header:'Full material code',key:'material',width:25}, {header:'DO no',key:'order',width:22},
+    {header:'Customer / ship to',key:'customer',width:38}, {header:'Delivery date',key:'delivery',width:16},
+    {header:'Planned allocation',key:'quantity',width:20}, {header:'Unit',key:'unit',width:12},
+    {header:'Status',key:'status',width:18}, {header:'Source version',key:'version',width:16},
+  ];
+  for (const job of jobs) for (const allocation of getJobSourceAllocations(job)) {
+    const source = allocation.sourceSnapshot;
+    sheet.addRow({card:job.id,date:job.date,line:job.lineId,product:productLabel(job),material:source.materialCode,
+      order:source.doNo,customer:source.shipToParty||source.soldToParty||'',delivery:source.deliveryDate||'',
+      quantity:allocation.plannedQuantity,unit:source.unit,status:jobStatusLabel(job),version:allocation.sourceOrderVersion});
+  }
+  sheet.getRow(1).font={bold:true}; sheet.views=[{state:'frozen',ySplit:1}]; sheet.autoFilter='A1:L1';
+  sheet.eachRow(row=>{row.alignment={vertical:'top',wrapText:true};});
 }

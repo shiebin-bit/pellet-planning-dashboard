@@ -5,6 +5,7 @@ import { createMoveUndoEvent } from "../src/domain/audit";
 import { executeCommand, type Command, type WorkspaceEnvelope } from "../src/domain/commands";
 import { createSampleState } from "../src/domain/sample";
 import type { AppState, HistoryEvent, Settings } from "../src/domain/types";
+import { getJobSourceAllocations } from "../src/domain/jobSources";
 import { ApiError } from "./errors";
 import { getScheduledJobs } from "../src/domain/engine";
 import { planInventoryDraft } from "../src/domain/inventoryPlanner";
@@ -17,6 +18,7 @@ import {
   applySourceImport,
   clearSourceData,
   createJobFromSource,
+  createJobFromSources,
   getSourceOrder,
   listSourceOrders,
   previewSourceImport,
@@ -25,6 +27,7 @@ import {
 import {
   buildPlanningDemand,
   jobProductionTotal,
+  jobProductionTotalsBySource,
   validateInventoryJobs,
   executeInventoryCommand,
   getInventorySnapshot,
@@ -88,8 +91,9 @@ export class WorkspaceStore {
       const current=await loadWorkspace(client,false),job=current.state.jobs.find(row=>row.id===jobId);
       if(!job)throw new ApiError(404,"JOB_NOT_FOUND","Production card not found.");
       const total=await jobProductionTotal(client,jobId);
+      const orderTotals=await jobProductionTotalsBySource(client,jobId);
       await client.query("COMMIT");
-      return {total:job.mode==="bags"?total:total/1000,unit:job.mode==="bags"?"Bags":"MT"};
+      return {total:job.mode==="bags"?total:total/1000,unit:job.mode==="bags"?"Bags":"MT",orderTotals:orderTotals.map(row=>({sourceOrderId:row.sourceOrderId,total:job.mode==="bags"?row.total:row.total/1000}))};
     }catch(error){await client.query("ROLLBACK");throw error;}finally{client.release();}
   }
   async getInventoryOrders() {
@@ -278,6 +282,17 @@ export class WorkspaceStore {
             nextState = result.state;
             break;
           }
+          case "job.createFromSources": {
+            const result = await createJobFromSources(client, current.state, command.input, nowIso);
+            nextState = result.state;
+            break;
+          }
+          case "job.combinePending": {
+            const posted=await client.query("SELECT 1 FROM inventory_ledger WHERE job_id=ANY($1::text[]) LIMIT 1",[command.jobIds]);
+            if(posted.rowCount)throw new ApiError(409,"POSTED_JOB_IMMUTABLE","Cards with inventory movements cannot be combined. Correct or complete them separately.");
+            nextState=executeCommand(current.state,command,{nowIso});
+            break;
+          }
           case "data.setDeliveryStatus": {
             const result = await setDeliveryStatus(client, current.state, command.sourceOrderId, command.delivered, command.reason, nowIso);
             nextState = result.state;
@@ -293,6 +308,7 @@ export class WorkspaceStore {
           case "inventory.configure":
           case "production.recordReceipt":
           case "production.correct":
+          case "production.correctJobTotal":
           case "delivery.record":
           case "delivery.reverse":
           case "planning.commitDraft":
@@ -426,6 +442,23 @@ async function persistWorkspace(client: pg.PoolClient, value: LoadedWorkspace): 
     );
   }
   await client.query("DELETE FROM jobs WHERE workspace_id=1 AND ordinal >= 1000000000");
+  const sourceAllocations = value.state.jobs.flatMap(job => getJobSourceAllocations(job).map((allocation, ordinal) => ({
+    job_id: job.id,
+    source_order_id: allocation.sourceOrderId,
+    ordinal,
+    planned_quantity_scaled: Math.round(allocation.plannedQuantity * (allocation.sourceSnapshot.unit === "MT" ? 1_000 : 1)),
+    source_order_version: allocation.sourceOrderVersion,
+    source_snapshot: allocation.sourceSnapshot,
+  })));
+  await client.query("DELETE FROM job_source_allocations WHERE job_id IN (SELECT id FROM jobs WHERE workspace_id=1)");
+  for (let offset = 0; offset < sourceAllocations.length; offset += 1_000) {
+    await client.query(
+      `INSERT INTO job_source_allocations(job_id,source_order_id,ordinal,planned_quantity_scaled,source_order_version,source_snapshot)
+       SELECT job_id,source_order_id,ordinal,planned_quantity_scaled,source_order_version,source_snapshot
+       FROM jsonb_to_recordset($1::jsonb) AS x(job_id text,source_order_id text,ordinal integer,planned_quantity_scaled bigint,source_order_version integer,source_snapshot jsonb)`,
+      [JSON.stringify(sourceAllocations.slice(offset, offset + 1_000))],
+    );
+  }
   await client.query("UPDATE history_events SET ordinal = ordinal + 1000000000 WHERE workspace_id = 1");
   if (value.state.events.length) {
     await client.query(
@@ -485,7 +518,7 @@ function stripSourceLinks(state: AppState): AppState {
   return {
     ...state,
     jobs: state.jobs.map(job => {
-      const { sourceOrderId: _sourceOrderId, sourceOrderVersion: _sourceOrderVersion, sourceSnapshot: _sourceSnapshot, bagWeightKgSnapshot: _bagWeightKgSnapshot, ...plain } = job;
+      const { sourceOrderId: _sourceOrderId, sourceOrderVersion: _sourceOrderVersion, sourceSnapshot: _sourceSnapshot, sourceAllocations: _sourceAllocations, bagWeightKgSnapshot: _bagWeightKgSnapshot, ...plain } = job;
       return plain;
     }),
   };

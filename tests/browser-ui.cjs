@@ -23,6 +23,7 @@ async function bounds(locator,width,height){const b=await locator.boundingBox();
   await page.route('**/api/commands',r=>{errors.push('Unexpected browser mutation');return r.abort();});
   await page.goto(base+'/#/planning');await page.locator('.hplan-board').waitFor();
   assert.equal(await page.locator('.hplan-track').count(),4);await bounds(page.locator('.hplan-board'),1366,768);
+  await page.screenshot({path:path.join(output,'board-fit.png'),animations:'disabled',fullPage:true});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollHeight<=innerHeight+1),'Four-line board needs no page scrolling at 1366x768');
   await page.screenshot({path:path.join(output,'board-desktop.png'),animations:'disabled'});
   await page.getByRole('button',{name:'Overview',exact:true}).click();

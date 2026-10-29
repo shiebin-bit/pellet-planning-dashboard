@@ -139,6 +139,37 @@ describe("workspace backup validation", () => {
     expect(() => validateWorkspaceBackup(badEvent)).toThrow(/events\[0\].at.*ISO date-time/i);
   });
 
+  it("validates grouped allocation precision while allowing unallocated stock output", () => {
+    const grouped = rawBackup();
+    const job = pendingJob(grouped);
+    job.productCode = "MAT-GROUP";
+    job.mode = "bulk";
+    job.bagCount = null;
+    job.quantityMt = 4;
+    job.sourceAllocations = [
+      { sourceOrderId: "source-a", sourceOrderVersion: 1, plannedQuantity: 1.25, sourceSnapshot: { doNo: "DO-A", materialCode: "MAT-GROUP", description: "Grouped feed", quantity: 2, unit: "MT" } },
+      { sourceOrderId: "source-b", sourceOrderVersion: 1, plannedQuantity: 1.75, sourceSnapshot: { doNo: "DO-B", materialCode: "MAT-GROUP", description: "Grouped feed", quantity: 2, unit: "MT" } },
+    ];
+    expect(validateWorkspaceBackup(grouped).jobs.find(candidate => candidate.id === job.id)?.sourceAllocations).toHaveLength(2);
+
+    const overallocated = structuredClone(grouped);
+    pendingJob(overallocated).sourceAllocations[1].plannedQuantity = 3.75;
+    expect(() => validateWorkspaceBackup(overallocated)).toThrow(/sourceAllocations.*cannot exceed/i);
+
+    const preciseMt = structuredClone(grouped);
+    pendingJob(preciseMt).sourceAllocations[0].plannedQuantity = 1.0001;
+    expect(() => validateWorkspaceBackup(preciseMt)).toThrow(/plannedQuantity.*three decimal/i);
+
+    const wholeBags = structuredClone(grouped);
+    const bagJob = pendingJob(wholeBags);
+    bagJob.mode = "bags";
+    bagJob.bagCount = 100;
+    bagJob.quantityMt = 5;
+    bagJob.bagWeightKgSnapshot = 50;
+    bagJob.sourceAllocations = [{ sourceOrderId: "source-bags", sourceOrderVersion: 1, plannedQuantity: 20.5, sourceSnapshot: { doNo: "DO-BAGS", materialCode: "MAT-GROUP", description: "Grouped bags", quantity: 100, unit: "Bags" } }];
+    expect(() => validateWorkspaceBackup(wholeBags)).toThrow(/plannedQuantity.*whole number of bags/i);
+  });
+
   it("rejects duplicate job, event, and downtime ids", () => {
     const duplicateJobs = rawBackup();
     duplicateJobs.jobs.push({ ...duplicateJobs.jobs[0] });
