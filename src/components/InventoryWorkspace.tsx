@@ -10,6 +10,8 @@ import './InventoryWorkspace.css';
 import { DetailDialog } from './DetailDialog';
 import { useListState, useListPageScroll } from '../lib/listNavigation';
 import { RecordTable, RecordPagination } from './RecordTable';
+import { ProductIdentity } from './ProductIdentity';
+import { replenishmentShortage } from '../lib/stockPresentation';
 
 const qty = (value: number, unit: string) => `${numberLabel(value, unit === 'Bags' ? 0 : 3)} ${unit}`;
 const newKey = () => crypto.randomUUID();
@@ -20,6 +22,7 @@ export function StockBrowser({ policiesOnly = false }: { policiesOnly?: boolean 
   const [error, setError] = useState('');
   const listKey=policiesOnly?'stock.policies':'stock.list';
   const [loaded,setLoaded]=useState(false);
+  const [loading,setLoading]=useState(true);
   useListPageScroll(policiesOnly?null:'stock.position',loaded);
   const [search, setSearch] = useListState(listKey+'.search','');
   const [strategy, setStrategy] = useListState(listKey+'.strategy','');
@@ -33,8 +36,10 @@ export function StockBrowser({ policiesOnly = false }: { policiesOnly?: boolean 
   const [baseline,setBaseline]=useState<string|null>(null);
   const [lastCount, setLastCount] = useState<string|null>(null);
   useEffect(() => {
-    let active = true;
-    readInventory().then(data => { if (active) { setItems(data.items); setLoaded(true); setDate(data.asOfDate); setBaseline(data.baselineDate); setLastCount(data.lastCountDate ?? data.baselineDate ?? null); setError(''); } }).catch(e => { if (active) setError(e.message); });
+    let active = true;setLoading(true);setError('');
+    readInventory().then(data => { if (active) { setItems(data.items); setLoaded(true); setDate(data.asOfDate); setBaseline(data.baselineDate); setLastCount(data.lastCountDate ?? data.baselineDate ?? null); setError(''); } }).catch(e => { if (active) setError(e.message); }).finally(()=>{if(active)setLoading(false);});
+    // Keep the previous successful snapshot visible during refresh, clearly marked as updating.
+    // Initial loading does not render empty balances or a false missing-baseline message.
     return () => { active = false; };
   }, [savedAt, reload]);
   const previousFilters=useRef({search,strategy,variant,low});
@@ -48,16 +53,17 @@ export function StockBrowser({ policiesOnly = false }: { policiesOnly?: boolean 
   const buckets = rows.flatMap(i => (i.buckets.length ? i.buckets : [{ medication: '', fmrOmed: '', onHand: 0, reserved: 0, available: 0 }]).filter(b => !variant || `${b.medication} ${b.fmrOmed}`.toLowerCase().includes(variant.toLowerCase())).map(b => ({ ...b, item: i })));
   const display = policiesOnly ? rows : buckets;
   return <section className="inventory-workspace">
-    <div className="inventory-toolbar"><label className="field">Product<input aria-label="Search stock" placeholder="Material or description" value={search} onChange={e => setSearch(e.target.value)}/></label><label className="field">Strategy<select value={strategy} onChange={e => setStrategy(e.target.value)}><option value="">All strategies</option><option value="mto">Make for order</option><option value="mts">Make for stock</option></select></label>{!policiesOnly && <><label className="field">Medication / FMR<input value={variant} onChange={e => setVariant(e.target.value)} placeholder="All stock variants"/></label><label className="checkbox-label"><input type="checkbox" checked={low} onChange={e => setLow(e.target.checked)}/>Below safety stock</label></>}<button className="button secondary" onClick={() => setReload(n => n + 1)}><RefreshCw size={15}/>Refresh</button></div>
+    <div className="inventory-toolbar"><label className="field">Product<input aria-label="Search stock" placeholder="Material or description" value={search} onChange={e => setSearch(e.target.value)}/></label><label className="field">Strategy<select value={strategy} onChange={e => setStrategy(e.target.value)}><option value="">All strategies</option><option value="mto">Make for order</option><option value="mts">Make for stock</option></select></label>{!policiesOnly && <><label className="field">Medication / FMR<input value={variant} onChange={e => setVariant(e.target.value)} placeholder="All stock variants"/></label><label className="checkbox-label"><input type="checkbox" checked={low} onChange={e => setLow(e.target.checked)}/>Below safety stock</label></>}<button className="button secondary" disabled={loading} onClick={() => setReload(n => n + 1)}><RefreshCw size={15}/>{loading&&loaded?'Refreshing…':'Refresh'}</button></div>
     <dl className="stock-date-context" aria-label="Stock dates">
-      <div><dt>Snapshot date</dt><dd>{date ? dateLabel(date, true) : 'Loading…'}</dd></div>
-      <div><dt>Inventory baseline</dt><dd>{baseline ? dateLabel(baseline, true) : 'Not established'}</dd></div>
-      <div><dt>Last verified stock count</dt><dd>{lastCount ? dateLabel(lastCount, true) : 'Not established'}</dd></div>
+      <div><dt>Snapshot date</dt><dd>{date ? dateLabel(date, true) : error?'Unavailable':'Loading…'}</dd></div>
+      <div><dt>Inventory baseline</dt><dd>{!loaded ? error?'Unavailable':'Loading…' : baseline ? dateLabel(baseline, true) : 'Not established'}</dd></div>
+      <div><dt>Last verified stock count</dt><dd>{!loaded ? error?'Unavailable':'Loading…' : lastCount ? dateLabel(lastCount, true) : 'Not established'}</dd></div>
     </dl>
-    <details className="stock-balance-help"><summary>{items.length} finished-goods products · How stock balances work</summary><p className="data-note">On hand includes reserved stock; available stock excludes it. Blank medication / FMR is a separate stock variant. Product safety stock targets apply to the standard variant; other variants are planned against their orders. The snapshot includes all posted ledger movements, independently of the planning date and movement dates.</p></details>
-    {error && <p className="data-error" role="alert">{error}</p>}
+    {loaded&&<details className="stock-balance-help"><summary>{items.length} finished-goods products · How stock balances work</summary><p className="data-note">On hand includes reserved stock; available stock excludes it. Blank medication / FMR is a separate stock variant. Product safety stock targets apply to the standard variant; other variants are planned against their orders. The snapshot includes all posted ledger movements, independently of the planning date and movement dates.</p></details>}
+    {error && <div className="data-error" role="alert">{error} <button type="button" className="text-link" disabled={loading} onClick={()=>setReload(n=>n+1)}>Retry loading stock</button></div>}
+    {loading&&loaded&&<p className="inventory-load-state" role="status">Updating stock… Showing the last loaded balances.</p>}
     {selected && <DetailDialog title="Manage stock" subtitle={`${selected.materialCode} · ${selected.description}`} closeLabel="Close stock details" onClose={() => setSelected(null)}><div className="inventory-workspace inventory-detail">{error && <p className="data-error" role="alert">{error}</p>}<StockConfiguration key={`${selected.itemId}-${savedAt}`} item={items.find(i => i.itemId === selected.itemId) ?? selected}/>{!policiesOnly && <><StockAdjustment item={selected}/><h3>Stock movements</h3><div className="table-scroll"><table><thead><tr><th>DATE</th><th>TYPE</th><th>CHANGE</th><th>VARIANT / NOTE</th><th/></tr></thead><tbody>{ledger.slice(0, 100).map(entry => <tr key={entry.id}><td>{entry.occurredOn}</td><td>{entry.movementType}</td><td>{qty(entry.quantityDelta, entry.unit)}</td><td>{entry.medication || 'Standard'} / {entry.fmrOmed || '—'}<small>{entry.note}</small></td><td><MovementCorrection entry={entry}/></td></tr>)}</tbody></table></div><p className="data-note">Latest 100 movements. The full ledger is included in database backups.</p></>}</div></DetailDialog>}
-    <div className="panel"><InventoryPagination ready={loaded} label={policiesOnly ? "Stock policy" : "Stock"} position="top" total={display.length} page={page} setPage={setPage}/><RecordTable memoryKey={listKey+'.table'} ready={loaded} label={policiesOnly ? "Stock policy table" : "Stock table"} resetKey={`${page}-${search}-${strategy}-${variant}-${low}`}><table className="source-table"><thead><tr><th>PRODUCT</th>{!policiesOnly && <><th>VARIANT</th><th>ON HAND</th><th>RESERVED</th><th>AVAILABLE</th></>}<th>STRATEGY / SAFETY STOCK</th><th>EXTRA</th><th/></tr></thead><tbody>{policiesOnly ? rows.slice((page - 1) * 50, page * 50).map(i => <tr key={i.itemId}><td><strong>{i.materialCode}</strong><small>{i.description} · {i.unit === 'Bags' ? `${i.bagWeightKg ?? '?'}kg / bag` : 'Bulk MT'}</small></td><td>{i.strategy?.toUpperCase() ?? 'Review'} · {qty(i.targetQuantity ?? 0, i.unit)}{i.needsReview && <small>Needs review</small>}</td><td>{extraLabel(i)}</td><td><button className="button secondary" onClick={() => setSelected(i)}><Settings2 size={14}/>Edit policy</button></td></tr>) : buckets.slice((page - 1) * 50, page * 50).map((b, n) => <tr key={`${b.item.itemId}-${n}`}><td><strong>{b.item.materialCode}</strong><small>{b.item.description} · {b.item.bagWeightKg ? `${b.item.bagWeightKg}kg` : 'Bulk'}</small></td><td>{b.medication || 'Standard'}<small>{b.fmrOmed || 'No FMR / OMED'}</small></td><td>{qty(b.onHand, b.item.unit)}</td><td>{qty(b.reserved, b.item.unit)}</td><td className={!b.medication && !b.fmrOmed && b.available < (b.item.targetQuantity ?? 0) && b.item.strategy === 'mts' ? 'days-overdue' : ''}><strong>{qty(b.available, b.item.unit)}</strong></td><td>{b.item.strategy?.toUpperCase() ?? 'Review'} · {qty(b.item.targetQuantity ?? 0, b.item.unit)}{b.item.needsReview && <small>Needs review</small>}</td><td>{extraLabel(b.item)}</td><td><button className="button secondary" onClick={() => setSelected(b.item)}>Manage stock</button></td></tr>)}</tbody></table></RecordTable>{!display.length && <p className="data-empty">No stock matches. Import the daily stock workbook to establish inventory.</p>}<InventoryPagination ready={loaded} label={policiesOnly ? "Stock policy" : "Stock"} total={display.length} page={page} setPage={setPage}/></div>
+    <div className="panel" aria-busy={loading}>{!loaded?<div className="data-empty" role={error?undefined:'status'}>{error?'Stock could not be loaded. Retry above to view balances.':'Loading stock…'}</div>:<><InventoryPagination ready={loaded} label={policiesOnly ? "Stock policy" : "Stock"} position="top" total={display.length} page={page} setPage={setPage}/><RecordTable memoryKey={listKey+'.table'} ready={loaded} label={policiesOnly ? "Stock policy table" : "Stock table"} resetKey={`${page}-${search}-${strategy}-${variant}-${low}`}><table className="source-table"><thead><tr><th>PRODUCT</th>{!policiesOnly && <><th>VARIANT</th><th>ON HAND</th><th>RESERVED</th><th>AVAILABLE</th></>}<th>STRATEGY / SAFETY STOCK</th><th>EXTRA</th><th/></tr></thead><tbody>{policiesOnly ? rows.slice((page - 1) * 50, page * 50).map(i => <tr key={i.itemId}><td><ProductIdentity materialCode={i.materialCode} description={i.description} unit={i.unit} bagWeightKg={i.bagWeightKg}/></td><td>{i.strategy?.toUpperCase() ?? 'Review'} · {qty(i.targetQuantity ?? 0, i.unit)}{i.needsReview && <small>Needs review</small>}</td><td>{extraLabel(i)}</td><td><button className="button secondary" onClick={() => setSelected(i)}><Settings2 size={14}/>Edit policy</button></td></tr>) : buckets.slice((page - 1) * 50, page * 50).map((b, n) => <tr key={`${b.item.itemId}-${n}`}><td><ProductIdentity materialCode={b.item.materialCode} description={b.item.description} unit={b.item.unit} bagWeightKg={b.item.bagWeightKg}/></td><td>{b.medication || 'Standard'}<small>{b.fmrOmed || 'No FMR / OMED'}</small></td><td>{qty(b.onHand, b.item.unit)}</td><td>{qty(b.reserved, b.item.unit)}</td><td className={(replenishmentShortage(b.item,b)??0)>0?'days-overdue':''}><strong>{qty(b.available,b.item.unit)}</strong>{(replenishmentShortage(b.item,b)??0)>0&&<small className="stock-shortfall">Short {qty(replenishmentShortage(b.item,b)!,b.item.unit)}</small>}</td><td>{b.item.strategy?.toUpperCase() ?? 'Review'} · {qty(b.item.targetQuantity ?? 0, b.item.unit)}{b.item.needsReview && <small>Needs review</small>}</td><td>{extraLabel(b.item)}</td><td><button className="button secondary" onClick={() => setSelected(b.item)}>Manage stock</button></td></tr>)}</tbody></table></RecordTable>{!display.length&&!loading&&<p className="data-empty">{items.length?'No stock matches these filters.':'No stock products yet. Import the daily stock workbook to establish inventory.'}</p>}<InventoryPagination ready={loaded} label={policiesOnly ? "Stock policy" : "Stock"} total={display.length} page={page} setPage={setPage}/></>}</div>
     {(mutationLocked || hasConflict) && <p className="data-note">Resolve the current workspace update before saving stock changes.</p>}{toast?.error && <p className="data-error" role="alert">{toast.message}</p>}
   </section>;
 }
@@ -124,23 +130,48 @@ export function DailyStockBrowser() {
   const [date,setDate]=useListState('stock.daily.date',localDate);
   const [search,setSearch]=useListState('stock.daily.search','');
   const [page,setPage]=useListState('stock.daily.page',1);
-  const [rows,setRows]=useState<InventoryDailyStockRow[]>([]),[error,setError]=useState(''),[loaded,setLoaded]=useState(false);
-  useListPageScroll('stock.daily.position',loaded);
+  const [rows,setRows]=useState<InventoryDailyStockRow[]>([]);
+  const [products,setProducts]=useState<InventoryItemSnapshot[]>([]);
+  const [error,setError]=useState('');
+  const [detailsWarning,setDetailsWarning]=useState(false);
+  const [loadedDate,setLoadedDate]=useState<string|null>(null);
+  const [loading,setLoading]=useState(true);
+  const [reload,setReload]=useState(0);
+  const ready=loadedDate===date;
+  useListPageScroll('stock.daily.position',ready);
   const [countSelection, setCountSelection] = useState<{ row: InventoryDailyStockRow; date: string } | null>(null);
-  useEffect(() => { let active = true; readDailyStock(date).then(data => { if (active) { setRows(data); setLoaded(true); setError(''); } }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [date, savedAt]);
-  const matched = rows.filter(r => `${r.materialCode} ${r.medication} ${r.fmrOmed}`.toLowerCase().includes(search.toLowerCase()));
+  useEffect(() => {
+    let active=true;setLoading(true);setError('');
+    readDailyStock(date).then(data=>{
+      if(active){setRows(data);setLoadedDate(date);}
+    }).catch(e=>{if(active)setError(e.message);}).finally(()=>{if(active)setLoading(false);});
+    return()=>{active=false;};
+  },[date,savedAt,reload]);
+  useEffect(()=>{
+    let active=true;setDetailsWarning(false);
+    readInventory().then(stock=>{if(active)setProducts(stock.items);}).catch(()=>{if(active)setDetailsWarning(true);});
+    return()=>{active=false;};
+  },[savedAt,reload]);
+  const productById=new Map(products.map(item=>[item.itemId,item]));
+  const matched=rows.filter(row=>`${row.materialCode} ${productById.get(row.itemId)?.description??''} ${row.medication} ${row.fmrOmed}`.toLowerCase().includes(search.toLowerCase()));
   return <section className="daily-stock-browser">
-    <div className="inventory-toolbar"><label className="field">Stock date<input type="date" value={date} onChange={e => { setDate(e.target.value); setPage(1); }}/></label><label className="field">Product / variant<input aria-label="Search daily stock" value={search} onChange={e => { setSearch(e.target.value); setPage(1); }}/></label></div>
+    <div className="inventory-toolbar"><label className="field">Stock date<input type="date" value={date} onChange={e=>{setDate(e.target.value);setPage(1);}}/></label><label className="field">Product / variant<input aria-label="Search daily stock" value={search} onChange={e=>{setSearch(e.target.value);setPage(1);}}/></label></div>
     <p className="date-scope" aria-label="Daily stock date context"><strong>Daily movements: {dateLabel(date)}</strong> · Use Stock date to change this view. The planning date does not filter this table.</p>
     <p className="data-note">Closing = Opening + Production + Received + Sales return − Rework − Issue + Adjustments. The imported baseline day retains its reported Excel totals.</p>
-    {error && <p className="data-error" role="alert">{error}</p>}
-    {countSelection && <PhysicalCountDialog row={countSelection.row} date={countSelection.date} onClose={() => setCountSelection(null)}/>}
-
-    <div className="panel">
-      <InventoryPagination ready={loaded} label="Daily stock" position="top" total={matched.length} page={page} setPage={setPage}/>
-      <RecordTable memoryKey="stock.daily.table" ready={loaded} label="Daily stock table" resetKey={`${page}-${date}-${search}`}><table className="source-table"><thead><tr>{['PRODUCT / VARIANT', 'UNIT', 'OPENING', 'PRODUCTION', 'RECEIVED', 'RETURN', 'REWORK', 'ISSUE', 'ADJUSTMENT', 'CLOSING', 'COUNT'].map(h => <th key={h}>{h}</th>)}</tr></thead><tbody>{matched.slice((page - 1) * 50, page * 50).map((r, n) => <tr key={n}><td>{r.materialCode}<small>{r.medication || 'Standard'} / {r.fmrOmed || '—'}</small></td><td>{r.unit}</td>{[r.opening, r.production, r.received, r.salesReturn, r.rework, r.dispatch, r.adjustment, r.closing].map((v, i) => <td key={i}>{numberLabel(v, r.unit === 'Bags' ? 0 : 3)}</td>)}<td><button className="text-link" onClick={() => setCountSelection({ row: r, date })}>Enter physical count</button></td></tr>)}</tbody></table></RecordTable>
-      {!matched.length && <p className="data-empty">No stock records for this date.</p>}
-      <InventoryPagination ready={loaded} label="Daily stock" total={matched.length} page={page} setPage={setPage}/>
+    {error&&<div className="data-error" role="alert">{error} <button type="button" className="text-link" disabled={loading} onClick={()=>setReload(n=>n+1)}>Retry loading daily stock</button></div>}
+    {detailsWarning&&<p className="inventory-load-state" role="status">Product descriptions could not be loaded. Daily balances remain available by material code. <button type="button" className="text-link" onClick={()=>setReload(n=>n+1)}>Retry product details</button></p>}
+    {countSelection&&<PhysicalCountDialog row={countSelection.row} date={countSelection.date} onClose={()=>setCountSelection(null)}/>}
+    {loading&&ready&&<p className="inventory-load-state" role="status">Updating daily stock… Showing the last loaded balances.</p>}
+    <div className="panel" aria-busy={loading}>
+      {!ready?<div className="data-empty" role={error?undefined:'status'}>{error?'Daily stock could not be loaded. Retry above to view balances.':'Loading daily stock…'}</div>:<>
+        <InventoryPagination ready={ready} label="Daily stock" position="top" total={matched.length} page={page} setPage={setPage}/>
+        <RecordTable memoryKey="stock.daily.table" ready={ready} label="Daily stock table" resetKey={`${page}-${date}-${search}`}><table className="source-table"><thead><tr>{['PRODUCT / VARIANT','UNIT','OPENING','PRODUCTION','RECEIVED','RETURN','REWORK','ISSUE','ADJUSTMENT','CLOSING','COUNT'].map(h=><th key={h}>{h}</th>)}</tr></thead><tbody>{matched.slice((page-1)*50,page*50).map(row=>{
+          const product=productById.get(row.itemId);
+          return <tr key={`${row.itemId}-${row.medication}-${row.fmrOmed}`}><td><ProductIdentity materialCode={row.materialCode} description={product?.description} unit={row.unit} bagWeightKg={product?.bagWeightKg}/><small>{row.medication||'Standard'} / {row.fmrOmed||'—'}</small></td><td>{row.unit}</td>{[row.opening,row.production,row.received,row.salesReturn,row.rework,row.dispatch,row.adjustment,row.closing].map((value,index)=><td key={index}>{numberLabel(value,row.unit==='Bags'?0:3)}</td>)}<td><button className="text-link" onClick={()=>setCountSelection({row,date})}>Enter physical count</button></td></tr>;
+        })}</tbody></table></RecordTable>
+        {!matched.length&&!loading&&<p className="data-empty">No stock records for this date or filter.</p>}
+        <InventoryPagination ready={ready} label="Daily stock" total={matched.length} page={page} setPage={setPage}/>
+      </>}
     </div>
   </section>;
 }

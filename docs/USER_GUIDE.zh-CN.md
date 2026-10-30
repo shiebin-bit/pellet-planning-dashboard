@@ -14,6 +14,8 @@ Overview 先显示四项总数和当日时间轴，点产品段可查看卡片�
 
 ## 日常 planning
 
+手机上的 Planning board 默认按 PM1–PM4 显示生产列表，每张卡片可直接看到产品、包装、状态、数量、时间和订单数。点卡片打开原有详情，再用 Move 调整产线或位置；要直接拖动时切换 **Timeline**。List／Timeline 的选择在本次使用期间保留；电脑仍使用横向时间轴。两种视图都沿用 Day／Full plan 范围，并显示停机时间；跨日卡片会显示日期。
+
 1. 在日期选择器直接选日期、月份和年份。
 2. 在 Planning board 按 Add production，或产线旁的 +，填写产线、产品、订单、bin 和数量。保存后等待数据库确认。
 3. 未开始的卡片可以直接拉到另一条产线。放在另一张卡片上会插入它前面，放在空白处则排在后面。移动后确认新的 bin。Undo 只能撤销最近一次移动，其他修改会使它失效。
@@ -120,7 +122,13 @@ Orders 分开显示订单量、现货预留、累计生产、已取货、仍需�
 
 Stock 的 Manage stock 会弹出管理窗口，关闭后保留列表位置；可以在窗口内修改政策或记录库存变动。Stock 可按产品、策略和 Medication／FMR 筛选，修改 25／50kg 袋重、安全库存及固定／百分比超产设置。袋装、散装独立核算。数字安全库存为 Make for stock；PER ADVICE 为 Make for order；空白政策须确认后才自动补库存。安全库存适用于标准版本，药物／FMR 版本按其独立订单排产。
 
+Orders、Stock 和 Daily stock 的产品主标题统一为 **5220 · 25kg Bags** 或 **5220 · Bulk**，完整说明和 SAP material code 放在下方。短编号从 FS 产品说明读取，不截取长 material code。订单说明内已有袋重时优先保留；无法确认袋重则只显示 Bags。
+
+Stock 的标准 Make for stock 库存低于目标时，在 Available 下显示 **Short X Bags／MT**，缺口按「安全库存 − 可用库存」计算。药物／FMR 版本不会混入标准补库存缺口。首次载入显示 Loading，失败时可按 Retry loading stock；刷新期间显示上次成功读取的余额及更新提示，不会把尚未载入的资料当成零或未建立基准。
+
 Daily stock 可选日期查看 Opening、Production、Received、Return、Rework、Issue、Adjustment、Closing，并按 Enter physical count 输入盘点数量及原因，预览差异后确认。后续库存 Excel 导入默认只添加新订单；如需盘点对账，勾选 Reconcile physical Closing，核对每项差异后确认，不会覆盖原流水。
+
+切换 Daily stock 日期时，先隐藏旧日期资料，等待新日期完成载入；读取失败可直接重试。若只是产品说明无法读取，日报数量仍按完整 material code 显示，可用 Retry product details 重新取得说明。
 
 ## 自动排程与分批生产
 

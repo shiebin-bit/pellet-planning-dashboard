@@ -19,11 +19,11 @@ async function fixture(file) {
  const b = new ExcelJS.Workbook();
  for (const [name, unit, material, quantity] of [['bag order','BAG','7.0000000000025',100],['bulk order','MT','7.0000000000000',20]]) {
   const s = b.addWorksheet(name); s.addRow(['Delivery','Goods movement stat.','Goods Issue Date','Name of sold-to party','Name of the ship-to party','Material','Description','Delivery quantity','Sales Unit']);
-  s.addRow([unit === 'BAG' ? 'QA-BAG-100' : 'QA-BULK-20','A',new Date(tomorrow+'T00:00:00Z'),'Fictional customer','Fictional ship-to',material,'Fictional feed',quantity,unit]);
+  s.addRow([unit === 'BAG' ? 'QA-BAG-100' : 'QA-BULK-20','A',new Date(tomorrow+'T00:00:00Z'),'Fictional customer','Fictional ship-to',material,`FS 5220 Fictional feed ${unit==='BAG'?'25KG':'IN BULK'}`,quantity,unit]);
  }
  const d = b.addWorksheet('18th'); d.getCell('R14').value = new Date(yesterday+'T00:00:00Z');
  for (const [n, code, mode, weight, opening, target] of [[18,'7.0000000000025','BAG',25,30,20],[75,'7.0000000000000','BULK',null,0,'PER ADVICE']]) {
-  d.getCell(n,2).value=code; d.getCell(n,3).value='Fictional poultry feed with a long product description for finished-goods stock'; if(weight)d.getCell(n,4).value=weight; d.getCell(n,6).value=mode;
+  d.getCell(n,2).value=code; d.getCell(n,3).value=`FS 5220 Fictional poultry feed with a long product description for finished-goods stock ${weight?'25KG':'IN BULK'}`; if(weight)d.getCell(n,4).value=weight; d.getCell(n,6).value=mode;
   d.getCell(n,7).value=opening; d.getCell(n,8).value={formula:'0',result:0};d.getCell(n,13).value=opening; d.getCell(n,14).value=target;
  }
  await b.xlsx.writeFile(file);
@@ -45,6 +45,27 @@ async function fixture(file) {
   const bag=stock.items.find(i=>i.unit==='Bags');const order=progress.orders.find(o=>o.unit==='Bags');
   assert.equal(bag.totalOnHand,30); assert.equal(bag.totalReserved,30);assert.equal(order.netToPlan,70);
   console.log('PASS XLSM import establishes closing stock once, preserves item bag weight and reserves physical stock');
+  let releaseStock;const stockGate=new Promise(resolve=>{releaseStock=resolve;});
+  await page.route('**/api/inventory',async route=>{await stockGate;await route.continue();});
+  await page.getByRole('button',{name:'Stock',exact:true}).click();await page.getByRole('status').filter({hasText:'Loading stock'}).waitFor();
+  assert.doesNotMatch(await page.getByLabel('Stock dates').innerText(),/Not established/);assert.equal(await page.getByText('No stock products yet.',{exact:false}).count(),0);
+  releaseStock();await page.getByRole('button',{name:'Manage stock',exact:true}).first().waitFor();await page.unroute('**/api/inventory');
+  const bagStock=page.locator('.inventory-workspace .source-table tbody tr').filter({hasText:'7.0000000000025'});await bagStock.getByText('Short 20 Bags',{exact:true}).waitFor();assert.match(await bagStock.locator('.product-identity-title').innerText(),/5220.*25kg Bags/);assert.match(await bagStock.locator('.product-identity-material').innerText(),/7\.0000000000025/);
+  await page.getByRole('button',{name:'Data',exact:true}).click();
+  await page.route('**/api/inventory',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Fictional stock service unavailable'})}));
+  await page.getByRole('button',{name:'Stock',exact:true}).click();await page.getByRole('button',{name:'Retry loading stock',exact:true}).waitFor();assert.doesNotMatch(await page.getByLabel('Stock dates').innerText(),/Not established/);assert.equal(await page.getByRole('button',{name:'Manage stock',exact:true}).count(),0);
+  await page.unroute('**/api/inventory');await page.getByRole('button',{name:'Retry loading stock',exact:true}).click();await page.getByRole('button',{name:'Manage stock',exact:true}).first().waitFor();
+  let releaseRefresh;const refreshGate=new Promise(resolve=>{releaseRefresh=resolve;});await page.route('**/api/inventory',async route=>{await refreshGate;await route.continue();});await page.getByRole('button',{name:'Refresh',exact:true}).click();await page.getByRole('status').filter({hasText:'Showing the last loaded balances'}).waitFor();assert.equal(await page.getByRole('button',{name:'Manage stock',exact:true}).count(),2);releaseRefresh();await page.getByRole('button',{name:'Refresh',exact:true}).waitFor();await page.unroute('**/api/inventory');
+  await page.route('**/api/inventory',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Fictional product details unavailable'})}));
+  await page.getByRole('tab',{name:'Daily stock',exact:true}).click();await page.getByRole('button',{name:'Enter physical count',exact:true}).first().waitFor();await page.getByRole('button',{name:'Retry product details',exact:true}).waitFor();assert.equal(await page.locator('.daily-stock-browser tbody tr').count(),2,'Daily balances do not depend on optional product details');
+  await page.unroute('**/api/inventory');await page.getByRole('button',{name:'Retry product details',exact:true}).click();await wait(async()=>/5220/.test(await page.locator('.daily-stock-browser .product-identity-title').first().innerText()));
+  let releaseDaily;const dailyGate=new Promise(resolve=>{releaseDaily=resolve;});await page.route('**/api/inventory/daily?**',async route=>{await dailyGate;await route.continue();});await page.getByLabel('Stock date',{exact:true}).fill(yesterday);await page.getByRole('status').filter({hasText:'Loading daily stock'}).waitFor();assert.equal(await page.locator('.daily-stock-browser tbody tr').count(),0,'A new date does not show previous-date rows');releaseDaily();await page.getByRole('button',{name:'Enter physical count',exact:true}).first().waitFor();await page.unroute('**/api/inventory/daily?**');
+  await page.screenshot({path:path.join(output,'product-stock-identity.png')});await page.getByRole('tab',{name:'Stock',exact:true}).click();
+  // A later stock-policy weight must not relabel the packaging saved on the order.
+  await page.route('**/api/inventory',async route=>{const response=await route.fetch();const snapshot=await response.json();snapshot.items=snapshot.items.map(item=>({...item,bagWeightKg:item.unit==='Bags'?50:item.bagWeightKg}));await route.fulfill({response,json:snapshot});});
+  await page.getByRole('button',{name:'Data',exact:true}).click();await page.getByRole('button',{name:'QA-BAG-100',exact:true}).waitFor();await wait(async()=>/25kg Bags/.test(await page.locator('.orders-table tbody tr').filter({hasText:'QA-BAG-100'}).locator('.product-identity-title').innerText()));await page.unroute('**/api/inventory');
+  console.log('PASS Product packaging/full SAP identity, MTS shortage, truthful delayed/error/refresh states and optional daily metadata fallback');
+
   await page.getByRole('button',{name:'QA-BAG-100',exact:true}).click(); await page.getByRole('dialog',{name:'Order details'}).waitFor();await page.getByText('Still to plan',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Close order details',exact:true}).click();
   await page.getByRole('button',{name:'Generate planning',exact:true}).click(); const draft=page.getByRole('dialog',{name:'Generate planning draft',exact:true});
@@ -113,5 +134,5 @@ async function fixture(file) {
   console.log('PASS Readable seven-column orders and full picker preserve 0.001 MT shortages, exact reserved quantities and integer Bags');
   assert.deepEqual(errors,[]);console.log('PASS stock ledger, daily stock, backup v4, desktop/mobile rendering and browser console');
  } catch(e) {if(page)await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw e;}
- finally {if(browser)await browser.close();await command({type:'workspace.restore',backup});}
+ finally {if(page)await page.unrouteAll({behavior:'ignoreErrors'});if(browser)await browser.close();await command({type:'workspace.restore',backup});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

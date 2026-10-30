@@ -1,0 +1,5 @@
+.product-identity { min-width: 0; overflow-wrap: anywhere; }
+.product-identity .product-identity-title { display: block; font-size: 14px; line-height: 1.5; color: var(--text); }
+.product-identity-title span { font-weight: 500; }
+.product-identity .product-identity-description { margin-top: 5px; font-size: 12px; line-height: 1.5; }
+.product-identity .product-identity-material { margin-top: 5px; font-size: 11px; line-height: 1.5; color: var(--muted); font-variant-numeric: tabular-nums; }

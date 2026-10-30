@@ -8,11 +8,13 @@ import { useWorkspace } from '../lib/workspace';
 import { EmptyState } from '../components/Shared';
 import './Data.css';
 import { DetailDialog } from '../components/DetailDialog';
+import { ProductIdentity } from '../components/ProductIdentity';
+import { bagWeightFromDescription } from '../lib/productLabel';
 import { StockOrderPanel } from '../components/InventoryWorkspace';
 import { AutoPlanningButton } from '../components/InventoryDraftDialog';
 import { readInventoryOrders, readInventory } from '../lib/inventoryApi';
 import { useListState, useListPageScroll, useListTableScroll } from '../lib/listNavigation';
-import type { InventoryOrderProgress } from '../domain/inventoryTypes';
+import type { InventoryItemSnapshot, InventoryOrderProgress } from '../domain/inventoryTypes';
 
 const ORDER_VIEWS=[{id:'all',label:'All orders'},{id:'needs-production',label:'Needs production'},{id:'ready-pickup',label:'Ready for pickup'},{id:'needs-review',label:'Needs review'}] as const;
 type OrderView=typeof ORDER_VIEWS[number]['id'];
@@ -83,7 +85,8 @@ export function DataBrowser({ onChoose, compact = false, chooseBlockedReason, in
   const [today, setToday] = useState(localDate());
   const [detail, setDetail] = useState<SourceOrderDetail | null>(null);
   const [progress, setProgress] = useState<InventoryOrderProgress[]>([]);
-  useEffect(() => { let active = true; Promise.all([readInventoryOrders(),readInventory()]).then(([data,stock]) => { if (active) setProgress(stock.baselineDate ? data.orders : []); }).catch(() => { if (active) setProgress([]); }); return () => { active = false; }; }, [savedAt, reload]);
+  const [products,setProducts]=useState<InventoryItemSnapshot[]>([]);
+  useEffect(() => { let active = true; Promise.all([readInventoryOrders(),readInventory()]).then(([data,stock]) => { if (active) { setProgress(stock.baselineDate ? data.orders : []);setProducts(stock.items); } }).catch(() => { if (active) {setProgress([]);setProducts([]);} }); return () => { active = false; }; }, [savedAt, reload]);
   const request = useRef(0);
   const detailRequest = useRef(0);
   useEffect(() => { if (search === query) return; const timer = setTimeout(() => { setQuery(search); setPage(1); detailRequest.current++; setDetail(null); }, 250); return () => clearTimeout(timer); }, [search]);
@@ -150,7 +153,7 @@ export function DataBrowser({ onChoose, compact = false, chooseBlockedReason, in
           const lead=<DayCount label="production" value={order.currentDeliveryLeadDays} stopped={['completed','external-complete'].includes(order.productionStatus)}/>;
           return <tr key={order.id}>
             <td><button className="data-order-link" disabled={compact&&(!!blocked||!canPlanSource(order))} title={blocked||undefined} onClick={()=>compact?onChoose?.(order):void showDetail(order.id)}>{order.doNo}</button><small>{order.shipToParty||order.soldToParty||'—'}</small></td>
-            <td><strong className="data-material">{order.materialCode}</strong><small>{order.description||'—'}</small></td>
+            <td><ProductIdentity materialCode={order.materialCode} description={order.description} unit={order.unit} bagWeightKg={bagWeightFromDescription(order.description) ?? products.find(item=>item.materialCode.toLowerCase()===order.materialCode.toLowerCase()&&item.unit===order.unit)?.bagWeightKg}/></td>
             <td>{dateLabel(order.deliveryDate,true)}{!compact&&<small className="order-deadline">{lead}</small>}</td>
             <td className="tabular order-quantity">{orderQuantity(order.quantity,order.unit)}</td>
             {compact&&<><td>{lead}</td><td><DayCount label="pickup" value={order.currentDaysOutstanding} stopped={order.deliveryStatus==='delivered'}/></td></>}

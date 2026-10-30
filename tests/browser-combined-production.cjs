@@ -142,6 +142,17 @@ const sources = job => job.sourceAllocations || (job.sourceOrderId?[{sourceOrder
   const batchDrawer=page.getByRole('dialog',{name:'5220',exact:true});await batchDrawer.waitFor();const batchDetails=batchDrawer.getByLabel('Production order allocations');for(const [doNo,quantity] of [['QA-BATCH-A1','14.000 MT'],['QA-BATCH-A2','15.000 MT']])assert.ok((await batchDetails.locator('.combined-source-item').filter({hasText:doNo}).innerText()).includes(quantity));await batchDrawer.getByRole('button',{name:'Close production details',exact:true}).click();
   await page.setViewportSize({width:1366,height:650});await page.screenshot({path:path.join(output,'due-date-board-short-window.png'),animations:'disabled'});assert.deepEqual(errors,[]);
   console.log('PASS Due-date batches produce 5220(A1+A2), then5811, then later5220(A3); optional separate cards, saved order details and quantities remain correct');
+  await page.setViewportSize({width:320,height:760});await page.getByRole('region',{name:'Production by line',exact:true}).waitFor();
+  assert.equal(await page.locator('.production-list-line').count(),4);assert.equal(await page.locator('.production-list-card').count(),3);
+  const mobileGroup=page.locator(`.production-list-card[data-job-id="${batchJobs[0].id}"]`);
+  assert.match(await mobileGroup.innerText(),/5220[\s\S]*Bulk[\s\S]*29\.000 MT[\s\S]*2 orders/);
+  await mobileGroup.getByRole('button').focus();await page.keyboard.press('Enter');await batchDrawer.waitFor();assert.equal(await batchDrawer.getByLabel('Production order allocations').locator('.production-orders-count').innerText(),'2 orders');
+  await batchDrawer.getByRole('button',{name:'Move to another line or position',exact:true}).click();await batchDrawer.locator('.drawer-move-form').waitFor();
+  await page.keyboard.press('Escape');await batchDrawer.waitFor({state:'hidden'});await wait(()=>mobileGroup.getByRole('button').evaluate(el=>el===document.activeElement));
+  await page.screenshot({path:path.join(output,'mobile-production-list-320.png')});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  await page.getByRole('group',{name:'Planning view',exact:true}).getByRole('button',{name:'Timeline',exact:true}).click();await page.locator('.hplan-board').waitFor();assert.equal(await page.locator('.hplan-track').count(),4);
+  await page.setViewportSize({width:1366,height:768});assert.equal(await page.locator('.hplan-track').count(),4);assert.deepEqual(errors,[]);
+  console.log('PASS Mobile list preserves sequence, native quantities and grouped order detail/move access; original timeline and desktop lanes remain available');
  }catch(error){if(page)await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw error;}
  finally{if(browser)await browser.close();await command({type:'workspace.restore',backup});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

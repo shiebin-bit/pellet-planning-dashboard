@@ -1,5 +1,5 @@
 .record-table { min-width: 0; }
-.record-table-scroll { max-height: min(62dvh, 640px); overscroll-behavior: contain; scrollbar-gutter: stable; }
+.record-table-scroll { max-height: min(62dvh, 640px); overscroll-behavior: contain; }
 .record-table-scroll:focus-visible { outline: 2px solid var(--action); outline-offset: -2px; }
 .record-table-scroll th { position: sticky; top: 0; z-index: 2; background: #f5f7f8; }
 .record-table-scroll th:last-child,.record-table-scroll td:last-child { position: sticky; right: 0; background: #fff; box-shadow: -5px 0 8px -6px #17354b70; }

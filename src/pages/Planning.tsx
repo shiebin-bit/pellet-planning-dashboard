@@ -18,6 +18,8 @@ import { CombinePlanningButton } from '../components/CombinePlanningDialog';
 import './Planning.css';
 import { AutoPlanningButton } from '../components/InventoryDraftDialog';
 import { usePlanningCardPreview } from '../components/PlanningCardPreview';
+import { ProductionList } from '../components/ProductionList';
+import { useListState } from '../lib/listNavigation';
 
 type PlanRange = 'day' | 'full';
 
@@ -34,6 +36,11 @@ export function Planning() {
   const { board, state, openJob, openInput, openCopy, openSource, storageMode, selectedId, commit, canUndo, undo, mutationLocked, hasConflict } = useWorkspace();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [range, setRange] = useState<PlanRange>('day');
+  const [smallScreen,setSmallScreen]=useState(()=>window.matchMedia('(max-width:600px)').matches);
+  const [mobileView,setMobileView]=useListState<'list'|'timeline'>('planning.mobileView','list');
+  const listView=smallScreen&&mobileView==='list';
+  useEffect(()=>{setActiveId(null);},[listView]);
+  useEffect(()=>{const media=window.matchMedia('(max-width:600px)');const changed=()=>setSmallScreen(media.matches);media.addEventListener('change',changed);return()=>media.removeEventListener('change',changed);},[]);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 7 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
@@ -91,7 +98,7 @@ export function Planning() {
 
   return <div className={`page planning-page hplan-page ${activeId?'is-dragging':''}`}>
     <div className="page-heading hplan-heading">
-      <div><h1>Planning board</h1><p>Drag a not-started card to another line. Click for details.</p></div>
+      <div><h1>Planning board</h1><p>{listView?'Production sequence and orders, grouped by line.':'Drag a not-started card to another line. Click for details.'}</p></div>
       <div className="hplan-actions">
         <AutoPlanningButton/>
         <CombinePlanningButton/>
@@ -105,7 +112,8 @@ export function Planning() {
       </div>
     </div>
 
-    <DndContext sensors={sensors} collisionDetection={collision} accessibility={{
+    {smallScreen&&<div className="planning-mobile-view"><div className="hplan-range" role="group" aria-label="Planning view"><button type="button" aria-pressed={mobileView==='list'} className={mobileView==='list'?'active':''} onClick={()=>setMobileView('list')}>List</button><button type="button" aria-pressed={mobileView==='timeline'} className={mobileView==='timeline'?'active':''} onClick={()=>setMobileView('timeline')}>Timeline</button></div><p>{listView?'Tap a card for details and moves. Switch to Timeline to drag.':'Hold a not-started card, then drag to move it.'}</p></div>}
+    {listView?<ProductionList lines={board.lines} start={board.start} end={windowEnd} date={board.date} downtime={state.settings.downtime} dayStart={calendar.dayStart} bagWeightKg={state.settings.bagWeightKg} selectedId={selectedId} disabled={mutationLocked||hasConflict} onOpen={openJob} onAdd={openInput}/>:<DndContext sensors={sensors} collisionDetection={collision} accessibility={{
       screenReaderInstructions: { draggable: 'Press Enter to open production details. Press Space to pick up a card, arrow keys to move, Space to drop, or Escape to cancel. On a touch screen, hold the card briefly before dragging.' },
       announcements: {
         onDragStart: ({ active }) => `Picked up ${dragName(active)}.`,
@@ -120,7 +128,7 @@ export function Planning() {
         {board.lines.map(line => <LineRow key={line.lineId} line={line} start={board.start} end={windowEnd} hours={hours} downtime={state.settings.downtime} dayStart={calendar.dayStart} availableHours={calendar.availableHours} activeId={activeId} selectedId={selectedId} onOpen={openJob} onAdd={openInput}/>) }
       </section>
       <DragOverlay dropAnimation={null}>{active ? <div className={`hplan-drag-card ${active.issue ? 'issue' : active.status}`}><GripVertical size={17}/><div><strong>{productLabel(active)}</strong><span>{numberLabel(active.quantityMt)} MT</span></div><small>{active.lineId}</small></div> : null}</DragOverlay>
-    </DndContext>
+    </DndContext>}
 
     <div className="hplan-below"><div className="hplan-legend"><StatusLegend/>{state.settings.changeoverMinutes>0&&<span className="hplan-interval-key"><i className="changeover-key"/>Changeover / line clean-up · {durationLabel(state.settings.changeoverMinutes)}</span>}<span className="hplan-interval-key"><i className="unavailable-key"/>Unavailable</span></div>{fullHours > dayHours && range === 'day' && <span className="hplan-carry-note">Carry-over continues for up to {fullHours} hours. Use Full plan to view it.</span>}</div>
     <LegacyCarryoverNotice/>

@@ -28,6 +28,10 @@ async function bounds(locator,width,height){const b=await locator.boundingBox();
   await page.screenshot({path:path.join(output,'board-desktop.png'),animations:'disabled'});
   for(const viewport of [{width:1640,height:900},{width:1366,height:650},{width:1366,height:768},{width:390,height:844}]){
    await page.setViewportSize(viewport);
+   if(viewport.width<=600){
+    await page.getByRole('region',{name:'Production by line',exact:true}).waitFor();assert.equal(await page.locator('.production-list-line').count(),4);assert.equal(await page.locator('.hplan-board').count(),0);
+    await page.getByRole('group',{name:'Planning view',exact:true}).getByRole('button',{name:'Timeline',exact:true}).click();await page.locator('.hplan-board').waitFor();
+   }
    const layout=await page.locator('.hplan-card-content').evaluateAll(cards=>{
     let overlaps=0,clipped=0;
     for(const card of cards){
@@ -72,7 +76,8 @@ async function bounds(locator,width,height){const b=await locator.boundingBox();
    for(let i=0;i<18;i++){await page.keyboard.press('Tab');assert.ok(await modal.evaluate(el=>el.contains(document.activeElement)),'Production form retains keyboard focus');}
    await page.screenshot({path:path.join(output,`editor-${viewport.width}.png`),animations:'disabled'});await page.keyboard.press('Escape');await modal.waitFor({state:'hidden'});
    await page.getByRole('button',{name:'Copy planning',exact:true}).click();modal=page.getByRole('dialog',{name:'Copy planning',exact:true});await bounds(modal,viewport.width,viewport.height);await page.keyboard.press('Escape');await modal.waitFor({state:'hidden'});
-   await page.locator('.hplan-card-open').first().click();const drawer=page.getByRole('dialog');await bounds(drawer,viewport.width,viewport.height);const action=drawer.getByRole('group',{name:'Production actions',exact:true});await bounds(action,viewport.width,viewport.height);await drawer.locator('.drawer-body').evaluate(el=>{el.scrollTop=el.scrollHeight;});await bounds(action,viewport.width,viewport.height);await page.keyboard.press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'});
+   if(viewport.width<=600){await page.getByRole('group',{name:'Planning view',exact:true}).getByRole('button',{name:'List',exact:true}).click();await page.locator('.production-list').waitFor();}
+   await page.locator(viewport.width<=600?'.production-list-open':'.hplan-card-open').first().click();const drawer=page.getByRole('dialog');await bounds(drawer,viewport.width,viewport.height);const action=drawer.getByRole('group',{name:'Production actions',exact:true});await bounds(action,viewport.width,viewport.height);await drawer.locator('.drawer-body').evaluate(el=>{el.scrollTop=el.scrollHeight;});await bounds(action,viewport.width,viewport.height);await page.keyboard.press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'});
    await page.getByRole('button',{name:'Export',exact:true}).click();await bounds(page.locator('.export-menu'),viewport.width,viewport.height);await page.keyboard.press('Tab');assert.ok(await page.getByRole('button',{name:'Excel report',exact:false}).evaluate(el=>el===document.activeElement),'Export skips its pointer-only scrim');await page.keyboard.press('Escape');assert.ok(await page.getByRole('button',{name:'Export',exact:true}).evaluate(el=>el===document.activeElement),'Export returns focus on Escape');await page.getByRole('button',{name:'Export',exact:true}).click();await page.getByRole('button',{name:'Date range report',exact:false}).click();modal=page.getByRole('dialog',{name:'Date range report',exact:true});await bounds(modal,viewport.width,viewport.height);await page.keyboard.press('Escape');await modal.waitFor({state:'hidden'});
    if(viewport.width<=600){await page.screenshot({path:path.join(output,`board-${viewport.width}.png`),animations:'disabled'});await navigate('History');await page.screenshot({path:path.join(output,`history-${viewport.width}.png`),animations:'disabled'});}
   }
