@@ -38,13 +38,71 @@ describe('inventory draft scheduling', () => {
     expect(result.jobs[0].notBefore).toBe(new Date(`${FROM}T09:00:00+08:00`).toISOString());
     expect(result.utilization.every(u => u.hours <= u.availableHours + 1e-8)).toBe(true);
   });
-  it('appends work and preserves item weights when changing global settings', () => {
+  it('appends work while retaining the demand release floor and item weights', () => {
     const state = createJob(createEmptyState(), { date: FROM, lineId: 'PM1', orderNo: 'OLD', productCode: 'OLD', description: '', bin: '', mode: 'bags', bagCount: 100, quantityMt: 0, remarks: '', bagWeightKgSnapshot: 25, inventoryItemId: 'old' });
     const changed = updateSettings(state, { ...state.settings, bagWeightKg: 50 });
     expect(changed.jobs[0].quantityMt).toBe(2.5);
-    const oldEnd = getScheduledJobs(state)[0].plannedEnd!;
     const draft = planInventoryDraft(state, [demand()], { fromDate: FROM, toDate: FROM }, 1, NOW);
-    expect(draft.jobs.filter(j => j.lineId === 'PM1').every(j => Date.parse(j.notBefore) >= oldEnd)).toBe(true);
+    expect(draft.jobs.every(j => j.notBefore === new Date(`${FROM}T07:00:00+08:00`).toISOString())).toBe(true);
+    expect(draft.jobs.every(j => j.lineId !== 'PM1')).toBe(true);
+  });
+
+  it('changes draft splits with 8-hour versus 12-hour capacity', () => {
+    const state = createEmptyState();
+    state.settings.dayStart = '08:00';
+    state.settings.availableHours = 8;
+    state.settings.rates = { PM1: 10, PM2: 10, PM3: 10, PM4: 10 };
+    const large = demand({ unit: 'MT', bagWeightKg: null, quantity: 1000, notBefore: `${FROM}T08:00:00+08:00` });
+    const short = planInventoryDraft(state, [large], { fromDate: FROM, toDate: FROM }, 1, NOW);
+    expect(short.jobs).toHaveLength(4);
+    expect(short.jobs.reduce((sum, job) => sum + job.quantity, 0)).toBe(320);
+    state.settings.availableHours = 12;
+    const long = planInventoryDraft(state, [large], { fromDate: FROM, toDate: FROM }, 2, NOW);
+    expect(long.jobs).toHaveLength(4);
+    expect(long.jobs.reduce((sum, job) => sum + job.quantity, 0)).toBe(480);
+  });
+
+  it('maps post-midnight downtime inside an overnight shift and reports the actual finish date', () => {
+    const state = createEmptyState();
+    state.settings.dayStart = '22:00';
+    state.settings.availableHours = 8;
+    state.settings.rates = { PM1: 10, PM2: 10, PM3: 10, PM4: 10 };
+    state.settings.downtime = [{ id: 'overnight-stop', date: FROM, lineId: 'all', start: '01:00', end: '02:00', reason: 'Maintenance' }];
+    const large = demand({ unit: 'MT', bagWeightKg: null, quantity: 1000, notBefore: `${FROM}T22:00:00+08:00` });
+    const draft = planInventoryDraft(state, [large], { fromDate: FROM, toDate: FROM }, 1, NOW);
+    expect(draft.jobs.reduce((sum, job) => sum + job.quantity, 0)).toBe(280);
+    expect(draft.jobs.every(job => job.notBefore === new Date(`${FROM}T22:00:00+08:00`).toISOString())).toBe(true);
+    expect(draft.late[0]).toMatchObject({ dueDate: FROM, plannedDate: '2026-10-27' });
+    const committed = draft.jobs.reduce((current, job) => createJob(current, {
+      date: job.date, lineId: job.lineId, orderNo: job.orderNo, productCode: job.materialCode, description: job.description,
+      bin: '', mode: 'bulk', bagCount: null, quantityMt: job.quantity, remarks: '', inventoryItemId: job.itemId,
+      productionPurpose: job.productionPurpose, notBefore: job.notBefore, medication: '', fmrOmed: '',
+    }), state);
+    expect(Math.max(...getScheduledJobs(committed).map(job => job.plannedEnd!))).toBe(Date.parse('2026-10-27T06:00:00+08:00'));
+  });
+
+  it('waits for a future shift start and has no same-day capacity after shift end', () => {
+    const state = createEmptyState();
+    state.settings.dayStart = '08:00';
+    state.settings.availableHours = 8;
+    const before = planInventoryDraft(state, [demand({ notBefore: `${FROM}T08:00:00+08:00` })], { fromDate: FROM, toDate: FROM }, 1, `${FROM}T06:00:00+08:00`);
+    expect(before.jobs).toHaveLength(1);
+    const after = planInventoryDraft(state, [demand({ notBefore: `${FROM}T20:00:00+08:00` })], { fromDate: FROM, toDate: FROM }, 1, `${FROM}T20:00:00+08:00`);
+    expect(after.jobs).toEqual([]);
+    expect(after.backlog[0].quantity).toBe(100);
+  });
+  it('stores the current-time release floor so committed preview work cannot move earlier', () => {
+    const state = createEmptyState();
+    const now = `${FROM}T09:00:00+08:00`;
+    const draft = planInventoryDraft(state, [demand()], { fromDate: FROM, toDate: FROM }, 1, now);
+    expect(draft.jobs[0].notBefore).toBe(new Date(now).toISOString());
+    const committed = createJob(state, {
+      date: draft.jobs[0].date, lineId: draft.jobs[0].lineId, orderNo: draft.jobs[0].orderNo,
+      productCode: draft.jobs[0].materialCode, description: '', bin: '', mode: 'bags', bagCount: draft.jobs[0].quantity,
+      quantityMt: 0, remarks: '', inventoryItemId: draft.jobs[0].itemId, productionPurpose: 'mto',
+      bagWeightKgSnapshot: 25, notBefore: draft.jobs[0].notBefore,
+    });
+    expect(getScheduledJobs(committed)[0].plannedStart).toBeGreaterThanOrEqual(Date.parse(now));
   });
   it('combines adjacent compatible MTO orders scheduled on the same day and line', () => {
     const state = createEmptyState();

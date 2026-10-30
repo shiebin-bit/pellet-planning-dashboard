@@ -80,6 +80,8 @@ Copy quantity is a discriminated object: `{mode: "bags", bagCount: 200}` or `{mo
 
 Catalog codes are trimmed and unique ignoring case, including inactive products. Code length is at most 80, description at most 200; both are required. Create defaults to active; setActive controls availability. Stored products have `{id, code, description, defaultMode, active}`. Catalog changes do not rewrite existing job fields. Empty ordinary workspaces have no products; explicitly reset Demo workspaces include eight fictional products.
 
+Working hours remain editable through `settings.update`, including after legacy calendar activation. Changing `dayStart` or `availableHours` creates or replaces today's MYT calendar period using the transaction timestamp; callers must preserve the returned `calendarHistory` / `calendarCutover` metadata unchanged. Earlier assigned-day calendars and started/paused/completed locked segments are retained. Newly committed inventory drafts have a server-owned `calendarManagedRelease` field so their pending release floors can follow later hours changes; public job create/update inputs cannot write it. Manual and unmarked older release floors are preserved. Generate and review a fresh planning draft after changing hours; the save does not add or delete production cards.
+
 Database portable exports are version 3; offline planning exports remain version 2. `workspace.restore` also accepts strict version 1 JSON, normalizes its planning state to version 2 with an empty catalog, clears source links/Data, and preserves a recovery copy of the replaced workspace.
 
 ## Pause intervals and change history

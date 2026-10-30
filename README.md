@@ -77,7 +77,7 @@ Production **Done** completes production only; it does not prove that the custom
 
 Delivery lead days is the number of calendar days until the delivery due date. Days of outstanding is 1 on the due date, 2 on the following date, and increases daily in MYT until full collection. Production readiness and delivery completion are independent.
 
-The default production window is **07:00–19:00** on all four lines. Overflow resumes at 07:00 the following day. At calendar cutover, past pending plans retain their prior calendar and running/completed segments remain fixed. The assigned planning date remains visible even when a queued card starts later. Actual Start, pauses and Done always record the action time and are not restricted to shift hours.
+The default production window is **07:00–19:00** on all four lines. Change **Planning day starts** and **Daily available hours** in Settings → Workspace, then save. The new window takes effect from the server's current Malaysia date. Pending work for today/future dates recalculates, with overflow continuing in the next working window; past-assigned plans and started/completed segments retain their prior calendar. A shift can cross midnight. Generate planning uses the saved window and downtime to split available capacity; regenerate the draft after changing hours. Saving settings preserves card quantities and does not add or delete cards. MT/hour determines each batch's production duration; daily hours determine how much fits in each shift. Actual Start, pauses and Done record action times independently of shift hours.
 
 ## Inventory quick examples
 
@@ -114,7 +114,7 @@ Database JSON version 4 includes planning, the complete source graph, imported o
 - Default rates in MT/hour: PM1 8.5, PM2 7.5, PM3 6.5, PM4 7.0; PM2 uses 6.5 for prefixes 6811 and 6542.
 - Default bags are 50 kg. Production hours = MT ÷ applicable rate.
 - Different full material codes add changeover when either adjacent card comes from Data; two manual cards compare their first four product-code characters. The default changeover is 30 minutes.
-- The production shift is 07:00–19:00 (12 hours), with carry-over resuming the following morning. Historical plans retain their pre-cutover calendar.
+- The default shift is 07:00–19:00 (12 hours). Saved working hours apply from today onward; overnight shifts and carry-over are supported. Historical assignments retain their recorded calendar.
 - Downtime interrupts production/changeover and reduces availability. Work may carry into following days.
 - Planned utilisation measures production inside the selected planning-day window divided by available time. It includes carry-over. Planned MT and report records are grouped by assigned planning date.
 - Pausing records the server time and a required reason; Resume closes that interval. Done also closes an ongoing pause. Paused tasks retain their locked plan and occupy their line. Reporting an issue and recording a pause are separate actions.

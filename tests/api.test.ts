@@ -395,6 +395,27 @@ integration("PostgreSQL workspace API", () => {
       priorAvailableHours: state.settings.calendarCutover.priorAvailableHours,
     }, { effectiveFrom, priorDayStart: "08:30", priorAvailableHours: 23 });
     assert.ok(state.jobs[0].lockedSegments?.length);
+
+    const edited = await postCommand(2, "calendar-edit-same-day", {
+      type: "settings.update", settings: { ...state.settings, dayStart: "08:00", availableHours: 8 },
+    });
+    assert.equal(edited.status, 200, await edited.clone().text());
+    const editedState = (await edited.json() as WorkspaceEnvelope).state;
+    assert.equal(editedState.settings.calendarCutover, undefined);
+    assert.deepEqual(editedState.settings.calendarHistory?.map(period => ({
+      effectiveFrom: period.effectiveFrom, dayStart: period.dayStart, availableHours: period.availableHours,
+    })), [
+      { effectiveFrom: null, dayStart: "08:30", availableHours: 23 },
+      { effectiveFrom, dayStart: "08:00", availableHours: 8 },
+    ]);
+    assert.deepEqual(editedState.jobs[0], state.jobs[0]);
+
+    const tampered = structuredClone(editedState.settings);
+    tampered.calendarHistory![0].dayStart = "00:00";
+    const rejected = await postCommand(3, "calendar-metadata-tamper", { type: "settings.update", settings: tampered });
+    assert.equal(rejected.status, 400);
+    assert.match((await rejected.json()).error.message, /metadata cannot be edited/i);
+    assert.equal((await getWorkspace()).revision, 3);
   });
 
   it("imports source orders, plans one card, preserves the bag snapshot, and controls delivery", async () => {

@@ -103,6 +103,46 @@ integration("inventory API", () => {
     assert.equal(restored.items[0].totalReserved, 30);
   });
 
+  it("regenerates capacity after calendar edits and rejects stale draft commits without duplicates", async () => {
+    const input = baselineInput();
+    input.orders[0].rows[0].quantity = 1000;
+    input.items[0] = { ...input.items[0], strategy: "mto", targetQuantity: 0, opening: 0, closing: 0 };
+    await ok(await command(0, "capacity-baseline", { type: "inventory.importBaseline", input }));
+    let workspace = await get<any>("/api/workspace");
+    const settings8 = { ...workspace.state.settings, dayStart: "08:00", availableHours: 8, rates: { PM1: 10, PM2: 10, PM3: 10, PM4: 10 }, slowProductPrefixes: [] };
+    workspace = await json(await command(1, "capacity-eight-hours", { type: "settings.update", settings: settings8 }));
+    const date = addDays(malaysiaToday(), 1);
+    const draft8 = await json(await fetch(`${baseUrl}/api/inventory/draft`, { method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify({ fromDate: date, toDate: date }) }));
+    assert.equal(draft8.revision, 2);
+    assert.equal(draft8.jobs.reduce((sum: number, row: any) => sum + row.quantity, 0), 320);
+    const committed8 = await command(2, "capacity-commit-eight", { type: "planning.commitDraft", previewRevision: draft8.revision, jobs: draft8.jobs });
+    assert.equal(committed8.status, 200, await committed8.clone().text());
+    const retry = await command(2, "capacity-commit-eight", { type: "planning.commitDraft", previewRevision: draft8.revision, jobs: draft8.jobs });
+    assert.equal(retry.status, 200, await retry.clone().text());
+    workspace = await retry.json();
+    assert.equal(workspace.revision, 3);
+    assert.equal(workspace.state.jobs.length, 4);
+    assert.equal(workspace.state.jobs.every((job: any) => job.calendarManagedRelease === true), true);
+
+    const settings12 = { ...workspace.state.settings, availableHours: 12 };
+    workspace = await json(await command(3, "capacity-twelve-hours", { type: "settings.update", settings: settings12 }));
+    const staleDraft = await json(await fetch(`${baseUrl}/api/inventory/draft`, { method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify({ fromDate: date, toDate: date }) }));
+    assert.equal(staleDraft.revision, 4);
+    assert.equal(staleDraft.jobs.reduce((sum: number, row: any) => sum + row.quantity, 0), 160);
+    const item = (await get<InventorySnapshot>("/api/inventory")).items[0];
+    await ok(await command(4, "capacity-unrelated-change", { type: "inventory.configure", itemId: item.itemId, patch: { needsReview: false } }));
+    const staleCommit = await command(5, "capacity-stale-commit", { type: "planning.commitDraft", previewRevision: staleDraft.revision, jobs: staleDraft.jobs });
+    assert.equal(staleCommit.status, 409);
+    assert.equal((await staleCommit.json()).error.code, "STALE_DRAFT");
+    assert.equal((await get<any>("/api/workspace")).state.jobs.length, 4);
+
+    const freshDraft = await json(await fetch(`${baseUrl}/api/inventory/draft`, { method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify({ fromDate: date, toDate: date }) }));
+    assert.equal(freshDraft.revision, 5);
+    assert.equal(freshDraft.jobs.reduce((sum: number, row: any) => sum + row.quantity, 0), 160);
+    workspace = await json(await command(5, "capacity-fresh-commit", { type: "planning.commitDraft", previewRevision: freshDraft.revision, jobs: freshDraft.jobs }));
+    assert.equal(workspace.state.jobs.reduce((sum: number, row: any) => sum + row.quantityMt, 0), 480);
+  });
+
   it("previews first-baseline annotations against pre-existing orders and preserves manual buckets",async()=>{
     const pre=baselineInput();pre.includeBaseline=false;
     pre.orders[0].rows.push({...pre.orders[0].rows[0],doNo:"DO-200",soldToParty:"Second customer",shipToParty:"Second farm"});

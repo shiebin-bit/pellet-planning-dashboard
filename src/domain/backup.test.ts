@@ -39,6 +39,49 @@ describe("workspace backup validation", () => {
     );
   });
 
+  it("round-trips canonical calendar history and rejects conflicting or noncanonical metadata", () => {
+    const raw = rawBackup();
+    raw.settings.dayStart = "08:00";
+    raw.settings.availableHours = 8;
+    raw.settings.calendarHistory = [
+      { effectiveFrom: null, dayStart: "07:00", availableHours: 12, activatedAt: null },
+      { effectiveFrom: "2026-10-15", dayStart: "08:00", availableHours: 8, activatedAt: "2026-10-15T01:00:00.000Z" },
+    ];
+    const managed = pendingJob(raw);
+    managed.notBefore = "2026-10-15T01:00:00.000Z";
+    managed.calendarManagedRelease = true;
+    const restored = validateWorkspaceBackup(raw);
+    expect(restored.settings.calendarHistory).toEqual(raw.settings.calendarHistory);
+    expect(restored.settings.calendarHistory).not.toBe(raw.settings.calendarHistory);
+    expect(restored.settings.calendarHistory?.[0]).not.toBe(raw.settings.calendarHistory[0]);
+    expect(restored.jobs.find(job => job.id === managed.id)?.calendarManagedRelease).toBe(true);
+
+    const conflict = structuredClone(raw);
+    conflict.settings.calendarCutover = { effectiveFrom: "2026-10-15", priorDayStart: "07:00", priorAvailableHours: 12, activatedAt: "2026-10-15T01:00:00.000Z" };
+    expect(() => validateWorkspaceBackup(conflict)).toThrow(/both calendarHistory and calendarCutover/i);
+    const duplicate = structuredClone(raw);
+    duplicate.settings.calendarHistory.push({ effectiveFrom: "2026-10-15", dayStart: "09:00", availableHours: 7, activatedAt: "2026-10-15T02:00:00.000Z" });
+    expect(() => validateWorkspaceBackup(duplicate)).toThrow(/later than the previous period/i);
+    const mismatchedProjection = structuredClone(raw);
+    mismatchedProjection.settings.availableHours = 9;
+    expect(() => validateWorkspaceBackup(mismatchedProjection)).toThrow(/match the latest calendarHistory/i);
+    const missingActivation = structuredClone(raw);
+    missingActivation.settings.calendarHistory[1].activatedAt = null;
+    expect(() => validateWorkspaceBackup(missingActivation)).toThrow(/activatedAt.*required/i);
+    const malformedMarker = structuredClone(raw);
+    pendingJob(malformedMarker).calendarManagedRelease = "yes";
+    expect(() => validateWorkspaceBackup(malformedMarker)).toThrow(/calendarManagedRelease.*true or false/i);
+  });
+
+  it("accepts active jobs assigned to a historical zero-capacity period", () => {
+    const raw = rawBackup();
+    raw.settings.calendarHistory = [
+      { effectiveFrom: null, dayStart: "07:00", availableHours: 0, activatedAt: null },
+      { effectiveFrom: "2026-10-16", dayStart: "07:00", availableHours: 12, activatedAt: "2026-10-16T00:00:00.000Z" },
+    ];
+    expect(() => validateWorkspaceBackup(raw)).not.toThrow();
+  });
+
   it("accepts legacy completed records without actual-output fields and preserves null or zero actuals", () => {
     const raw = rawBackup();
     for (const job of raw.jobs.filter((item: any) => item.status === "completed")) {

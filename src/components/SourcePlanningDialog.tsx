@@ -114,7 +114,7 @@ export function SourcePlanningDialog() {
             <label className="field span-2">Production remarks<textarea maxLength={1000} rows={2} value={remarks} onChange={e => setRemarks(e.target.value)}/></label>
           </div>
           <div className="editor-estimate"><strong>{durationLabel(rate > 0 ? quantityMt / rate * 60 : 0)}</strong><span>at {numberLabel(rate)} MT / hr</span></div>
-          <p className="data-note">One card is appended to the selected line. Production uses 07:00–19:00; carry-over continues the next working day. {first?.unit === 'Bags' && `${bagWeight} kg per bag is saved with this card.`} Existing orders are never overwritten by Excel imports.</p>
+          <p className="data-note">One card is appended to the selected line. Production uses the working hours saved in Settings; carry-over continues in the next working window. {first?.unit === 'Bags' && `${bagWeight} kg per bag is saved with this card.`} Existing orders are never overwritten by Excel imports.</p>
           {failed && toast?.error && <p className="data-error" role="alert">{toast.message}</p>}
         </div>
         <footer className="editor-footer"><button type="button" className="button secondary" disabled={mutationLocked} onClick={closeSource}>Cancel</button><div className="toolbar-spacer"/><button type="submit" className="button primary" disabled={!valid || loading || !!loadError || mutationLocked || hasConflict}>{mutationLocked ? 'Saving…' : 'Add to planning'}</button></footer>

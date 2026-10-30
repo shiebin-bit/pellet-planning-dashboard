@@ -30,7 +30,7 @@ The API tests exercise concurrent revisions, invalid-command rollback, duplicate
 
 ## Browser integration
 
-`npm run test:browser` runs `tests/browser.cjs`, `tests/browser-efficiency.cjs`, `tests/browser-pause-audit.cjs` , `tests/browser-ui.cjs` and `tests/browser-data.cjs`; all replace the entire selected workspace and restore the starting state in `finally`. Use a **separate disposable database/server**, never the real planning service. Create `millplan_browser_test` using the same `createdb` command as above with that database name. Copy `.env` to ignored `.env.browser-test`; change only its DATABASE_URL database path to `/millplan_browser_test`, keep HOST=127.0.0.1 and set PORT=8091. Build `dist` first.
+`npm run test:browser` runs eleven scripts covering the base workflow, efficiency, pause/audit, UI, Data, inventory, table UX, Settings preview, list navigation, combined production and editable calendars. Mutation suites replace the selected workspace and restore the starting state in `finally`. Use a **separate disposable database/server**, never the real planning service. Create `millplan_browser_test` using the same `createdb` command as above with that database name. Copy `.env` to ignored `.env.browser-test`; change only its DATABASE_URL database path to `/millplan_browser_test`, keep HOST=127.0.0.1 and set PORT=8091. Build `dist` first.
 
 ```powershell
 npx playwright install chromium
@@ -69,7 +69,7 @@ The pause/audit suite covers required pause reasons, trusted time, locked plans 
 
 The UI regression suite adds four-line board fit at 1366 × 768, first-screen Overview hierarchy, all six pages at 320/390/768/1440px, calendar/export/dialog/drawer bounds, keyboard focus and Escape, primary/status text contrast (4.5:1), and print visibility. It uses explicit demo fixtures and blocks browser writes after setup.
 
-CI runs all six suites on Ubuntu with PostgreSQL 16, Node 24 and Playwright Chromium. Browser tests use the CI-only database after the API suite.
+CI runs the complete suite on Ubuntu with PostgreSQL 16, Node 24 and Playwright Chromium. Browser tests use the CI-only database after the API suite.
 
 ## Release checks
 
@@ -110,3 +110,9 @@ Fixed-action regressions verify drawer actions stay visible at 1366×650, 390px 
 Product/stock/mobile regressions cover FS display codes with full SAP identity retained, explicit and description-derived bag sizes, saved order packaging despite a different current stock-policy weight, standard-MTS shortage after reservations, and exclusion of MTO/Medication/FMR variants. Controlled browser responses test initial loading, service failure and retry, last-successful stock balances during refresh, optional product metadata failure without hiding daily balances, and hiding previous-date daily rows while a new date loads. Mobile checks verify four PM list groups, combined-card quantity and order count, Enter-to-open, reachable Move, focus return, no page overflow at 320px, switching back to four timeline tracks, and unchanged desktop fit. Unit coverage includes exact 0.001 MT replenishment arithmetic.
 
 This UI release passed 126 unit tests, 30 PostgreSQL API tests and all ten browser scripts. Table checks also cover a Chrome overlay-scrollbar boundary where a reserved gutter could advertise horizontal scrolling even though the complete table was already visible; bounded scrolling, sticky headers and genuine horizontal controls remain verified on desktop and mobile.
+
+## Editable working calendar
+
+Calendar tests cover legacy materialization, repeated same-day changes, later effective periods, metadata tamper rejection, canonical history/backup validation and historical zero-capacity calendars. They preserve started/paused/completed locks, manual/API release constraints and unmarked old cards; server-managed inventory floors rebase, copies lose the marker and mixed combines retain the latest floor without gaining it. API tests exercise stale revisions, exact retries and failed calendar writes without partial persistence.
+
+`tests/browser-calendar.cjs` edits an already activated calendar, reloads Settings, checks the board window and retained quantities/locks, compares 320 MT in an 8-hour day against 480 MT in a 12-hour day across four fictional 10 MT/hr lines, and accepts a 20:00 finish. A 22:00–06:00 shift with 01:00–02:00 downtime produces 280 MT and commits successfully; outside-window legacy warnings and 320/390px layouts are checked. Evidence stays under ignored `output/playwright/redesign/calendar/`. Final local verification passed 137 unit tests, 31 PostgreSQL API tests and all eleven browser scripts against a disposable database; production data was not used for mutation tests.

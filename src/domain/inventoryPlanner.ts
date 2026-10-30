@@ -1,10 +1,10 @@
-import { getCalendarForDate, getRate, getScheduledJobs, getBoard } from './engine';
+import { getAvailableIntervals, getBoard, getCalendarForDate, getRate, getScheduledJobs, getShiftWindow } from './engine';
 import { LINE_IDS, type AppState, type LineId } from './types';
 import type { InventoryDraftJob, InventoryDraftPreview, InventoryDraftRequest, InventoryPlanningDemandRow } from './inventoryTypes';
 
 const MINUTE = 60_000;
-const dayAt = (date: string, time: string) => Date.parse(`${date}T${time}:00+08:00`);
 const addDay = (date: string) => new Date(Date.parse(`${date}T12:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+const malaysiaDate = (timestamp: number) => new Date(timestamp + 8 * 60 * MINUTE).toISOString().slice(0, 10);
 const identity = (row: { materialCode: string; medication?: string; fmrOmed?: string }) => [row.materialCode, row.medication ?? '', row.fmrOmed ?? ''].map(x => x.trim().toLowerCase()).join('\u0000');
 
 /** Bounded, deterministic append-only draft. It never moves an existing task. */
@@ -22,6 +22,7 @@ export function planInventoryDraft(state: AppState, demands: InventoryPlanningDe
     return [line, last ? identity({ materialCode: last.productCode, medication: last.medication, fmrOmed: last.fmrOmed }) : ''];
   })) as Record<LineId, string>;
   const jobs: InventoryDraftJob[] = [], backlog: InventoryPlanningDemandRow[] = [];
+  const draftEnds = new Map<string, number>();
   const ordered = [...demands].sort((a, b) => (a.purpose === 'mts' ? 1 : 0) - (b.purpose === 'mts' ? 1 : 0) || a.dueDate.localeCompare(b.dueDate) || a.key.localeCompare(b.key));
   const work = ordered.map(demand => {
     const scale = demand.unit === 'Bags' ? 1 : 1000;
@@ -36,7 +37,7 @@ export function planInventoryDraft(state: AppState, demands: InventoryPlanningDe
     const scale = batch[0].scale;
     const mtPerBase = demand.unit === 'Bags' ? (demand.bagWeightKg ?? 0) / 1000 : 1;
     if (mtPerBase <= 0) continue;
-    const notBefore = Math.max(...batch.map(row => Date.parse(row.demand.notBefore)));
+    const notBefore = Math.max(Date.parse(nowIso), ...batch.map(row => Date.parse(row.demand.notBefore)));
     while (batchRemaining(batch) > 0 && jobs.length < 2000) {
       const pendingAllocations = batch.filter(row => row.allocationRemaining > 0);
       const allocationWindow = pendingAllocations.slice(0, 500);
@@ -46,10 +47,12 @@ export function planInventoryDraft(state: AppState, demands: InventoryPlanningDe
       const candidates: Array<{ date: string; lineId: LineId; quantity: number; start: number; end: number }> = [];
       for (const date of days) for (const lineId of LINE_IDS) {
         const settings = getCalendarForDate(state.settings, date);
-        const start = Math.max(dayAt(date, settings.dayStart), cursor[lineId], notBefore);
-        const end = dayAt(date, settings.dayStart) + settings.availableHours * 60 * MINUTE;
-        if (start >= end) continue;
-        const slots = freeSlots(start, end, settings.downtime.filter(d => d.date === date && (d.lineId === 'all' || d.lineId === lineId)).map(d => [dayAt(date, d.start), dayAt(date, d.end) <= dayAt(date, d.start) ? dayAt(addDay(date), d.end) : dayAt(date, d.end)]));
+        const shift = getShiftWindow(settings, date);
+        const start = Math.max(shift.start, cursor[lineId], notBefore);
+        if (start >= shift.end) continue;
+        const slots = getAvailableIntervals(settings, lineId, date)
+          .map(interval => [Math.max(start, interval.start), interval.end] as [number, number])
+          .filter(([slotStart, slotEnd]) => slotStart < slotEnd);
         const free = slots.reduce((sum, [a, b]) => sum + (b - a) / MINUTE, 0);
         const change = previous[lineId] && previous[lineId] !== identity(demand) ? settings.changeoverMinutes : 0;
         const rate = getRate(state.settings, lineId, demand.materialCode);
@@ -83,8 +86,9 @@ export function planInventoryDraft(state: AppState, demands: InventoryPlanningDe
       const firstOrder = sourceAllocations.length
         ? batch.find(row => row.demand.sourceOrderId === sourceAllocations[0].sourceOrderId)?.demand
         : null;
+      const draftId = `draft-${jobs.length + 1}`;
       jobs.push({
-        draftId: `draft-${jobs.length + 1}`,
+        draftId,
         itemId: demand.itemId,
         sourceOrderId: sourceAllocations.length === 1 ? sourceAllocations[0].sourceOrderId : null,
         ...(sourceAllocations.length ? { sourceAllocations } : {}),
@@ -97,12 +101,13 @@ export function planInventoryDraft(state: AppState, demands: InventoryPlanningDe
         date: best.date,
         lineId: best.lineId,
         quantity: quantityScaled / scale,
-        notBefore: new Date(best.start).toISOString(),
+        notBefore: new Date(notBefore).toISOString(),
         bin: '',
         remarks: '',
         medication: demand.medication,
         fmrOmed: demand.fmrOmed,
       });
+      draftEnds.set(draftId, best.end);
       cursor[best.lineId] = best.end;
       previous[best.lineId] = identity(demand);
     }
@@ -117,7 +122,8 @@ export function planInventoryDraft(state: AppState, demands: InventoryPlanningDe
   }));
   const late = ordered.flatMap(d => {
     const matched = jobs.filter(j => j.itemId === d.itemId && (j.sourceOrderId === d.sourceOrderId || j.sourceAllocations?.some(row => row.sourceOrderId === d.sourceOrderId)) && j.productionPurpose === d.purpose);
-    const plannedDate = matched.at(-1)?.date ?? null;
+    const plannedEnd = Math.max(...matched.map(job => draftEnds.get(job.draftId) ?? Number.NEGATIVE_INFINITY));
+    const plannedDate = Number.isFinite(plannedEnd) ? malaysiaDate(plannedEnd) : null;
     const unplanned = backlog.find(b => b.key === d.key)?.quantity ?? 0;
     return unplanned > 0 || plannedDate && plannedDate > d.dueDate ? [{ key: d.key, dueDate: d.dueDate, plannedDate, quantity: unplanned || d.quantity }] : [];
   });
@@ -161,16 +167,4 @@ function demandBatches(rows: DemandWork[], combine: boolean): DemandWork[][] {
 
 function batchRemaining(batch: DemandWork[]): number {
   return batch.reduce((sum, row) => sum + row.allocationRemaining + row.extraRemaining, 0);
-}
-
-function freeSlots(start: number, end: number, blocked: number[][]): number[][] {
-  let cursor = start;
-  const slots: number[][] = [];
-  for (const [a, b] of blocked.sort((x, y) => x[0] - y[0])) {
-    if (b <= cursor || a >= end) continue;
-    if (a > cursor) slots.push([cursor, Math.min(a, end)]);
-    cursor = Math.max(cursor, b);
-  }
-  if (cursor < end) slots.push([cursor, end]);
-  return slots;
 }

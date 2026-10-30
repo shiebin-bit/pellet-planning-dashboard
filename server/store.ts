@@ -480,6 +480,7 @@ function emptyInventoryData(): PortableInventoryData { return { items: [], impor
 function activateCalendar(state: AppState, effectiveFrom: string, dayStart: string, availableHours: number, nowIso: string): AppState {
   if (availableHours <= 0 || availableHours > 24) throw new Error("Available hours must be greater than zero and no more than 24.");
   if (effectiveFrom !== malaysiaDateAt(nowIso)) throw new Error("The production calendar must take effect on the current Malaysia date.");
+  if (state.settings.calendarHistory) throw new Error("The legacy calendar activation command is unavailable after editable production hours are saved.");
   const existing = state.settings.calendarCutover;
   const cutover = existing ?? {
     effectiveFrom,

@@ -105,7 +105,7 @@ Data 的 Plan production 或 Planning board 的 Plan from Data 使用同一个�
 
 ## 班次与备份
 
-四条线默认每天 07:00–19:00，超出的生产次日 07:00 继续。Day 显示当班；Full plan 显示跨日分段和夜间不可用时间。改动前的历史待产计划沿用旧班次；已开始、已完成计划和实际时间保留。排产日期不会因队列延后而被改写，请同时查看计算后的开始日期。
+四条线默认每天 07:00–19:00。Settings → Workspace 可修改 Planning day starts 和 Daily available hours，画面会预览结束时间，跨午夜时显示 +1 day。按 Save settings 后，从服务器当前马来西亚日期开始采用新工时，重算今天及之后未开始的排程；当天排不下的生产延到下一个工作时段。较早排产日期的计划沿用旧班次，已开始、暂停、完成的计划及实际时间保留。保存工时不会增删卡片或改变数量。Day 显示当班，Full plan 显示跨日分段。排产日期不会因队列延后而被改写，请同时查看计算后的开始日期。
 
 数据库 Download backup 生成版本 4，包含排产、Data 订单、导入批次、原始版本、库存及完整流水。旧版仍可读取；恢复前会提示缺少的订单、产品清单或库存资料，并保留上一份工作区供下载。含订单或库存的备份须在数据库版恢复。
 
@@ -136,7 +136,7 @@ Daily stock 可选日期查看 Opening、Production、Received、Return、Rework
 
 打开生产卡片后，顶部 **Orders in this batch** 显示订单数、批次总量，以及每张订单的 DO、计划数量、客户、交期和已生产数量。未开始的卡片若有可合并对象，会显示 **Combine with other cards**；当前卡片已勾选，再选择其他卡片，核对交期和总量后确认。一次最多 500 张订单，原卡片保留在 History。旧卡片未保存客户或交期时，从已保存订单补充显示，卡片原数量与来源快照保持不变。
 
-在 Data 或 Planning board 按 Generate planning，选择日期范围并生成草稿。系统先用兼容现货、扣除已有未完成排程，再按交货日期安排订单缺口，最后补安全库存。四条产线均可用，沿用 07:00–19:00、产能、换料和停机设置。大订单可拆到不同日期／产线，袋数为整数；未排数量会保留。负责人可修改草稿数量、日期和产线，确认后才整批保存，原有卡片不移动。
+在 Data 或 Planning board 按 Generate planning，选择日期范围并生成草稿。系统先用兼容现货、扣除已有未完成排程，再按交货日期安排订单缺口，最后补安全库存。四条产线均可用，沿用 Settings 保存的开工时间、每日工时、产能、换料和停机设置。修改工时后重新生成草稿，系统会按新容量调整分批数量与日期；已保存的卡片不会被自动增删。大订单可拆到不同日期／产线，袋数为整数；未排数量会保留。负责人可修改草稿数量、日期和产线，确认后才整批保存，原有卡片不移动。
 
 开始后，在卡片内 Record production quantity 填本次新增产量及日期，可分次入库。Done 填最终累计产量，包括已入账部分，系统只补差额。订单内 Record collection 填本次取货数量；全部取完才 OUT。Stock 的流水可 Correct output 或 Reverse collection，必须填写原因，原记录保留。
 
@@ -144,7 +144,7 @@ Daily stock 可选日期查看 Opening、Production、Received、Return、Rework
 
 ## Settings 标签与卡片预览
 
-Settings 分为 Workspace、Production rules、Unavailable periods、Products、Stock policies（数据库版）及 Backup & recovery。切换这些标签保留输入草稿，页面上方会固定显示 Save settings 和未保存提示。Save settings 只保存工作区、产能及停机列表；产品清单和库存政策各自保存，互不覆盖。如果其他标签有无效栏位，保存会自动打开对应标签并聚焦栏位。离开 Settings 页面仍会丢弃未保存草稿。
+Settings 分为 Workspace、Production rules、Unavailable periods、Products、Stock policies（数据库版）及 Backup & recovery。切换这些标签保留输入草稿，页面上方会固定显示 Save settings 和未保存提示。MT/hr 决定一批货需要多少生产时间；每日工时决定一天可以排多少生产。例如每小时 10 MT，8 小时最多安排 80 MT，12 小时最多安排 120 MT，换料及停机另行扣除。Save settings 只保存工作区、产能及停机列表；产品清单和库存政策各自保存，互不覆盖。如果其他标签有无效栏位，保存会自动打开对应标签并聚焦栏位。离开 Settings 页面仍会丢弃未保存草稿。
 
 排程卡片太窄时，鼠标悬停或用 Tab 聚焦可预览完整产品编号、说明、数量、订单、完整计划起止日期、状态及 bin。Escape 收起预览，Enter／点击打开完整详情；Space 开始键盘移动，方向键移动，Escape 取消移动。触屏继续点击查看详情，长按拖动。
 

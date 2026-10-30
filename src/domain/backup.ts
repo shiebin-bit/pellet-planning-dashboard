@@ -1,6 +1,7 @@
 import {
   LINE_IDS,
   type AppState,
+  type CalendarPeriod,
   type CatalogProduct,
   type Downtime,
   type HistoryEvent,
@@ -13,13 +14,14 @@ import {
   type ScheduleSegment,
   type Settings,
 } from "./types";
-import { getRate, getScheduledJobs } from "./engine";
+import { getCalendarForDate, getRate, getScheduledJobs } from "./engine";
 
 const MAX_BACKUP_CHARACTERS = 64 * 1024 * 1024;
 const MAX_JOBS = 10_000;
 const MAX_CATALOG_PRODUCTS = 10_000;
 const MAX_EVENTS = 50_000;
 const MAX_DOWNTIME = 10_000;
+const MAX_CALENDAR_PERIODS = 10_000;
 const MAX_PREFIXES = 1_000;
 const MAX_SEGMENTS_PER_JOB = 20_000;
 const MAX_PAUSES_PER_JOB = 10_000;
@@ -39,7 +41,7 @@ const JOB_KEYS = [
   "lockedSegments", "issue",
   "pauseIntervals",
   "sourceOrderId", "sourceOrderVersion", "sourceSnapshot", "sourceAllocations", "bagWeightKgSnapshot",
-  "inventoryItemId", "medication", "fmrOmed", "productionPurpose", "notBefore",
+  "inventoryItemId", "medication", "fmrOmed", "productionPurpose", "notBefore", "calendarManagedRelease",
 ] as const;
 
 const JOB_CHANGE_FIELDS = new Set([
@@ -171,7 +173,7 @@ function validateSchedule(state: AppState): void {
       throw invalid("backup.jobs", `cannot calculate a safe schedule for job ${JSON.stringify(job.id)}`);
     }
     const hasLockedPlan = (job.lockedSegments?.length ?? 0) > 0;
-    if (state.settings.availableHours === 0 && !hasLockedPlan) continue;
+    if (getCalendarForDate(state.settings, job.date).availableHours === 0 && !hasLockedPlan) continue;
     if (
       computed.plannedStart === null ||
       computed.plannedEnd === null ||
@@ -332,6 +334,7 @@ function validateJob(value: unknown, path: string): Job {
   if (hasOwn(source, "fmrOmed")) result.fmrOmed = stringValue(source.fmrOmed, `${path}.fmrOmed`, MAX_NOTE_LENGTH);
   if (hasOwn(source, "productionPurpose")) result.productionPurpose = enumValue<"mto" | "mts">(source.productionPurpose, ["mto", "mts"], `${path}.productionPurpose`);
   if (hasOwn(source, "notBefore")) result.notBefore = timestampValue(source.notBefore, `${path}.notBefore`);
+  if (hasOwn(source, "calendarManagedRelease")) result.calendarManagedRelease = booleanValue(source.calendarManagedRelease, `${path}.calendarManagedRelease`);
 
   return result;
 }
@@ -466,11 +469,16 @@ function validateIssue(value: unknown, path: string): NonNullable<Job["issue"]> 
   };
 }
 
-function validateSettings(value: unknown, path: string): Settings {
+/** Validates an ordinary settings payload before the server adds trusted calendar metadata. */
+export function validateSettingsUpdate(value: unknown): Settings {
+  return validateSettings(value, "command.settings", true);
+}
+
+function validateSettings(value: unknown, path: string, allowCalendarProjectionChange = false): Settings {
   const source = objectValue(value, path);
   onlyKeys(source, [
     "siteName", "timeZone", "dayStart", "availableHours", "changeoverMinutes",
-    "bagWeightKg", "rates", "slowProductPrefixes", "slowRatePM2", "downtime", "calendarCutover",
+    "bagWeightKg", "rates", "slowProductPrefixes", "slowRatePM2", "downtime", "calendarHistory", "calendarCutover",
   ], path);
 
   const ratesValue = objectValue(required(source, "rates", path), `${path}.rates`);
@@ -517,7 +525,40 @@ function validateSettings(value: unknown, path: string): Settings {
       activatedAt: timestampValue(required(cutover, "activatedAt", `${path}.calendarCutover`), `${path}.calendarCutover.activatedAt`),
     };
   }
+  if (hasOwn(source, "calendarHistory")) {
+    if (result.calendarCutover) throw invalid(path, "cannot contain both calendarHistory and calendarCutover");
+    const periods = arrayValue(source.calendarHistory, `${path}.calendarHistory`, MAX_CALENDAR_PERIODS)
+      .map((period, index) => validateCalendarPeriod(period, `${path}.calendarHistory[${index}]`));
+    if (!periods.length) throw invalid(`${path}.calendarHistory`, "must contain a baseline period");
+    if (periods[0].effectiveFrom !== null) throw invalid(`${path}.calendarHistory[0].effectiveFrom`, "must be null for the baseline period");
+    if (periods[0].activatedAt !== null) throw invalid(`${path}.calendarHistory[0].activatedAt`, "must be null for the baseline period");
+    for (let index = 1; index < periods.length; index += 1) {
+      const current = periods[index].effectiveFrom;
+      if (current === null) throw invalid(`${path}.calendarHistory[${index}].effectiveFrom`, "must be a dated period after the baseline");
+      if (periods[index].activatedAt === null) throw invalid(`${path}.calendarHistory[${index}].activatedAt`, "is required for a dated period");
+      const prior = periods[index - 1].effectiveFrom;
+      if (prior !== null && current <= prior) throw invalid(`${path}.calendarHistory[${index}].effectiveFrom`, "must be later than the previous period");
+    }
+    const latest = periods.at(-1)!;
+    if (!allowCalendarProjectionChange && (result.dayStart !== latest.dayStart || result.availableHours !== latest.availableHours)) {
+      throw invalid(path, "dayStart and availableHours must match the latest calendarHistory period");
+    }
+    result.calendarHistory = periods;
+  }
   return result;
+}
+
+function validateCalendarPeriod(value: unknown, path: string): CalendarPeriod {
+  const source = objectValue(value, path);
+  onlyKeys(source, ["effectiveFrom", "dayStart", "availableHours", "activatedAt"], path);
+  const effectiveFrom = required(source, "effectiveFrom", path);
+  const activatedAt = required(source, "activatedAt", path);
+  return {
+    effectiveFrom: effectiveFrom === null ? null : dateValue(effectiveFrom, `${path}.effectiveFrom`),
+    dayStart: timeValue(required(source, "dayStart", path), `${path}.dayStart`),
+    availableHours: numberValue(required(source, "availableHours", path), `${path}.availableHours`, { min: 0, max: 24 }),
+    activatedAt: activatedAt === null ? null : timestampValue(activatedAt, `${path}.activatedAt`),
+  };
 }
 
 function validateDowntime(value: unknown, path: string): Downtime {

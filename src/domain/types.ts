@@ -51,6 +51,8 @@ export interface Job {
   fmrOmed?: string;
   productionPurpose?: "mto" | "mts";
   notBefore?: string;
+  /** Server-owned provenance for inventory drafts whose release floor may follow calendar edits. */
+  calendarManagedRelease?: boolean;
   id: string;
   date: string;
   lineId: LineId;
@@ -112,6 +114,15 @@ export interface Downtime {
   reason: string;
 }
 
+export interface CalendarPeriod {
+  /** Null is the baseline calendar used before the first dated change. */
+  effectiveFrom: string | null;
+  dayStart: string;
+  availableHours: number;
+  /** Null is reserved for the baseline retained from legacy settings. */
+  activatedAt: string | null;
+}
+
 export interface Settings {
   siteName: string;
   timeZone: string;
@@ -123,6 +134,8 @@ export interface Settings {
   slowProductPrefixes: string[];
   slowRatePM2: number;
   downtime: Downtime[];
+  calendarHistory?: CalendarPeriod[];
+  /** Legacy read compatibility. New calendar edits materialize calendarHistory instead. */
   calendarCutover?: {
     effectiveFrom: string;
     priorDayStart: string;

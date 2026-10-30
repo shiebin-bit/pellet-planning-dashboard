@@ -18,7 +18,7 @@ import {
   updateJob,
   updateSettings,
 } from "./engine";
-import { validateWorkspaceBackup } from "./backup";
+import { validateSettingsUpdate, validateWorkspaceBackup } from "./backup";
 import type { AppState, JobInput, LineId, Settings } from "./types";
 import type { CreateJobFromSourceInput, CreateJobFromSourcesInput, PortableWorkspaceBackupV3, SourceImportInput } from "./sourceTypes";
 import { parseInventoryCommand, type InventoryCommand, type PortableWorkspaceBackupV4 } from './inventoryTypes';
@@ -133,7 +133,7 @@ export function executeCommand(
       return updateCatalogProduct(state, command.productId, command.patch, context.nowIso ?? new Date().toISOString());
     case "catalog.setActive":
       return setCatalogProductActive(state, command.productId, command.active, context.nowIso ?? new Date().toISOString());
-    case "settings.update": return updateSettings(state, command.settings);
+    case "settings.update": return updateSettings(state, command.settings, context.nowIso ?? new Date().toISOString());
     case "job.createFromSource":
     case "job.createFromSources":
     case "settings.activateCalendar":
@@ -263,7 +263,7 @@ export function parseCommand(value: unknown): Command {
       };
     case "settings.update": {
       exact(source, ["type", "settings"], "command");
-      const settings = validateWorkspaceBackup({ schemaVersion: 2, catalog: [], jobs: [], settings: source.settings, events: [] }).settings;
+      const settings = validateSettingsUpdate(source.settings);
       return { type, settings };
     }
     case "settings.activateCalendar":

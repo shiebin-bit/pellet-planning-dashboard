@@ -4,12 +4,13 @@ import { AlertTriangle } from 'lucide-react';
 import { getScheduledJobs } from '../domain/engine';
 import { useWorkspace } from '../lib/workspace';
 
-/** Old-calendar reservations can fall outside the new 12-hour display window. */
+/** Retained reservations can fall outside the selected working window. */
 export function LegacyCarryoverNotice() {
   const { state, board, openJob } = useWorkspace();
   const outside = useMemo(() => {
-    const cutover = state.settings.calendarCutover;
-    if (!cutover || board.date < cutover.effectiveFrom) return [];
+    const firstChange = state.settings.calendarHistory?.find(period => period.effectiveFrom !== null)?.effectiveFrom
+      ?? state.settings.calendarCutover?.effectiveFrom;
+    if (!firstChange || board.date < firstChange) return [];
     const start = Date.parse(board.date + 'T00:00:00+08:00'), end = start + 86_400_000;
     return getScheduledJobs(state).filter(job => job.date <= board.date && job.segments.some(segment =>
       segment.kind === 'production' && segment.start < end && segment.end > start &&

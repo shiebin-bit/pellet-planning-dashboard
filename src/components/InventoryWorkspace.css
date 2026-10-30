@@ -23,5 +23,8 @@
 .draft-combine-option { display: flex; align-items: center; gap: 9px; padding-block: 8px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .draft-combine-option input { flex: 0 0 auto; width: 17px; height: 17px; }
 .draft-edit-table details { margin-top: 8px; }
+.draft-edit-table td:first-child { min-width: 240px; max-width: 380px; overflow-wrap: anywhere; }
+.draft-edit-table td:first-child > strong { display: block; font-size: 16px; line-height: 1.4; }
+.draft-edit-table td > small { display: block; margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--muted); }
 .draft-edit-table summary { padding-block: 6px; cursor: pointer; font-size: 12px; }
 .draft-edit-table details .field { margin-top: 10px; }

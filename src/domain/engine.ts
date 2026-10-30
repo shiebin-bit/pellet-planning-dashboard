@@ -2,6 +2,7 @@ import {
   LINE_IDS,
   type AppState,
   type Board,
+  type CalendarPeriod,
   type CatalogProduct,
   type Downtime,
   type HistoryEvent,
@@ -31,11 +32,14 @@ const DAY_MS = 24 * 60 * MINUTE_MS;
 const MALAYSIA_OFFSET_MINUTES = 8 * 60;
 const MAX_SEARCH_DAYS = 3_700;
 const MAX_NOTE_LENGTH = 1_000;
+const MAX_CALENDAR_PERIODS = 10_000;
 
-interface Interval {
+export interface TimeInterval {
   start: number;
   end: number;
 }
+
+type Interval = TimeInterval;
 
 interface ScheduleResult {
   byLine: Record<LineId, ScheduledJob[]>;
@@ -64,8 +68,7 @@ export function getBoard(state: AppState, date: string): Board {
   validateSettings(state.settings);
 
   const calendar = getCalendarForDate(state.settings, date);
-  const start = businessDayStart(date, calendar.dayStart);
-  const end = start + calendar.availableHours * 60 * MINUTE_MS;
+  const { start, end } = getShiftWindow(calendar, date);
   const scheduled = scheduleState(state);
 
   const lines = LINE_IDS.map((lineId): LineSchedule => {
@@ -643,26 +646,63 @@ export function resumeJob(
   );
 }
 
-export function updateSettings(state: AppState, settings: Settings): AppState {
-  validateSettings(settings);
-  if (!state.settings.calendarCutover && settings.calendarCutover) {
-    throw new Error("Use calendar activation to create production calendar cutover metadata.");
+export function updateSettings(
+  state: AppState,
+  settings: Settings,
+  nowIso = new Date().toISOString(),
+): AppState {
+  assertIsoDateTime(nowIso, "Settings update time");
+  validateSettings(state.settings);
+  validateSettings(settings, true);
+  if (JSON.stringify(settings.calendarHistory ?? null) !== JSON.stringify(state.settings.calendarHistory ?? null)
+    || JSON.stringify(settings.calendarCutover ?? null) !== JSON.stringify(state.settings.calendarCutover ?? null)) {
+    throw new Error("Production calendar metadata cannot be edited in ordinary settings.");
   }
-  if (state.settings.calendarCutover && JSON.stringify(settings.calendarCutover) !== JSON.stringify(state.settings.calendarCutover)) {
-    throw new Error("Production calendar cutover metadata cannot be edited in ordinary settings.");
-  }
-  if (state.settings.calendarCutover && (settings.dayStart !== state.settings.dayStart || settings.availableHours !== state.settings.availableHours)) {
-    throw new Error("Production hours cannot be changed after the calendar cutover is activated.");
-  }
-  const now = new Date().toISOString();
+  const now = new Date(nowIso).toISOString();
+  const effectiveFrom = malaysiaDateAt(now);
+  const calendarChanged = settings.dayStart !== state.settings.dayStart
+    || settings.availableHours !== state.settings.availableHours;
+  const oldSchedule = calendarChanged
+    ? new Map(getScheduledJobs(state).map(job => [job.id, job]))
+    : new Map<string, ScheduledJob>();
   const copiedSettings = cloneSettings(settings);
-  const jobs = state.jobs.map((job) => {
-    if (job.mode !== "bags" || job.status !== "pending" || job.sourceOrderId || job.bagWeightKgSnapshot) return job;
-    return {
-      ...job,
-      quantityMt: quantityFromBags(job.bagCount ?? 0, copiedSettings.bagWeightKg),
-      updatedAt: now,
+  if (calendarChanged) {
+    const calendarHistory = materializeCalendarHistory(state.settings);
+    const last = calendarHistory.at(-1)!;
+    if (last.effectiveFrom !== null && last.effectiveFrom > effectiveFrom) {
+      throw new Error("Production hours cannot be edited while a later calendar period exists.");
+    }
+    const period: CalendarPeriod = {
+      effectiveFrom,
+      dayStart: settings.dayStart,
+      availableHours: settings.availableHours,
+      activatedAt: now,
     };
+    if (last.effectiveFrom === effectiveFrom) calendarHistory[calendarHistory.length - 1] = period;
+    else calendarHistory.push(period);
+    copiedSettings.calendarHistory = calendarHistory;
+    delete copiedSettings.calendarCutover;
+  }
+  validateSettings(copiedSettings);
+  const jobs = state.jobs.map((job) => {
+    let updated = job;
+    if (calendarChanged && (job.status === "running" || job.status === "completed") && !job.lockedSegments?.length && job.quantityMt > 0) {
+      const segments = oldSchedule.get(job.id)?.segments;
+      if (!segments?.length) throw new Error(`Cannot update production hours until the existing plan for order ${job.orderNo} can be frozen.`);
+      updated = { ...updated, lockedSegments: segments.map(segment => ({ ...segment })) };
+    }
+    if (calendarChanged && job.status === "pending" && !job.lockedSegments?.length && job.calendarManagedRelease === true && job.notBefore && job.date >= effectiveFrom) {
+      const calendar = getCalendarForDate(copiedSettings, job.date);
+      const shift = getShiftWindow(calendar, job.date);
+      const releaseFloor = job.date === effectiveFrom ? Math.max(shift.start, Date.parse(now)) : shift.start;
+      const nextNotBefore = new Date(releaseFloor).toISOString();
+      if (updated.notBefore !== nextNotBefore) updated = { ...updated, notBefore: nextNotBefore, updatedAt: now };
+    }
+    if (updated.mode === "bags" && updated.status === "pending" && !updated.sourceOrderId && !updated.sourceAllocations?.length && !updated.bagWeightKgSnapshot) {
+      const quantityMt = quantityFromBags(updated.bagCount ?? 0, copiedSettings.bagWeightKg);
+      if (updated.quantityMt !== quantityMt) updated = { ...updated, quantityMt, updatedAt: now };
+    }
+    return updated;
   });
   return finalizeMutation(
     { ...state, settings: copiedSettings },
@@ -897,6 +937,8 @@ export function combinePendingJobs(
       sourceOrderId: _sourceOrderId,
       sourceOrderVersion: _sourceOrderVersion,
       sourceSnapshot: _sourceSnapshot,
+      calendarManagedRelease: _calendarManagedRelease,
+      notBefore: _notBefore,
       ...withoutLegacySource
     } = job;
     return {
@@ -906,6 +948,8 @@ export function combinePendingJobs(
       remarks: normalizedRemarks,
       bagCount,
       quantityMt,
+      ...(members.every(member => member.calendarManagedRelease === true) ? { calendarManagedRelease: true } : {}),
+      ...combinedReleaseFloor(members),
       sourceAllocations: allocations.map(allocation => ({ ...allocation, sourceSnapshot: { ...allocation.sourceSnapshot } })),
       updatedAt: nowIso,
     };
@@ -1131,16 +1175,25 @@ function allocateWork(
   return null;
 }
 
-function getAvailableIntervals(
+/** Returns the business shift window for settings already selected for an assigned date. */
+export function getShiftWindow(settings: Pick<Settings, "dayStart" | "availableHours">, date: string): TimeInterval {
+  assertDate(date, "Shift date");
+  timeToMinutes(settings.dayStart, "Day start");
+  if (!Number.isFinite(settings.availableHours) || settings.availableHours < 0 || settings.availableHours > 24) {
+    throw new Error("Available hours must be between 0 and 24.");
+  }
+  const start = businessDayStart(date, settings.dayStart);
+  return { start, end: start + settings.availableHours * 60 * MINUTE_MS };
+}
+
+/** Applies dated downtime to a calendar already selected for the assigned job/date. */
+export function getAvailableIntervals(
   settings: Settings,
   lineId: LineId,
   date: string,
-): Interval[] {
+): TimeInterval[] {
   if (settings.availableHours <= 0) return [];
-  const start = businessDayStart(date, settings.dayStart);
-  const available: Interval[] = [
-    { start, end: start + settings.availableHours * 60 * MINUTE_MS },
-  ];
+  const available: Interval[] = [getShiftWindow(settings, date)];
   const downtime = settings.downtime
     .filter(
       (item) => item.date === date && (item.lineId === "all" || item.lineId === lineId),
@@ -1206,6 +1259,15 @@ function validateFutureDayCollisions(state: AppState): void {
 }
 
 export function getCalendarForDate(settings: Settings, assignedDate: string): Settings {
+  if (settings.calendarHistory?.length) {
+    let selected = settings.calendarHistory[0];
+    for (let index = 1; index < settings.calendarHistory.length; index += 1) {
+      const period = settings.calendarHistory[index];
+      if (period.effectiveFrom === null || period.effectiveFrom > assignedDate) break;
+      selected = period;
+    }
+    return { ...settings, dayStart: selected.dayStart, availableHours: selected.availableHours };
+  }
   const cutover = settings.calendarCutover;
   if (!cutover || assignedDate >= cutover.effectiveFrom) return settings;
   return { ...settings, dayStart: cutover.priorDayStart, availableHours: cutover.priorAvailableHours };
@@ -1258,7 +1320,7 @@ function normalizeInput(input: JobInput, settings: Settings): JobInput {
   };
 }
 
-function validateSettings(settings: Settings): void {
+function validateSettings(settings: Settings, allowCalendarProjectionChange = false): void {
   requiredText(settings.siteName, "Site name");
   requiredText(settings.timeZone, "Time zone");
   timeToMinutes(settings.dayStart, "Day start");
@@ -1293,6 +1355,34 @@ function validateSettings(settings: Settings): void {
       throw new Error("Prior available hours must be between 0 and 24.");
     }
     assertIsoDateTime(settings.calendarCutover.activatedAt, "Calendar activation time");
+  }
+  if (settings.calendarHistory) {
+    if (settings.calendarCutover) throw new Error("Production settings cannot contain both calendar history and a legacy calendar cutover.");
+    if (!settings.calendarHistory.length) throw new Error("Calendar history must contain a baseline period.");
+    if (settings.calendarHistory.length > MAX_CALENDAR_PERIODS) throw new Error(`Calendar history cannot contain more than ${MAX_CALENDAR_PERIODS} periods.`);
+    for (let index = 0; index < settings.calendarHistory.length; index += 1) {
+      const period = settings.calendarHistory[index];
+      if (index === 0) {
+        if (period.effectiveFrom !== null || period.activatedAt !== null) {
+          throw new Error("Calendar history must start with an unactivated baseline period.");
+        }
+      } else {
+        if (period.effectiveFrom === null) throw new Error("Only the calendar baseline may have no effective date.");
+        if (period.activatedAt === null) throw new Error("Dated calendar periods require an activation time.");
+        assertDate(period.effectiveFrom, "Calendar period date");
+        const prior = settings.calendarHistory[index - 1].effectiveFrom;
+        if (prior !== null && period.effectiveFrom <= prior) throw new Error("Calendar period dates must be strictly increasing.");
+      }
+      timeToMinutes(period.dayStart, "Calendar day start");
+      if (!Number.isFinite(period.availableHours) || period.availableHours < 0 || period.availableHours > 24) {
+        throw new Error("Calendar available hours must be between 0 and 24.");
+      }
+      if (period.activatedAt !== null) assertIsoDateTime(period.activatedAt, "Calendar activation time");
+    }
+    const latest = settings.calendarHistory.at(-1)!;
+    if (!allowCalendarProjectionChange && (settings.dayStart !== latest.dayStart || settings.availableHours !== latest.availableHours)) {
+      throw new Error("Production hours must match the latest calendar period.");
+    }
   }
 }
 
@@ -1402,8 +1492,35 @@ function cloneSettings(settings: Settings): Settings {
     rates: { ...settings.rates },
     slowProductPrefixes: [...settings.slowProductPrefixes],
     downtime: settings.downtime.map((item) => ({ ...item })),
+    ...(settings.calendarHistory ? { calendarHistory: settings.calendarHistory.map(period => ({ ...period })) } : {}),
     ...(settings.calendarCutover ? { calendarCutover: { ...settings.calendarCutover } } : {}),
   };
+}
+
+function materializeCalendarHistory(settings: Settings): CalendarPeriod[] {
+  if (settings.calendarHistory?.length) return settings.calendarHistory.map(period => ({ ...period }));
+  if (settings.calendarCutover) {
+    return [
+      {
+        effectiveFrom: null,
+        dayStart: settings.calendarCutover.priorDayStart,
+        availableHours: settings.calendarCutover.priorAvailableHours,
+        activatedAt: null,
+      },
+      {
+        effectiveFrom: settings.calendarCutover.effectiveFrom,
+        dayStart: settings.dayStart,
+        availableHours: settings.availableHours,
+        activatedAt: settings.calendarCutover.activatedAt,
+      },
+    ];
+  }
+  return [{ effectiveFrom: null, dayStart: settings.dayStart, availableHours: settings.availableHours, activatedAt: null }];
+}
+
+function combinedReleaseFloor(jobs: Job[]): Pick<Job, "notBefore"> {
+  const floors = jobs.map(job => job.notBefore).filter((value): value is string => value !== undefined);
+  return floors.length ? { notBefore: floors.reduce((latest, value) => Date.parse(value) > Date.parse(latest) ? value : latest) } : {};
 }
 
 function productFamily(productCode: string): string {
@@ -1441,6 +1558,10 @@ function formatUtcDate(date: Date): string {
   const month = String(date.getUTCMonth() + 1).padStart(2, "0");
   const day = String(date.getUTCDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+function malaysiaDateAt(nowIso: string): string {
+  return formatUtcDate(new Date(Date.parse(nowIso) + MALAYSIA_OFFSET_MINUTES * MINUTE_MS));
 }
 
 function timeToMinutes(value: string, label: string): number {

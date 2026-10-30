@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type pg from "pg";
-import { createJob, getScheduledJobs } from "../src/domain/engine";
+import { createJob, getCalendarForDate, getScheduledJobs, getShiftWindow } from "../src/domain/engine";
 import { getJobSourceAllocations, jobHasSourceOrder } from "../src/domain/jobSources";
 import {
   baselineBalances,
@@ -419,7 +419,7 @@ async function commitDraft(client: pg.PoolClient, state: AppState, previewRevisi
       if(delivered>=numeric(order.ordered_quantity_scaled))throw new ApiError(409,"ORDER_ALREADY_DELIVERED","This order has already been collected.");
     }
     if(row.date<malaysiaDateAt(nowIso))throw new ApiError(409,"DRAFT_DATE_PASSED","Draft production cannot be scheduled on a past date.");
-    row={...row,notBefore:new Date(Math.max(Date.parse(row.notBefore),Date.parse(scheduleFloor(row.date,nowIso)))).toISOString()};
+    row={...row,notBefore:new Date(Math.max(Date.parse(row.notBefore),Date.parse(scheduleFloor(state.settings,row.date,nowIso)))).toISOString()};
     const quantityMt = row.unit === "Bags" ? row.quantity * (row.bagWeightKg ?? 0) / 1_000 : row.quantity;
     if (row.unit === "Bags" && !row.bagWeightKg) throw new ApiError(400, "BAG_WEIGHT_REQUIRED", `Bag weight is required for ${row.materialCode}.`);
     next = createJob(next, {
@@ -430,7 +430,10 @@ async function commitDraft(client: pg.PoolClient, state: AppState, previewRevisi
       productionPurpose: row.productionPurpose, ...(row.bagWeightKg ? { bagWeightKgSnapshot: row.bagWeightKg } : {}), notBefore: row.notBefore,
     });
     const created = next.jobs.at(-1);
-    if (created) createdIds.push(created.id);
+    if (created) {
+      createdIds.push(created.id);
+      next = { ...next, jobs: next.jobs.map(job => job.id === created.id ? { ...job, calendarManagedRelease: true } : job) };
+    }
     if (created && allocationRequests.length) {
       const source = await client.query<{ id:string; latest_version:number; fields:SourceOrderFields }>(`SELECT o.id,o.latest_version,v.fields FROM source_orders o
         JOIN source_order_versions v ON v.source_order_id=o.id AND v.version=o.latest_version WHERE o.workspace_id=1 AND o.id=ANY($1::text[])`,[allocationRequests.map(allocation=>allocation.sourceOrderId)]);
@@ -541,7 +544,7 @@ export async function buildPlanningDemand(client: pg.PoolClient, state: AppState
     const order=detail.order,item=detail.item;
     result.push({key:`order:${order.source_order_id}`,itemId:order.item_id,materialCode:order.material_code,description:order.description,
       unit:order.unit,bagWeightKg:item.bag_weight_kg,strategy:item.strategy??"mto",purpose:"mto",sourceOrderId:order.source_order_id,
-      orderNo:order.do_no,dueDate:dbDate(order.due_date),notBefore:scheduleFloor(request.fromDate,nowIso),sourceAllocationQuantity:scaledToQuantity(order.unit,orderDemand),quantity:scaledToQuantity(order.unit,demand),medication:order.medication,fmrOmed:order.fmr_omed});
+      orderNo:order.do_no,dueDate:dbDate(order.due_date),notBefore:scheduleFloor(state.settings,request.fromDate,nowIso),sourceAllocationQuantity:scaledToQuantity(order.unit,orderDemand),quantity:scaledToQuantity(order.unit,demand),medication:order.medication,fmrOmed:order.fmr_omed});
   }
   for(const item of items.values()){
     if(item.strategy!=="mts"||item.needs_review||!item.target_quantity_scaled||(item.unit==="Bags"&&!item.bag_weight_kg))continue;
@@ -555,7 +558,7 @@ export async function buildPlanningDemand(client: pg.PoolClient, state: AppState
     const projectedFree=Math.max(0,(physical-reserved)+scheduledAll+newMto-(coreByItem.get(bucketKey(item.id,"",""))??0));
     const need=Math.max(0,numeric(item.target_quantity_scaled)-projectedFree);if(!need)continue;
     result.push({key:`mts:${item.id}`,itemId:item.id,materialCode:item.material_code,description:item.description,unit:item.unit,bagWeightKg:item.bag_weight_kg,
-      strategy:"mts",purpose:"mts",sourceOrderId:null,orderNo:null,dueDate:request.toDate,notBefore:scheduleFloor(request.fromDate,nowIso),quantity:scaledToQuantity(item.unit,need),medication:"",fmrOmed:""});
+      strategy:"mts",purpose:"mts",sourceOrderId:null,orderNo:null,dueDate:request.toDate,notBefore:scheduleFloor(state.settings,request.fromDate,nowIso),quantity:scaledToQuantity(item.unit,need),medication:"",fmrOmed:""});
   }
   return result;
 }
@@ -767,7 +770,7 @@ function canonicalJson(value:unknown):string{if(value===null||typeof value!=="ob
 function numeric(value:string|number):number{const result=Number(value);if(!Number.isSafeInteger(result))throw new Error("Stored inventory quantity is outside the safe integer range.");return result;}
 function dbDate(value:string|Date):string{return value instanceof Date?`${value.getFullYear().toString().padStart(4,"0")}-${(value.getMonth()+1).toString().padStart(2,"0")}-${value.getDate().toString().padStart(2,"0")}`:String(value).slice(0,10);}
 function malaysiaDateAt(nowIso:string):string{return new Date(Date.parse(nowIso)+8*60*60_000).toISOString().slice(0,10);}
-function scheduleFloor(fromDate:string,nowIso:string):string{const from=Date.parse(`${fromDate}T07:00:00+08:00`);return new Date(Math.max(from,Date.parse(nowIso))).toISOString();}
+function scheduleFloor(settings:AppState["settings"],fromDate:string,nowIso:string):string{const calendar=getCalendarForDate(settings,fromDate);const from=getShiftWindow(calendar,fromDate).start;return new Date(Math.max(from,Date.parse(nowIso))).toISOString();}
 function statusPriority(status:string):number{return status==="done"?0:status==="pending"?1:2;}
 function bucketKey(itemId:string,medication:string,fmrOmed:string):string{return`${itemId}\u0000${bucketIdentity(medication,fmrOmed)}`;}
 function sum(values:number[]):number{return Math.round(values.reduce((total,value)=>total+value,0)*1_000)/1_000;}
