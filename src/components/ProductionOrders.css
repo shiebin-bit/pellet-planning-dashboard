@@ -1,0 +1,46 @@
+.production-orders { margin: 20px 0 24px; border: 1px solid #cbd5dc; border-radius: 5px; overflow: hidden; background: #fff; }
+.production-orders-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 17px 18px; background: #f1f5f7; border-bottom: 1px solid #cbd5dc; }
+.production-orders-heading h3 { margin-top: 7px; font-size: 18px; line-height: 1.25; }
+.production-orders-count { display: inline-block; padding: 4px 8px; border-radius: 3px; background: var(--action); color: #fff; font-size: 12px; font-weight: 700; }
+.production-orders-total { flex-shrink: 0; text-align: right; }
+.production-orders-total > strong { display: block; font-size: 27px; line-height: 1.15; font-weight: 750; font-variant-numeric: tabular-nums; letter-spacing: -.4px; }
+.production-orders-total strong small { margin-left: 5px; font-size: 13px; font-weight: 500; }
+.production-orders-total > span { display: block; margin-top: 6px; color: var(--muted); font-size: 12px; }
+.production-orders-combine { padding: 13px 18px; border-bottom: 1px solid var(--border); background: #fff8f1; }
+.production-orders-combine strong,.production-orders-combine span { display: block; }
+.production-orders-combine strong { font-size: 13px; }
+.production-orders-combine span { margin-top: 3px; font-size: 12px; color: var(--muted); }
+.production-orders-combine .button { margin-top: 10px; width: 100%; min-height: 38px; justify-content: center; }
+.production-orders .production-order-rows { display: block; list-style: none; padding: 0; margin: 0; }
+.production-orders .production-order-row { min-width: 0; padding: 17px 18px; border: 0; border-bottom: 1px solid var(--border); }
+.production-orders .production-order-row:last-child { border-bottom: 0; }
+.production-order-main { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.production-order-reference { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.production-order-reference > strong { font-size: 15px; font-weight: 700; overflow-wrap: anywhere; }
+.production-orders .production-order-position { flex: 0 0 auto; margin: 0; display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid #d4dce2; border-radius: 3px; color: var(--muted); font-size: 11px; }
+.production-order-quantity { flex-shrink: 0; text-align: right; }
+.production-orders .production-order-quantity > small { margin: 0 0 4px; font-size: 11px; color: var(--muted); }
+.production-order-quantity > strong { font-size: 21px; line-height: 1.1; font-weight: 750; font-variant-numeric: tabular-nums; }
+.production-orders .production-order-quantity strong > span { display: inline; margin: 0; font-size: 12px; font-weight: 500; }
+.production-order-customer { margin-top: 10px; font-size: 14px; line-height: 1.45; font-weight: 550; overflow-wrap: anywhere; }
+.production-order-customer.missing,.production-order-sold-to { color: var(--muted); font-size: 12px; font-weight: 400; }
+.production-order-sold-to { margin-top: 3px; overflow-wrap: anywhere; }
+.production-order-meta { display: flex; justify-content: space-between; gap: 12px; margin-top: 12px; }
+.production-orders .production-order-meta span { margin: 0 0 4px; font-size: 11px; color: var(--muted); }
+.production-order-meta strong { font-size: 12px; font-weight: 550; }
+.production-order-meta > div:last-child { text-align: right; }
+.production-order-partial { margin-top: 9px; color: var(--muted); font-size: 12px; }
+.production-allocation-notes { padding: 11px 18px; background: #f8fafb; border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); }
+.production-allocation-notes summary { padding-block: 3px; cursor: pointer; font-weight: 550; }
+.production-allocation-notes p { margin-top: 10px; line-height: 1.6; }
+.production-allocation-notes ul { margin-top: 10px; padding-left: 16px; }
+.production-order-retry { padding: 10px 18px; font-size: 12px; }
+.production-order-retry .text-link { margin-left: 5px; }
+@media (max-width:560px) {
+  .production-orders-heading,.production-orders .production-order-row { padding: 14px; }
+  .production-orders-heading h3 { font-size: 16px; }
+  .production-orders-total > strong { font-size: 23px; }
+  .production-order-reference > strong { font-size: 13px; }
+  .production-order-quantity > strong { font-size: 18px; }
+  .production-order-main { align-items: flex-start; }
+}

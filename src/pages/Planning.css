@@ -342,6 +342,15 @@
   font-size: 10px;
   font-weight: 500;
 }
+.hplan-order-count {
+  padding: 1px 5px;
+  border: 1px solid var(--hplan-border);
+  border-radius: 3px;
+  background: color-mix(in srgb,var(--hplan-bg) 45%,#fff);
+  font-size: 11px;
+  line-height: 1.1;
+  font-weight: 750;
+}
 .hplan-time {
   overflow: hidden;
   font-family: var(--mono);

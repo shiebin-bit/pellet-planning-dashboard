@@ -24,7 +24,7 @@ import type {
   CatalogUpdatePatch,
   CopyBatchItem,
 } from "./commands";
-import { getJobSourceAllocations } from "./jobSources";
+import { getJobSourceAllocations, getProductionBatchIdentity } from "./jobSources";
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -875,12 +875,7 @@ export function combinePendingJobs(
   const members = uniqueIds.map(id => requireJob(state, id)).sort(compareJobs);
   for (const member of members) requirePending(member, "combine");
   const survivor = members[0];
-  const identity = (job: Job) => [
-    job.date, job.lineId, normalizedProduct(job.productCode), job.mode,
-    job.inventoryItemId ?? "", job.medication?.trim() ?? "", job.fmrOmed?.trim() ?? "",
-    String(job.bagWeightKgSnapshot ?? ""), job.productionPurpose ?? "",
-  ].join("\u0000");
-  if (members.some(job => identity(job) !== identity(survivor))) {
+  if (members.some(job => getProductionBatchIdentity(job) !== getProductionBatchIdentity(survivor))) {
     throw new Error("Combined cards must share the same date, line, product, unit, bag weight and inventory variant.");
   }
   const allocations = members.flatMap(getJobSourceAllocations);

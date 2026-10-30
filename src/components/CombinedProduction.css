@@ -16,7 +16,12 @@
 .combine-card-option input { margin-top: 5px; }
 .combine-card-option span { display: grid; min-width: 0; overflow-wrap: anywhere; gap: 3px; }
 .combine-card-option small { color: var(--muted); }
+.combine-order-detail { padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.combine-order-detail:last-child { border-bottom: 0; }
+.combine-order-detail b { font-weight: 650; }
 .drawer-material-code { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.combine-anchor-note { display: grid; gap: 5px; padding: 12px 14px; margin-block: 12px; background: #f1f5f7; border: 1px solid var(--border); border-radius: 4px; font-size: 13px; }
+.combine-anchor-note span { color: var(--muted); font-size: 12px; }
 @media(max-width:560px) {
   .combined-order-row { grid-template-columns: minmax(0,1fr) 32px; gap: 10px; }
   .combined-order-row > div { grid-column: 1; }
