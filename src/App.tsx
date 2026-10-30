@@ -4,7 +4,7 @@ import { ListNavigationProvider } from './lib/listNavigation';
 import { WorkspaceProvider, useWorkspace } from './lib/workspace';
 import type { Page } from './lib/workspace';
 import { dateLabel, localDate } from './lib/format';
-import { exportExcel, exportBackup, exportDatabaseBackup, printReport } from './lib/export';
+import { exportExcel, printReport } from './lib/export';
 import logo from './assets/ffm-logo.jpg';
 import { DataPage } from './pages/Data';
 import { StockPage } from './pages/Stock';
@@ -46,6 +46,9 @@ function Dashboard() {
   const menuRef = useRef<HTMLButtonElement>(null);
   const closeNavigationRef = useRef<HTMLButtonElement>(null);
   const exportRef = useRef<HTMLButtonElement>(null);
+  const planningTools = page === 'overview' || page === 'planning';
+  const reportTools = planningTools || page === 'history';
+  const toolbarContext = {data:'Customer orders · filter by delivery date below',stock:'Stock balances · Daily stock uses its own date',history:'Production records · filter by planning date below',settings:'Shared workspace settings'};
   useEffect(() => {
     const media = window.matchMedia('(max-width: 600px)');
     const changed = () => setSmallScreen(media.matches);
@@ -100,15 +103,15 @@ function Dashboard() {
     <div className="workspace" inert={modalOpen || (smallScreen && mobileNav)} aria-hidden={modalOpen || (smallScreen && mobileNav) ? true : undefined}>
       <header className="topbar">
         <button ref={menuRef} className="mobile-menu icon-button" onClick={() => setMobileNav(true)} aria-label="Open navigation" aria-expanded={mobileNav} aria-controls="workspace-navigation"><Menu size={21} /></button>
-        <div className="page-toolbar">
-          <DatePicker value={date} onChange={setDate}/>
-          <button className="today-button" disabled={mutationLocked} onClick={() => setDate(localDate())}>Today</button>
+        <div className={'page-toolbar '+(planningTools?'planning-tools':'context-tools')} aria-label="Workspace toolbar">
+          {planningTools?<><DatePicker value={date} onChange={setDate}/><button className="today-button" disabled={mutationLocked} onClick={() => setDate(localDate())}>Today</button></>:<span className="toolbar-context">{toolbarContext[page as keyof typeof toolbarContext]}</span>}
           <div className="toolbar-spacer" />
           <span className="save-indicator"><Check size={14} />{busy?'Saving…':storageWarning?'Connection / storage issue':hasConflict?'Review latest changes':savedAt?'All changes saved':storageMode==='database'?'Database connected':'Local workspace'}</span>
-          <div className="export-container" onKeyDown={event => { if (event.key === 'Escape') { setExportsOpen(false); exportRef.current?.focus(); } }}><button ref={exportRef} className="button secondary" aria-label={exporting ? 'Exporting report' : 'Export'} onClick={() => setExportsOpen(!exportsOpen)} aria-expanded={exportsOpen} disabled={exporting}><Download size={15} /><span>{exporting ? 'Exporting…' : 'Export'}</span><ChevronDown size={13} /></button>
-            {exportsOpen && <><button className="menu-scrim" tabIndex={-1} onClick={() => setExportsOpen(false)} aria-label="Close export menu" /><div className="dropdown export-menu"><span className="dropdown-label">PRODUCTION REPORTS · {dateLabel(date, true)}</span><button onClick={excel}><FileSpreadsheet size={17} /><div><strong>Excel report</strong><small>{dateLabel(date, true)} · all four lines</small></div></button><button onClick={() => { setExportsOpen(false); setPrintJob({report:null}); }}><Printer size={17} /><div><strong>Print / save as PDF</strong><small>{dateLabel(date, true)} · all four lines</small></div></button><button disabled={mutationLocked} onClick={()=>{setExportsOpen(false);setReportOpen(true);}}><CalendarRange size={17}/><div><strong>Date range report</strong><small>Day, week or custom dates · line filter</small></div></button><button onClick={() => { setExportsOpen(false); if(storageMode==='database')void exportDatabaseBackup().catch(error=>notify(error.message,true)); else exportBackup(state); }}><HardDrive size={17} /><div><strong>Workspace backup</strong><small>{storageMode === 'database' ? 'All dates · planning, orders and stock ledger' : 'All dates · planning, catalog and settings'}</small></div></button><p className="export-scope-note">Quick reports use the planning date. Page filters do not apply.</p></div></>}
-          </div>
-          <button className="button primary add-production-button" disabled={mutationLocked||hasConflict} onClick={()=>openInput()}><Plus size={17} /><span>Add production</span></button>
+          {reportTools&&<div className="export-container" onKeyDown={event => { if (event.key === 'Escape') { setExportsOpen(false); exportRef.current?.focus(); } }}><button ref={exportRef} className="button secondary" aria-label={exporting ? 'Exporting report' : 'Export'} onClick={() => setExportsOpen(!exportsOpen)} aria-expanded={exportsOpen} disabled={exporting}><Download size={15} /><span>{exporting ? 'Exporting…' : 'Export'}</span><ChevronDown size={13} /></button>
+            {exportsOpen && <><button className="menu-scrim" tabIndex={-1} onClick={() => setExportsOpen(false)} aria-label="Close export menu" /><div className="dropdown export-menu"><span className="dropdown-label">PLANNING-DAY REPORTS · {dateLabel(date, true)}</span><button onClick={excel}><FileSpreadsheet size={17} /><div><strong>Excel report</strong><small>Planning date: {dateLabel(date, true)} · all four lines</small></div></button><button onClick={() => { setExportsOpen(false); setPrintJob({report:null}); }}><Printer size={17} /><div><strong>Print / save as PDF</strong><small>Planning date: {dateLabel(date, true)} · all four lines</small></div></button><button disabled={mutationLocked} onClick={()=>{setExportsOpen(false);setReportOpen(true);}}><CalendarRange size={17}/><div><strong>Date range report</strong><small>Choose planning dates and production lines</small></div></button><p className="export-scope-note">Quick reports use {dateLabel(date, true)}, all four lines. History filters do not apply. Choose Date range report for other dates or lines.</p></div></>}
+          </div>}
+          {page==='history'&&<button className="button primary history-report-button" disabled={mutationLocked} onClick={()=>setReportOpen(true)}><CalendarRange size={16}/><span>Date range report</span></button>}
+          {planningTools&&<button className="button primary add-production-button" disabled={mutationLocked||hasConflict} onClick={()=>openInput()}><Plus size={17} /><span>Add production</span></button>}
         </div>
       </header>
       <main id="main-content">
@@ -129,7 +132,7 @@ function Dashboard() {
     {editor && <ProductionEditor/>}
     {copyDialog && <CopyPlanningDialog key={copyDialog.id}/>}
     {reportOpen&&<ReportDialog onClose={()=>setReportOpen(false)} onPrint={report=>{setReportOpen(false);setPrintJob({report});}}/>}
-    {toast && !modalOpen && <div className={'toast ' + (toast.error ? 'error' : '')} role={toast.error ? 'alert' : 'status'}><span className="toast-symbol">{toast.error ? '!' : <Check size={16} />}</span><span>{toast.message}</span>{canUndo && <button onClick={undo}><Undo2 size={14} />Undo</button>}</div>}
+    {toast && !modalOpen && <div className={'toast ' + (selectedId?'production-toast ':'') + (toast.error ? 'error' : '')} role={toast.error ? 'alert' : 'status'}><span className="toast-symbol">{toast.error ? '!' : <Check size={16} />}</span><span>{toast.message}</span>{canUndo && <button onClick={undo}><Undo2 size={14} />Undo</button>}</div>}
     <PrintReport report={printJob?.report}/>
   </div>;
 }

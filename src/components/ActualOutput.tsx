@@ -6,7 +6,7 @@ import { useWorkspace } from '../lib/workspace';
 import { durationLabel,numberLabel,outputVarianceLabel as varianceText } from '../lib/format';
 import './ActualOutput.css';
 
-export function ActualOutputForm({job,completing,onCancel,onSaved}:{job:ScheduledJob;completing:boolean;onCancel:()=>void;onSaved:()=>void}) {
+export function ActualOutputForm({job,completing,onCancel,onSaved,formId,onValidityChange}:{job:ScheduledJob;completing:boolean;onCancel:()=>void;onSaved:()=>void;formId?:string;onValidityChange?:(valid:boolean)=>void}) {
   const {commit,toast,busy,storageWarning,storageMode,refresh,hasConflict,resolveConflict,mutationLocked}=useWorkspace();
   const result=getProductionResult(job);
   const [quantity,setQuantity]=useState(completing?String(job.quantityMt):result.actualQuantityMt===null?'':String(result.actualQuantityMt));
@@ -16,8 +16,9 @@ export function ActualOutputForm({job,completing,onCancel,onSaved}:{job:Schedule
   useEffect(()=>{input.current?.focus();input.current?.select();},[]);
   const value=quantity.trim()===''?null:Number(quantity);
   const valid=value!==null&&Number.isFinite(value)&&value>=0;
+  useEffect(()=>{onValidityChange?.(valid);},[valid,onValidityChange]);
   const variance=valid?value-job.quantityMt:null;
-  return <form className="actual-output-form" aria-label={completing?'Complete production':'Record actual output'} onSubmit={async event=>{
+  return <form id={formId} className="actual-output-form" aria-label={completing?'Complete production':'Record actual output'} onSubmit={async event=>{
     event.preventDefault();
     if(!valid||hasConflict){input.current?.focus();return;}
     const saved=await commit({type:completing?'job.complete':'job.recordActual',jobId:job.id,actualQuantityMt:value!,completionNote:note},completing?'Production completed. Actual output and end time recorded.':'Actual output saved.');
@@ -30,7 +31,7 @@ export function ActualOutputForm({job,completing,onCancel,onSaved}:{job:Schedule
     {failed&&toast?.error&&<p role="alert" className="output-error">{toast.message}</p>}
     {hasConflict&&<p role="alert" className="output-error">Another planner changed this workspace. Your values are preserved. <button type="button" className="text-link" onClick={()=>{const latest=getProductionResult(job);setQuantity(completing?String(job.quantityMt):latest.actualQuantityMt===null?'':String(latest.actualQuantityMt));setNote(job.completionNote??'');setFailed(false);resolveConflict();}}>Reload latest output</button></p>}
     {storageMode==='database'&&storageWarning&&<button type="button" className="text-link" disabled={busy} onClick={()=>void refresh()}>Retry connection</button>}
-    <div className="output-form-actions"><button type="button" className="button secondary" disabled={mutationLocked} onClick={onCancel}>Cancel {completing?'completion':'changes'}</button><button type="submit" className="button primary" disabled={!valid||mutationLocked||hasConflict}>{completing?<CheckCheck size={16}/>:<Save size={16}/>} {busy?'Saving…':completing?'Confirm done':'Save actual output'}</button></div>
+    {!formId&&<div className="output-form-actions"><button type="button" className="button secondary" disabled={mutationLocked} onClick={onCancel}>Cancel {completing?'completion':'changes'}</button><button type="submit" className="button primary" disabled={!valid||mutationLocked||hasConflict}>{completing?<CheckCheck size={16}/>:<Save size={16}/>} {busy?'Saving…':completing?'Confirm done':'Save actual output'}</button></div>}
   </form>;
 }
 

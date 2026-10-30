@@ -8,7 +8,7 @@
 
 ## 界面布局
 
-顶部工具栏集中日期、Today、Export 和 Add production。左侧保留 Overview、Planning board、Data、Stock、History 和 Settings；平板会缩成图标，手机从左上角菜单展开。
+Overview 和 Planning board 的顶部工具栏显示排产日期、Today、Export 和 Add production。History 提供 Export 及可直接打开的 Date range report；Orders、Stock 和 Settings 不再显示排产日期或新增生产入口。左侧保留 Overview、Planning board、Data、Stock、History 和 Settings；平板会缩成图标，手机从左上角菜单展开。
 
 Overview 先显示四项总数和当日时间轴，点产品段可查看卡片；四项总数是 Planned volume、Recorded output、Planned utilisation 和 Tasks completed。Recorded output 统计所选排程日期已完成任务的已记录实际产量，并显示覆盖数；不代表该自然日所有入库量。时间轴之后先看 Needs attention 和 Plan vs actual；Line capacity details 与 Next production tasks 可按需展开，停机记录继续保留。Planning board 四条产线横向排列，电脑 1366 × 768 可完整查看；新增、复制、报表和卡片详情在当前页面弹出。
 
@@ -17,7 +17,7 @@ Overview 先显示四项总数和当日时间轴，点产品段可查看卡片�
 1. 在日期选择器直接选日期、月份和年份。
 2. 在 Planning board 按 Add production，或产线旁的 +，填写产线、产品、订单、bin 和数量。保存后等待数据库确认。
 3. 未开始的卡片可以直接拉到另一条产线。放在另一张卡片上会插入它前面，放在空白处则排在后面。移动后确认新的 bin。Undo 只能撤销最近一次移动，其他修改会使它失效。
-4. 点卡片看完整资料。按 Start production 自动记录当前实际开始时间。
+4. 点卡片看完整资料。底部固定操作栏的 Start production 自动记录当前实际开始时间；详情上下滚动时按钮仍在画面内。运行后按 Record quantity 跳到分次产量输入框，填写后再按 Record production quantity 入账。Mark as done 打开最终累计产量表单，底部 Confirm done 完成生产。
 5. 完成时按 Mark as done，填写实际 MT 和备注，再按 Confirm done。结束时间由服务器自动记录。
 
 灰色＝未开始；蓝色＝生产中；黄色＝暂停；绿色＝已完成；红色＝有问题。黄色斜线是 changeover。已开始/完成的排程会锁定，避免移动后改掉实际记录。
@@ -52,9 +52,9 @@ History 顶部显示全部匹配记录的记录数、完成数、计划 MT（排
 
 History、Stock 和 Daily stock 在列表上方及下方都能翻页。长表格在列表区域内上下滚动，表头保持可见；窄屏可用 Left／Right 查看其他栏位，右侧操作栏保持可见。换页或筛选会回到表格开头。Orders、Stock、Daily stock 和 History 各自保留当前搜索、筛选、页码及滚动位置；切换导航再回来可以接着查看。Stock 标签及 Daily stock 日期也会保留。这些记忆仅在当前应用会话内有效，刷新浏览器后重置。
 
-顶部 **Planning date** 用于排程及快捷生产报表。History 的日期输入筛选生产日期（Activity log 则筛选操作日期）；Data 的日期筛选交货日期，交期天数按今天的马来西亚日期计算。Stock 的 Snapshot date 是当前台账快照生成日期，台账包含所有已入账变动；Inventory baseline 和 Last verified stock count 分别显示基准和最近盘点日期。Daily stock 使用自己的 **Stock date**。这些范围独立，页面会显示当前日期用途。
+Overview 和 Planning board 顶部的 **Planning date** 用于排程及快捷生产报表，切换到其他页面后不会套用到列表。History 的日期输入筛选生产日期（Activity log 则筛选操作日期）；Data 的日期筛选交货日期，交期天数按今天的马来西亚日期计算。Stock 的 Snapshot date 是当前台账快照生成日期，台账包含所有已入账变动；Inventory baseline 和 Last verified stock count 分别显示基准和最近盘点日期。Daily stock 使用自己的 **Stock date**。这些范围独立，页面会显示当前日期用途。
 
-Export 的 **Excel report** 和 **Print / save as PDF** 使用顶部 Planning date 及全部四条产线，页面搜索、状态、日期筛选和分页不会套用。菜单会列出该日期；**Date range report** 使用弹窗内选定的日期及产线，也不套用页面搜索／状态。Workspace backup 包含所有日期的资料，数据库版包括订单及库存台账，离线版包含排程、产品清单和 Settings。
+Export 的 **Excel report** 和 **Print / save as PDF** 使用顶部 Planning date 及全部四条产线，页面搜索、状态、日期筛选和分页不会套用。菜单会列出该日期；**Date range report** 使用弹窗内选定的日期及产线，也不套用页面搜索／状态。完整备份移至 Settings → Backup & recovery → Download backup，包含所有日期的资料，数据库版包括订单及库存台账，离线版包含排程、产品清单和 Settings。
 
 Daily stock 的 **Enter physical count** 会立即打开盘点弹窗，载入所选产品、库存日期及 Medication／FMR 组合。填写实盘数量及调整原因，再确认差异；原台账保留。关闭后回到原记录和滚动位置；未保存的表单会关闭，已经确认的盘点不会撤回。断线时保留弹窗并使用 Retry connection 确认同一次调整。
 
@@ -81,7 +81,7 @@ Settings → **Backup & recovery** → Download backup 下载整个 workspace JS
 2. 确认工作表、表头行和 13 个栏位的对应关系。文本日期可选 MM/DD/YYYY、DD/MM/YYYY 或 YYYY/MM/DD；请核对 Excel 实际格式。
 3. 填写 Excel as-of date（这些剩余天数是哪一天的数据），默认今天。
 4. 预览新订单和会跳过的已有订单。差异列出 Saved · retained（保留）与 Excel · skipped（跳过），只供核对，不会覆盖旧值。0、空白（Empty）和未提供（Not provided）分开显示。错误须全部修正才可保存；确认后只添加新订单，不自动排产。
-5. 在 Data 搜寻 DO、客户、物料或描述。快捷视图为 All orders（全部）、Needs production（扣除预留库存及已有未完成排程后仍有缺口）、Ready for pickup（预留现货已覆盖剩余未取数量）及 Needs review（待核对）。没有库存基准的旧订单按关联卡片及生产状态判断。Advanced filters 可展开交期、单位、生产状态、交货状态、逾期及导入批次；快捷视图、搜索和高级筛选同时生效，Clear filters 全部清除。每页 50 条，顶部统计包含所有匹配订单。点击 DO 编号会弹出订单详情，关闭后回到原来的列表位置。主列表会按栏宽换行；窄屏可用表格上方的 Left／Right 按钮左右查看，操作栏固定在右侧。
+5. 在 Data 搜寻 DO、客户、物料或描述。快捷视图为 All orders（全部）、Needs production（扣除预留库存及已有未完成排程后仍有缺口）、Ready for pickup（预留现货已覆盖剩余未取数量）及 Needs review（待核对）。没有库存基准的旧订单按关联卡片及生产状态判断。Advanced filters 可展开交期、单位、生产状态、交货状态、逾期及导入批次；快捷视图、搜索和高级筛选同时生效，Clear filters 全部清除。每页 50 条，顶部统计包含所有匹配订单。点击 DO 编号会弹出订单详情，关闭后回到原来的列表位置。主列表分为七栏，将交货日和生产期限放在一起，生产缺口单独突出，取货天数放在状态下。按 Breakdown 展开现货预留、累计生产、已取货及已排未入库数量。Bags 显示整数，MT 保留三位小数，避免小缺口被四舍五入隐藏。主列表会按栏宽换行；窄屏可用表格上方的 Left／Right 按钮左右查看，操作栏固定在右侧。
 6. 点 DO 查看完整字段、原始天数、来源版本、Medication、FMR / OMED 和导入历史。
 
 DO no + Material code 是订单唯一组合。已有订单无论 Excel 是否修改都跳过，原记录和版本保留。后续文件缺少某订单时，原记录仍会保留。编码中的前导零会保留；Excel 数字精度已经丢失的长编码无法恢复，应在 Excel 中用文本保存。公式需先在 Excel 计算并保存结果。

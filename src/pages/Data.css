@@ -80,6 +80,18 @@
 }
 .orders-table { table-layout: fixed; white-space: normal; }
 .orders-table th,.orders-table td { padding-inline: 12px; overflow-wrap: anywhere; }
+.orders-table td { font-size: 14px; line-height: 1.5; }
+.orders-table td small { font-size: 12px; }
+.orders-table .data-order-link,.orders-table .data-material { font-size: 14px; }
+.orders-table .source-tag { font-size: 11px; }
+.orders-table .order-quantity { font-weight: 600; }
+.orders-table .order-production-progress > strong { display: block; font-size: 14px; }
+.order-progress-breakdown { margin-top: 4px; font-size: 12px; }
+.order-progress-breakdown summary { min-height: 30px; padding-block: 5px; color: var(--action); cursor: pointer; }
+.order-progress-breakdown dl { display: grid; gap: 9px; padding-block: 5px; font-size: 12px; }
+.order-progress-breakdown dt { color: var(--muted); }
+.order-progress-breakdown dd { margin: 1px 0 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.orders-table .order-deadline,.orders-table .order-collection { margin-top: 7px; }
 .orders-table .source-tag { max-width: 100%; white-space: normal; }
 .orders-table td:last-child .button { width: 100%; min-width: 0; white-space: normal; padding-inline: 8px; }
 .orders-table th:last-child,.orders-table td:last-child { position: sticky; right: 0; background: #fff; box-shadow: -5px 0 8px -6px #17354b70; z-index: 1; }

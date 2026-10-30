@@ -5,7 +5,7 @@ import { CombinePlanningDialog } from './CombinePlanningDialog';
 import './CombinedProduction.css';
 import { productLabel } from '../lib/productLabel';
 import { useEffect, useRef, useState } from 'react';
-import { X, Clock3, Package, ArrowRight, Play, CheckCheck, Pencil, LockKeyhole, AlertTriangle, Check, Ban, MoveRight, CalendarDays } from 'lucide-react';
+import { X, Clock3, Package, ArrowRight, Play, CheckCheck, Pencil, LockKeyhole, AlertTriangle, Check, Ban, MoveRight, CalendarDays, Save } from 'lucide-react';
 import { useWorkspace } from '../lib/workspace';
 import { getProductionResult } from '../domain/production-results';
 import { LINE_IDS } from '../domain/types';
@@ -16,6 +16,7 @@ import { ActualOutputForm,ActualOutputResult } from './ActualOutput';
 import { ProductionStops } from './ProductionStops';
 import { useCurrentTime } from '../lib/useCurrentTime';
 import { InventoryReceiptForm } from './InventoryWorkspace';
+import './JobDrawer.css';
 
 export function JobDrawer() {
   const {selectedJob:job,closeJob,openJob,editJob,state,board,commit,busy,storageWarning,storageMode,refresh,hasConflict,resolveConflict,mutationLocked,savedAt}=useWorkspace();
@@ -28,8 +29,10 @@ export function JobDrawer() {
   const [showIssue,setShowIssue]=useState(false);
   const [issueReason,setIssueReason]=useState('');
   const [showOutput,setShowOutput]=useState(false);
+  const [outputValid,setOutputValid]=useState(false);
   const [showCombine,setShowCombine]=useState(false);
   const outputToggle=useRef<HTMLButtonElement>(null);
+  const receiptInput=useRef<HTMLInputElement>(null);
   const combineToggle=useRef<HTMLButtonElement>(null);
   const restoreCombineFocus=useRef(false);
   const drawerRef=useRef<HTMLElement>(null);
@@ -49,7 +52,7 @@ export function JobDrawer() {
     const key=(event:KeyboardEvent)=>{
       if(event.key==='Escape')closeJob();
       if(event.key==='Tab'){
-        const controls=Array.from(drawerRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]')||[]).filter(element=>element.offsetParent!==null);
+        const controls=Array.from(drawerRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, a[href], [tabindex="0"]')||[]).filter(element=>element.offsetParent!==null&&element.tabIndex>=0&&!element.closest('[inert]'));
         const first=controls[0],last=controls[controls.length-1];
         if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
         else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
@@ -67,7 +70,8 @@ export function JobDrawer() {
   const result=getProductionResult(job,now);
   const elapsed=result.elapsedMinutes;
   const missing=!state.jobs.some(item=>item.id===job.id);
-  const closeOutput=()=>{setShowOutput(false);requestAnimationFrame(()=>outputToggle.current?.focus());};
+  const outputFormId=`production-output-${job.id}`;
+  const closeOutput=()=>{setShowOutput(false);requestAnimationFrame(()=>{const target=outputToggle.current; if(target&&!target.disabled)target.focus();else closeRef.current?.focus();});};
   const reloadLatest=()=>{
     if(missing){resolveConflict();closeJob();return;}
     setToLine(job.lineId);setBeforeId('');setShowMove(false);setConfirmCancel(false);
@@ -89,21 +93,30 @@ export function JobDrawer() {
         {job.plannedStart?<><div className="planned-time-range"><div><span>START</span><strong>{timeLabel(job.plannedStart)}</strong><small>{dateLabel(toDateTimeInput(job.plannedStart).slice(0,10),true)}</small></div><ArrowRight size={20}/><div><span>END</span><strong>{timeLabel(job.plannedEnd)}</strong><small>{dateLabel(toDateTimeInput(job.plannedEnd).slice(0,10),true)}</small></div></div><div className="schedule-breakdown"><span>Changeover before this task</span><strong>{durationLabel(job.changeoverMinutes,true)}</strong></div>{job.segments.filter(segment=>segment.kind==='production').length>1&&<p className="field-help">Production is split around unavailable time. All segments belong to this task.</p>}</>:<p className="subtle-empty">Add a quantity to calculate the planned time.</p>}
       </section>
       <section className="drawer-section" inert={missing&&hasConflict}><div className="drawer-section-title"><Clock3 size={16}/><h3>Actual production</h3><span className="muted small">MYT</span></div>
-        {pending?<><p className="field-help">Start production records the current time automatically.</p><button className="button primary full-width" disabled={mutationLocked||hasConflict||!job.quantityMt} onClick={start}><Play size={15}/>Start production</button></>:
+        {pending?<p className="field-help">Start production records the current time automatically. Use the action bar below.</p>:
         <><div className="actual-time-row"><span>Actual start</span><strong>{fullDateTime(job.actualStart)}</strong></div><div className="actual-time-row"><span>Actual end</span><strong>{fullDateTime(job.actualEnd)}</strong></div>{elapsed!==null&&<div className="actual-time-row"><span>Elapsed time</span><strong>{durationLabel(elapsed)}</strong></div>}
         {job.status==='completed'&&<><ActualOutputResult job={job}/><p className="field-help">Elapsed time includes any stops. It is separate from planned production time.</p></>}
-        {(job.status==='running'||job.status==='completed')&&(showOutput?<ActualOutputForm key={job.id} job={job} completing={job.status==='running'} onCancel={closeOutput} onSaved={closeOutput}/>:<button ref={outputToggle} disabled={mutationLocked||hasConflict} className={'button full-width '+(job.status==='running'?'primary':'secondary')} onClick={()=>setShowOutput(true)} aria-expanded={false}><CheckCheck size={17}/>{job.status==='running'?'Mark as done':result.actualQuantityMt===null?'Record actual output':'Edit actual output'}</button>)}
+        {(job.status==='running'||job.status==='completed')&&showOutput&&<ActualOutputForm key={job.id} job={job} completing={job.status==='running'} onCancel={closeOutput} onSaved={closeOutput} formId={outputFormId} onValidityChange={setOutputValid}/>}
         </>}
       </section>
       <ProductionStops key={job.id} job={job}/>
-      <InventoryReceiptForm key={`stock-${job.id}`} job={job}/>
+      <InventoryReceiptForm key={`stock-${job.id}`} job={job} quantityInputRef={receiptInput}/>
       {(job.status==='pending'||job.status==='running')&&!job.issue&&<section className="drawer-section issue-actions" inert={mutationLocked||hasConflict}><button className="text-link danger-text" onClick={()=>setShowIssue(!showIssue)} aria-expanded={showIssue}><AlertTriangle size={16}/>Report a problem</button>{showIssue&&<div className="issue-form"><label className="field">Problem details<textarea value={issueReason} onChange={event=>setIssueReason(event.target.value)} placeholder="Describe the problem for the team…" maxLength={1000}/><small>The card turns red until the problem is resolved or production is completed.</small></label><button className="button danger full-width" disabled={busy||!issueReason.trim()} onClick={async()=>{if(await commit({type:'job.reportIssue',jobId:job.id,reason:issueReason},'Problem recorded. The card is now marked red.')){setShowIssue(false);setIssueReason('');}}}><AlertTriangle size={16}/>Mark as issue</button></div>}</section>}
 
       {job.remarks&&<section className="drawer-section"><h3>Remarks</h3><p className="drawer-remarks">{job.remarks}</p></section>}
       {pending&&<section className="drawer-section" inert={mutationLocked||hasConflict}><button className="drawer-move-toggle" onClick={()=>setShowMove(!showMove)} aria-expanded={showMove}><MoveRight size={16}/><span>Move to another line or position</span><ArrowRight size={15}/></button>{showMove&&<div className="drawer-move-form"><div className="field-grid"><label className="field">Line<select value={toLine} onChange={e=>{setToLine(e.target.value as LineId);setBeforeId('');}}>{LINE_IDS.map(line=><option key={line}>{line}</option>)}</select></label><label className="field">Position<select value={beforeId} onChange={e=>setBeforeId(e.target.value)}><option value="">After the last task</option>{movableJobs.map(item=><option value={item.id} key={item.id}>Before {productLabel(item)} · {numberLabel(item.quantityMt)} MT</option>)}</select></label></div><button className="button secondary full-width" disabled={busy} onClick={async()=>{if(await commit({type:'job.move',jobId:job.id,toLineId:toLine,...(beforeId?{beforeJobId:beforeId}:{})},'Task moved. Check the destination bin.',true))setShowMove(false);}}>Apply move<ArrowRight size={15}/></button></div>}</section>}
       <div className="drawer-created">Created {fullDateTime(job.createdAt)}<br/>Last updated {fullDateTime(job.updatedAt)}</div>
     </div>
-    <div className="drawer-footer" inert={mutationLocked||hasConflict}>{pending?<><button className="button secondary" onClick={()=>editJob(job.id)}><Pencil size={15}/>Edit details</button>{confirmCancel?<div className="cancel-confirm"><button className="button danger" disabled={mutationLocked||hasConflict} onClick={async()=>{if(await commit({type:'job.cancel',jobId:job.id},'Production task cancelled.'))closeJob();}}>Confirm cancel</button><button className="icon-button" aria-label="Keep production task" onClick={()=>setConfirmCancel(false)}><X size={16}/></button></div>:<button className="text-link danger-text" onClick={()=>setConfirmCancel(true)}><Ban size={14}/>Cancel task</button>}</>:<span className="locked-note"><LockKeyhole size={15}/>The {job.status} task's plan is locked.</span>}</div>
+    <div className="drawer-footer drawer-execution-footer" role="group" aria-label="Production actions">
+      {showOutput&&(job.status==='running'||job.status==='completed')?<>
+        <p className="drawer-action-caption">{job.status==='running'?'Enter the final total above, including production already received.':'Update actual output; recorded times stay unchanged.'}</p>
+        <div className="drawer-primary-actions"><button className="button secondary" disabled={mutationLocked} onClick={closeOutput}>Cancel {job.status==='running'?'completion':'changes'}</button><button type="submit" form={outputFormId} className="button primary" disabled={!outputValid||mutationLocked||hasConflict}>{job.status==='running'?<CheckCheck size={16}/>:<Save size={16}/>} {busy?'Saving…':job.status==='running'?'Confirm done':'Save actual output'}</button></div>
+      </>:<>
+        {pending&&<div className="drawer-primary-actions"><button className="button primary" disabled={mutationLocked||hasConflict||!job.quantityMt||confirmCancel} onClick={start}><Play size={16}/>Start production</button></div>}
+        {(job.status==='running'||job.status==='completed')&&<div className="drawer-primary-actions">{job.status==='running'&&job.inventoryItemId&&<button className="button secondary" disabled={mutationLocked||hasConflict} onClick={()=>receiptInput.current?.focus()}><Package size={16}/>Record quantity</button>}<button ref={outputToggle} className={'button '+(job.status==='running'?'primary':'secondary')} disabled={mutationLocked||hasConflict} onClick={()=>{setOutputValid(false);setShowOutput(true);}} aria-expanded={false}><CheckCheck size={16}/>{job.status==='running'?'Mark as done':result.actualQuantityMt===null?'Record actual output':'Edit actual output'}</button></div>}
+        {pending?<div className="drawer-secondary-actions"><button className="text-link" disabled={mutationLocked||hasConflict} onClick={()=>editJob(job.id)}><Pencil size={15}/>Edit details</button>{confirmCancel?<div className="cancel-confirm"><button className="button danger" disabled={mutationLocked||hasConflict} onClick={async()=>{if(await commit({type:'job.cancel',jobId:job.id},'Production task cancelled.'))closeJob();}}>Confirm cancel</button><button className="icon-button" disabled={mutationLocked} aria-label="Keep production task" onClick={()=>setConfirmCancel(false)}><X size={16}/></button></div>:<button className="text-link danger-text" disabled={mutationLocked||hasConflict} onClick={()=>setConfirmCancel(true)}><Ban size={14}/>Cancel task</button>}</div>:<span className="locked-note"><LockKeyhole size={14}/>The {job.status} task's plan is locked.</span>}
+      </>}
+    </div>
   </aside></div>;
 }
 function Detail({label,value}:{label:string;value:string}){return <div className="detail-item"><span>{label}</span><strong>{value}</strong></div>;}

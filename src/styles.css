@@ -252,6 +252,7 @@ a {
 .toolbar-spacer {
   flex: 1;
 }
+.toolbar-context { min-width: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .save-indicator {
   display: flex;
   align-items: center;
@@ -2011,6 +2012,14 @@ tbody tr:last-child td {
   color: #943b2e;
   border-color: #daaaa1;
 }
+.toast.production-toast,.nav-collapsed .toast.production-toast {
+  top: 72px;
+  bottom: auto;
+  left: auto;
+  right: 18px;
+  transform: none;
+  max-width: min(450px, calc(100vw - 36px));
+}
 .toast>button {
   display: flex;
   align-items: center;
@@ -2515,6 +2524,9 @@ tbody tr:last-child td {
   .page-toolbar>.toolbar-spacer {
     display: none;
   }
+  .context-tools .toolbar-context { flex: 1; min-width: 120px; font-size: 11px; }
+  .context-tools .history-report-button { min-height: 40px; padding-inline: 10px; font-size: 12px; }
+  .page-is-history .context-tools .toolbar-context { flex-basis: 100%; }
   .date-picker {
     flex: 1;
     min-width: 190px;

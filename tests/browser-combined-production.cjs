@@ -50,10 +50,34 @@ const sources = job => job.sourceAllocations || (job.sourceOrderId?[{sourceOrder
   assert.equal(await drawer.locator('.drawer-material-code').innerText(),material);
   const allocations=drawer.getByLabel('Production order allocations');for(const [doNo,customer,quantity] of [['QA-COMB-1','Fictional farm 1','10.000 MT'],['QA-COMB-2','Fictional farm 2','20.000 MT']]){const row=allocations.locator('.combined-source-item').filter({hasText:doNo});assert.ok((await row.innerText()).includes(customer));assert.ok((await row.innerText()).includes(quantity));}
   await allocations.scrollIntoViewIfNeeded();await page.screenshot({path:path.join(output,'combined-card-details.png'),animations:'disabled'});
+  const actions=drawer.getByRole('group',{name:'Production actions',exact:true});
+  for(const viewport of [{width:1366,height:650},{width:390,height:844},{width:320,height:760}]){
+   await page.setViewportSize(viewport);
+   for(const bottom of [false,true]){
+    await drawer.locator('.drawer-body').evaluate((el,bottom)=>{el.scrollTop=bottom?el.scrollHeight:0;},bottom);
+    assert.ok(await actions.evaluate(el=>{const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&r.left>=0&&r.right<=innerWidth;}),'Production actions stay in view while body scrolls');
+    assert.ok((await actions.getByRole('button',{name:'Start production',exact:true}).boundingBox()).height>=44);
+    assert.ok(await actions.evaluate(el=>{const r=el.getBoundingClientRect();const toast=document.querySelector('.production-toast')?.getBoundingClientRect();return !toast||toast.bottom<=r.top||toast.top>=r.bottom;}),'Feedback does not cover execution actions');
+   }
+   await page.screenshot({path:path.join(output,`fixed-actions-${viewport.width}.png`)});
+  }
+  await page.setViewportSize({width:1366,height:650});
   await drawer.getByRole('button',{name:'Start production',exact:true}).click();await wait(async()=>(await json('/api/workspace')).state.jobs.find(j=>j.id===group.id).status==='running');
+  const beforeShortcut=(await json('/api/backup')).inventory.ledger;
+  await actions.getByRole('button',{name:'Record quantity',exact:true}).click();
+  assert.equal(await drawer.getByLabel('New quantity (MT)',{exact:true}).evaluate(el=>el===document.activeElement),true);
+  assert.deepEqual((await json('/api/backup')).inventory.ledger,beforeShortcut,'Quantity shortcut only focuses the receipt form');
   await drawer.getByLabel('New quantity (MT)',{exact:true}).fill('8');await drawer.getByRole('button',{name:'Record production quantity',exact:true}).click();await wait(async()=>(await json('/api/inventory')).items.find(i=>i.materialCode===material).totalOnHand===8);
   let progress=(await json('/api/inventory/orders')).orders;let o1=progress.find(o=>o.doNo==='QA-COMB-1'),o2=progress.find(o=>o.doNo==='QA-COMB-2');assert.equal(o1.produced,8);assert.equal(o2.produced,0);
-  await drawer.getByRole('button',{name:'Mark as done',exact:true}).click();await drawer.getByLabel('Actual quantity (MT)',{exact:true}).fill('25');await drawer.getByRole('button',{name:'Confirm done',exact:true}).click();await wait(async()=>(await json('/api/workspace')).state.jobs.find(j=>j.id===group.id).status==='completed');
+  await actions.getByRole('button',{name:'Mark as done',exact:true}).click();
+  const finalQuantity=drawer.getByLabel('Actual quantity (MT)',{exact:true}),confirm=actions.getByRole('button',{name:'Confirm done',exact:true});
+  assert.equal(await finalQuantity.evaluate(el=>el===document.activeElement),true);
+  await finalQuantity.fill('');assert.equal(await confirm.isDisabled(),true);await finalQuantity.fill('-1');assert.equal(await confirm.isDisabled(),true);
+  await finalQuantity.fill('1.001');await confirm.click();assert.equal(await finalQuantity.evaluate(el=>el.validity.stepMismatch),true);assert.equal((await json('/api/workspace')).state.jobs.find(j=>j.id===group.id).status,'running','External submit preserves native validation');
+  await actions.getByRole('button',{name:'Cancel completion',exact:true}).click();assert.equal(await actions.getByRole('button',{name:'Mark as done',exact:true}).evaluate(el=>el===document.activeElement),true);
+  await actions.getByRole('button',{name:'Mark as done',exact:true}).click();await finalQuantity.fill('25');
+  for(const viewport of [{width:320,height:760},{width:390,height:844},{width:1366,height:650}]){await page.setViewportSize(viewport);assert.ok(await confirm.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.bottom<=innerHeight&&r.top>=0;}));await page.screenshot({path:path.join(output,`completion-actions-${viewport.width}.png`)});}
+  await confirm.click();await wait(async()=>(await json('/api/workspace')).state.jobs.find(j=>j.id===group.id).status==='completed');
   progress=(await json('/api/inventory/orders')).orders;o1=progress.find(o=>o.doNo==='QA-COMB-1');o2=progress.find(o=>o.doNo==='QA-COMB-2');assert.equal(o1.produced,10);assert.equal(o2.produced,15);assert.equal((await json('/api/inventory')).items.find(i=>i.materialCode===material).totalOnHand,25);
   await drawer.getByRole('button',{name:'Close production details',exact:true}).click();
   console.log('PASS Multi-order selection, stable product isolation, short FS code, full details, responsive dialogs and single physical receipt attribution');

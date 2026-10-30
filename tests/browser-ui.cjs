@@ -59,13 +59,20 @@ async function bounds(locator,width,height){const b=await locator.boundingBox();
    const navigate=async label=>{if(viewport.width<=600)await page.getByRole('button',{name:'Open navigation',exact:true}).click();await page.getByRole('button',{name:label,exact:true}).click();};
    for(const label of ['Overview','Data','Stock','History','Settings','Planning board']){
     await navigate(label);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${label} has no page overflow at ${viewport.width}px`);
+    const planning=['Overview','Planning board'].includes(label);
+    assert.equal(await page.locator('.date-picker-trigger').count(),planning?1:0,`${label} date scope`);
+    assert.equal(await page.getByRole('button',{name:'Add production',exact:true}).count(),planning?1:0,`${label} production entry`);
+    assert.equal(await page.getByRole('button',{name:'Export',exact:true}).count(),planning||label==='History'?1:0,`${label} report entry`);
+    if(label==='History'){
+     const shortcut=page.getByRole('button',{name:'Date range report',exact:true});await bounds(shortcut,viewport.width,viewport.height);await shortcut.click();const report=page.getByRole('dialog',{name:'Date range report',exact:true});await bounds(report,viewport.width,viewport.height);await page.keyboard.press('Escape');await report.waitFor({state:'hidden'});
+    }
    }
    await page.locator('.date-picker-trigger').click();await bounds(page.getByRole('dialog',{name:'Choose planning date'}),viewport.width,viewport.height);await page.getByLabel('Calendar month').waitFor();await page.getByLabel('Calendar year').waitFor();await page.keyboard.press('Escape');
    await page.getByRole('button',{name:'Add production',exact:true}).click();let modal=page.getByRole('dialog',{name:'Add production',exact:true});await bounds(modal,viewport.width,viewport.height);
    for(let i=0;i<18;i++){await page.keyboard.press('Tab');assert.ok(await modal.evaluate(el=>el.contains(document.activeElement)),'Production form retains keyboard focus');}
    await page.screenshot({path:path.join(output,`editor-${viewport.width}.png`),animations:'disabled'});await page.keyboard.press('Escape');await modal.waitFor({state:'hidden'});
    await page.getByRole('button',{name:'Copy planning',exact:true}).click();modal=page.getByRole('dialog',{name:'Copy planning',exact:true});await bounds(modal,viewport.width,viewport.height);await page.keyboard.press('Escape');await modal.waitFor({state:'hidden'});
-   await page.locator('.hplan-card-open').first().click();await bounds(page.getByRole('dialog'),viewport.width,viewport.height);await page.keyboard.press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'});
+   await page.locator('.hplan-card-open').first().click();const drawer=page.getByRole('dialog');await bounds(drawer,viewport.width,viewport.height);const action=drawer.getByRole('group',{name:'Production actions',exact:true});await bounds(action,viewport.width,viewport.height);await drawer.locator('.drawer-body').evaluate(el=>{el.scrollTop=el.scrollHeight;});await bounds(action,viewport.width,viewport.height);await page.keyboard.press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'});
    await page.getByRole('button',{name:'Export',exact:true}).click();await bounds(page.locator('.export-menu'),viewport.width,viewport.height);await page.keyboard.press('Tab');assert.ok(await page.getByRole('button',{name:'Excel report',exact:false}).evaluate(el=>el===document.activeElement),'Export skips its pointer-only scrim');await page.keyboard.press('Escape');assert.ok(await page.getByRole('button',{name:'Export',exact:true}).evaluate(el=>el===document.activeElement),'Export returns focus on Escape');await page.getByRole('button',{name:'Export',exact:true}).click();await page.getByRole('button',{name:'Date range report',exact:false}).click();modal=page.getByRole('dialog',{name:'Date range report',exact:true});await bounds(modal,viewport.width,viewport.height);await page.keyboard.press('Escape');await modal.waitFor({state:'hidden'});
    if(viewport.width<=600){await page.screenshot({path:path.join(output,`board-${viewport.width}.png`),animations:'disabled'});await navigate('History');await page.screenshot({path:path.join(output,`history-${viewport.width}.png`),animations:'disabled'});}
   }

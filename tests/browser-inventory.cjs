@@ -98,6 +98,19 @@ async function fixture(file) {
   const revised=path.join(output,'fictional-updated-stock.xlsm');const revisedBook=new ExcelJS.Workbook();await revisedBook.xlsx.readFile(file);revisedBook.getWorksheet('bag order').getCell('H2').value=110;revisedBook.getWorksheet('bulk order').getCell('A2').value='QA-PROTECTED';await revisedBook.xlsx.writeFile(revised);
   await page.setViewportSize({width:1440,height:900});await page.reload();await page.getByRole('button',{name:'Import Excel',exact:true}).click();await page.getByLabel('Excel order file').setInputFiles(revised);const compare=page.getByRole('dialog',{name:'Daily stock workbook',exact:true});await compare.getByLabel('Import changes').first().waitFor();const differences=compare.getByLabel('Import changes').first();assert.match(await differences.innerText(),/Quantity[\s\S]*100 Bags[\s\S]*110 Bags/);assert.doesNotMatch(await differences.innerText(),/Medication|FMR/);await page.screenshot({path:path.join(output,'workbook-comparison.png')});await page.keyboard.press('Escape');await compare.waitFor({state:'hidden'});
   console.log('PASS Daily workbook comparisons show before/after quantity and retain protected Medication/FMR');
+  // A 1 kg shortage must stay visible next to an almost fully reserved bulk order.
+  const bulkJob=(await json('/api/workspace')).state.jobs.find(j=>j.inventoryItemId&&j.mode==='bulk'&&j.status==='pending');assert.ok(bulkJob);await command({type:'job.cancel',jobId:bulkJob.id});
+  const bulkItem=(await json('/api/inventory')).items.find(i=>i.unit==='MT');
+  await command({type:'inventory.receive',itemId:bulkItem.itemId,quantity:19.999,movementType:'received',medication:'',fmrOmed:'',occurredOn:today,postingKey:randomUUID(),note:'Fictional precision fixture'});
+  await page.goto(base+'/#/data');await page.reload();await page.getByLabel('Search order data').fill('QA-BULK-20');
+  const bulkProgress=page.getByLabel('Production progress QA-BULK-20',{exact:true});await bulkProgress.getByText('0.001 MT to plan',{exact:true}).waitFor();
+  assert.equal(await page.locator('.orders-table thead th').count(),7);
+  assert.ok(await page.locator('.orders-table tbody td').first().evaluate(el=>parseFloat(getComputedStyle(el).fontSize)>=14));
+  await bulkProgress.locator('summary').click();assert.match(await bulkProgress.innerText(),/19\.999 MT/);assert.match(await page.locator('.orders-table tbody tr').innerText(),/20\.000 MT/);
+  await page.screenshot({path:path.join(output,'orders-precision.png')});
+  await page.getByLabel('Search order data').fill('QA-BAG-100');const bagProgress=page.getByLabel('Production progress QA-BAG-100',{exact:true});await bagProgress.locator('summary').waitFor();await bagProgress.locator('summary').click();assert.doesNotMatch(await bagProgress.innerText(),/\d\.\d+ Bags/);
+  await page.getByRole('button',{name:'Planning board',exact:true}).click();await page.getByRole('button',{name:'Plan from Data',exact:true}).click();const picker=page.getByRole('dialog',{name:'Choose an order to plan',exact:true});await picker.getByLabel('Search order data').fill('QA-BULK-20');await picker.getByText('0.001 MT to plan',{exact:true}).waitFor();assert.equal(await picker.locator('thead th').count(),9);assert.match(await picker.getByLabel('Production progress QA-BULK-20').innerText(),/19\.999 MT reserved/);await page.keyboard.press('Escape');
+  console.log('PASS Readable seven-column orders and full picker preserve 0.001 MT shortages, exact reserved quantities and integer Bags');
   assert.deepEqual(errors,[]);console.log('PASS stock ledger, daily stock, backup v4, desktop/mobile rendering and browser console');
  } catch(e) {if(page)await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw e;}
  finally {if(browser)await browser.close();await command({type:'workspace.restore',backup});}

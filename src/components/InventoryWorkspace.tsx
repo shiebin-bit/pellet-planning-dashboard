@@ -1,5 +1,5 @@
 import { getJobSourceAllocations, jobHasSourceOrder } from '../domain/jobSources';
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, type Ref } from 'react';
 import { Settings2, RefreshCw } from 'lucide-react';
 import type { InventoryItemSnapshot, InventoryLedgerEntry, InventoryOrderProgress, InventoryOrderJournalRow, InventoryDailyStockRow } from '../domain/inventoryTypes';
 import { readInventory, readInventoryOrders, readDailyStock, readOrderJournal, readLedger, readJobProduction } from '../lib/inventoryApi';
@@ -163,7 +163,7 @@ function PhysicalCountDialog({ row, date, onClose }: { row: InventoryDailyStockR
   </DetailDialog>;
 }
 
-export function InventoryReceiptForm({ job }: { job: Job }) {
+export function InventoryReceiptForm({ job, quantityInputRef }: { job: Job; quantityInputRef?: Ref<HTMLInputElement> }) {
   const { savedAt, commit, mutationLocked, hasConflict, confirmedRetry } = useWorkspace();
   const retryAtMount=useRef(confirmedRetry?.nonce??0);
   useEffect(()=>{if(confirmedRetry&&confirmedRetry.nonce>retryAtMount.current&&confirmedRetry.type==='production.recordReceipt')setQuantity('');},[confirmedRetry?.nonce]);
@@ -171,7 +171,7 @@ export function InventoryReceiptForm({ job }: { job: Job }) {
   useEffect(() => { let active = true; if (job.inventoryItemId) readJobProduction(job.id).then(result => { if (active) setRecorded(result.total); }).catch(e => { if (active) setError(e.message); }); return () => { active = false; }; }, [job.id, savedAt]);
   if (!job.inventoryItemId) return null;
   const unit = job.mode === 'bags' ? 'Bags' : 'MT';
-  return <section className="drawer-section"><h3>Production received into stock</h3><p>{qty(recorded, unit)} recorded so far</p>{job.status === 'running' && <form onSubmit={async e => { e.preventDefault(); if (await commit({ type: 'production.recordReceipt', jobId: job.id, totalActualQuantity: Math.round((recorded + +quantity) * 1000) / 1000, occurredOn: date }, 'Production received. Order progress and stock updated.')) setQuantity(''); }}><div className="field-grid"><label className="field">Production date<input type="date" required value={date} onChange={e => setDate(e.target.value)}/></label><label className="field">New quantity ({unit})<input type="number" required min={unit === 'Bags' ? 1 : .001} step={unit === 'Bags' ? 1 : .001} value={quantity} onChange={e => setQuantity(e.target.value)}/></label></div><button className="button secondary full-width" disabled={mutationLocked || hasConflict || !+quantity}>Record production quantity</button></form>}<p className="field-help">Done asks for the final total, including quantities already recorded here.</p>{error && <p className="data-error">{error}</p>}</section>;
+  return <section className="drawer-section"><h3>Production received into stock</h3><p>{qty(recorded, unit)} recorded so far</p>{job.status === 'running' && <form onSubmit={async e => { e.preventDefault(); if (await commit({ type: 'production.recordReceipt', jobId: job.id, totalActualQuantity: Math.round((recorded + +quantity) * 1000) / 1000, occurredOn: date }, 'Production received. Order progress and stock updated.')) setQuantity(''); }}><div className="field-grid"><label className="field">Production date<input type="date" required value={date} onChange={e => setDate(e.target.value)}/></label><label className="field">New quantity ({unit})<input ref={quantityInputRef} type="number" required min={unit === 'Bags' ? 1 : .001} step={unit === 'Bags' ? 1 : .001} value={quantity} onChange={e => setQuantity(e.target.value)}/></label></div><button className="button secondary full-width" disabled={mutationLocked || hasConflict || !+quantity}>Record production quantity</button></form>}<p className="field-help">Done asks for the final total, including quantities already recorded here.</p>{error && <p className="data-error">{error}</p>}</section>;
 }
 export function InventoryPagination({ total, page, setPage, label = 'Inventory', position = 'bottom', ready = true }: { total: number; page: number; setPage: (page: number) => void; label?: string; position?: 'top' | 'bottom'; ready?: boolean }) {
   const pages = Math.max(1, Math.ceil(total / 50));

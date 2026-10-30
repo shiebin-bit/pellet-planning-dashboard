@@ -38,8 +38,8 @@ async function scrollCheck(page,label){
   await command({type:'inventory.importBaseline',input:{fileName:'fictional-table-stock.xlsm',digest:createHash('sha256').update('table-fixture').digest('hex'),asOfDate:baselineDate,orders:[],items,annotations:[],packingBinTotal:null,includeBaseline:true}});
   browser=await chromium.launch({headless:true,...(!existsSync(chromium.executablePath())?{channel:'chrome'}:{})});
   page=await browser.newPage({viewport:{width:1366,height:768},timezoneId:'Asia/Kuala_Lumpur',acceptDownloads:true});page.setDefaultTimeout(15000);const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.goto(base+'/#/stock');await page.getByRole('button',{name:'Manage stock',exact:true}).first().waitFor();
-  await page.locator('.date-picker-trigger').click();await page.getByLabel('Calendar year').selectOption('2026');await page.getByLabel('Calendar month').selectOption('9');await page.locator('[data-date="'+planningDate+'"]').click();
+  await page.goto(base+'/#/planning');await page.locator('.hplan-board').waitFor();
+  await page.locator('.date-picker-trigger').click();await page.getByLabel('Calendar year').selectOption('2026');await page.getByLabel('Calendar month').selectOption('9');await page.locator('[data-date="'+planningDate+'"]').click();await page.getByRole('button',{name:'Stock',exact:true}).click();await page.getByRole('button',{name:'Manage stock',exact:true}).first().waitFor();
   assert.ok((await page.getByLabel('Stock dates').innerText()).includes(new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'}).format(new Date(baselineDate+'T12:00:00Z'))));
   const stockTop=page.getByRole('navigation',{name:'Stock pages — top',exact:true}),stockBottom=page.getByRole('navigation',{name:'Stock pages — bottom',exact:true});
   await stockTop.getByRole('button',{name:'Next stock page',exact:true}).click();await wait(async()=>await page.locator('.source-table tbody tr').count()===7);assert.match(await stockBottom.innerText(),/Page 2 of 2/);
