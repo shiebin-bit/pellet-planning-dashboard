@@ -71,10 +71,10 @@ const sources = job => job.sourceAllocations || (job.sourceOrderId?[{sourceOrder
   let progress=(await json('/api/inventory/orders')).orders;let o1=progress.find(o=>o.doNo==='QA-COMB-1'),o2=progress.find(o=>o.doNo==='QA-COMB-2');assert.equal(o1.produced,8);assert.equal(o2.produced,0);
   await actions.getByRole('button',{name:'Mark as done',exact:true}).click();
   const finalQuantity=drawer.getByLabel('Actual quantity (MT)',{exact:true}),confirm=actions.getByRole('button',{name:'Confirm done',exact:true});
-  assert.equal(await finalQuantity.evaluate(el=>el===document.activeElement),true);
-  await finalQuantity.fill('');assert.equal(await confirm.isDisabled(),true);await finalQuantity.fill('-1');assert.equal(await confirm.isDisabled(),true);
+  await wait(()=>finalQuantity.evaluate(el=>el===document.activeElement));
+  await finalQuantity.fill('');await wait(()=>confirm.isDisabled());await finalQuantity.fill('-1');await wait(()=>confirm.isDisabled());
   await finalQuantity.fill('1.001');await confirm.click();assert.equal(await finalQuantity.evaluate(el=>el.validity.stepMismatch),true);assert.equal((await json('/api/workspace')).state.jobs.find(j=>j.id===group.id).status,'running','External submit preserves native validation');
-  await actions.getByRole('button',{name:'Cancel completion',exact:true}).click();assert.equal(await actions.getByRole('button',{name:'Mark as done',exact:true}).evaluate(el=>el===document.activeElement),true);
+  await actions.getByRole('button',{name:'Cancel completion',exact:true}).click();await wait(()=>actions.getByRole('button',{name:'Mark as done',exact:true}).evaluate(el=>el===document.activeElement));
   await actions.getByRole('button',{name:'Mark as done',exact:true}).click();await finalQuantity.fill('25');
   for(const viewport of [{width:320,height:760},{width:390,height:844},{width:1366,height:650}]){await page.setViewportSize(viewport);assert.ok(await confirm.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.bottom<=innerHeight&&r.top>=0;}));await page.screenshot({path:path.join(output,`completion-actions-${viewport.width}.png`)});}
   await confirm.click();await wait(async()=>(await json('/api/workspace')).state.jobs.find(j=>j.id===group.id).status==='completed');
