@@ -167,6 +167,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.hplan-line-label.has-hours-override { padding-block: 5px; }
+.hplan-line-label.has-hours-override > span { margin-top: 4px; }
+.hplan-line-label.has-hours-override > small { margin-top: 2px; line-height: 1.2; }
+.hplan-line-label > .hplan-hours-override { color: #8a370c; font-weight: 650; }
 .hplan-track {
   position: relative;
   min-width: 0;
@@ -370,6 +374,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.hplan-receipt-label { display: none; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hplan-receipt-meter { position: absolute; inset-inline: 0; bottom: 0; height: 3px; background: #dce4e8; pointer-events: none; }
+.hplan-receipt-meter > i { display: block; height: 100%; background: #235e85; }
+@container hplan-card (min-width:160px) { .hplan-receipt-label { display: inline; } }
 @container hplan-card (min-width:26px) {
   .hplan-code-short {
     display: block;
@@ -396,7 +404,7 @@
     display: flex;
   }
 }
-@container hplan-card (min-width:110px) and (min-height:88px) {
+@container hplan-card (min-width:110px) and (min-height:82px) {
   .hplan-state {
     display: flex;
   }

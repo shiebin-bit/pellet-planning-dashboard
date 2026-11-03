@@ -11,9 +11,10 @@ import { getScheduledJobs } from "../src/domain/engine";
 import { planInventoryDraft } from "../src/domain/inventoryPlanner";
 import type { InventoryCommand, InventoryDraftRequest } from "../src/domain/inventoryTypes";
 import type { SourceImportInput, SourceImportPreviewContext } from "../src/domain/sourceTypes";
-import type { PortableSourceData, PortableWorkspaceBackupV3 } from "../src/domain/sourceTypes";
+import type { PortableSourceData, PortableSourceDataWithReviews } from "../src/domain/sourceTypes";
 import type { PortableInventoryData, PortableWorkspaceBackupV4 } from "../src/domain/inventoryTypes";
-import { clearInventoryData, exportInventoryData, exportSourceData, portableBackupV4, restoreInventoryData, restoreSourceData, validatePortableBackupV3, validatePortableBackupV4 } from "./sourceBackup";
+import type { PortableProductionProgress, PortableWorkspaceBackupV5 } from "../src/domain/productionProgress";
+import { clearInventoryData, exportInventoryData, exportSourceData, portableBackupV5, restoreInventoryData, restoreSourceData, validatePortableBackupV3, validatePortableBackupV4, validatePortableBackupV5 } from "./sourceBackup";
 import {
   applySourceImport,
   clearSourceData,
@@ -24,6 +25,7 @@ import {
   previewSourceImport,
   setDeliveryStatus,
 } from "./sourceData";
+import { executeSourceImportReview, getSourceImportReview, listSourceImportReviews } from "./sourceReview";
 import {
   buildPlanningDemand,
   jobProductionTotal,
@@ -36,8 +38,10 @@ import {
   listDailyStock,
   listLedger,
   listOrderJournal,
+  recalculateReservations,
   syncInventoryOrders,
 } from "./inventory";
+import { clearProductionProgress, exportProductionProgress, getProductionProgress, restoreProductionProgress } from "./productionProgress";
 
 interface WorkspaceRow {
   revision: string;
@@ -47,6 +51,7 @@ interface WorkspaceRow {
   previous_backup: unknown | null;
   previous_source_backup: unknown | null;
   previous_inventory_backup: unknown | null;
+  previous_production_progress_backup: unknown | null;
   undo_state: unknown | null;
   undo_revision: string | null;
   updated_at: Date | string;
@@ -57,8 +62,9 @@ interface LoadedWorkspace {
   revision: number;
   isDemo: boolean;
   previousBackup: AppState | null;
-  previousSourceBackup: PortableSourceData | null;
+  previousSourceBackup: PortableSourceDataWithReviews | null;
   previousInventoryBackup: PortableInventoryData | null;
+  previousProductionProgressBackup: PortableProductionProgress | null;
   undoState: AppState | null;
   undoRevision: number | null;
   updatedAt: string;
@@ -84,6 +90,8 @@ export class WorkspaceStore {
   async previewSourceImport(input: SourceImportInput, context?: SourceImportPreviewContext) { return previewSourceImport(this.pool, input, context); }
   async listSourceOrders(query: URLSearchParams) { return listSourceOrders(this.pool, query); }
   async getSourceOrder(id: string) { return getSourceOrder(this.pool, id); }
+  async listSourceImportReviews(query: URLSearchParams) { return listSourceImportReviews(this.pool, query); }
+  async getSourceImportReview(id: string) { return getSourceImportReview(this.pool, id); }
   async getInventory() { return getInventorySnapshot(this.pool); }
   async getInventoryProductionSummary(date: string) {
     const client = await this.pool.connect();
@@ -126,6 +134,19 @@ export class WorkspaceStore {
     return (await listOrderJournal(this.pool,sourceOrderId)).filter(row => row.sourceOrderId === sourceOrderId);
   }
   async getInventoryLedger(limit?: number, itemId?: string) { return listLedger(this.pool, limit, itemId); }
+  async getProductionProgress(jobIds: string[]) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      const loaded = await loadWorkspace(client, false);
+      const result = await getProductionProgress(client, loaded.state, loaded.revision, jobIds);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
+  }
   async previewInventoryDraft(input: InventoryDraftRequest) {
     const client = await this.pool.connect();
     try {
@@ -148,13 +169,13 @@ export class WorkspaceStore {
     return result.rows.map(row => ({ id: row.id, fileName: row.file_name, asOfDate: String(row.as_of_date).slice(0, 10), importedAt: new Date(row.imported_at).toISOString(), rowCount: row.row_count }));
   }
 
-  async getPortableBackup(): Promise<PortableWorkspaceBackupV4> {
+  async getPortableBackup(): Promise<PortableWorkspaceBackupV5> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
       const loaded = await loadWorkspace(client, false);
       const sourceData = await exportSourceData(client);
-      const result = portableBackupV4(loaded.state, sourceData, await exportInventoryData(client));
+      const result = portableBackupV5(loaded.state, sourceData, await exportInventoryData(client), await exportProductionProgress(client));
       assertPortableBackupSize(result);
       await client.query("COMMIT");
       return result;
@@ -164,10 +185,10 @@ export class WorkspaceStore {
     } finally { client.release(); }
   }
 
-  async getPreviousPortableBackup(): Promise<PortableWorkspaceBackupV4 | null> {
+  async getPreviousPortableBackup(): Promise<PortableWorkspaceBackupV5 | null> {
     const current = await this.getWorkspaceWithPreviousSource();
     if (!current.previousBackup) return null;
-    const result = portableBackupV4(current.previousBackup, current.previousSourceBackup ?? emptySourceData(), current.previousInventoryBackup ?? emptyInventoryData());
+    const result = portableBackupV5(current.previousBackup, current.previousSourceBackup ?? emptySourceData(), current.previousInventoryBackup ?? emptyInventoryData(), current.previousProductionProgressBackup ?? emptyProductionProgress());
     assertPortableBackupSize(result);
     return result;
   }
@@ -237,6 +258,8 @@ export class WorkspaceStore {
       let previousBackup = current.previousBackup;
       let previousSourceBackup = current.previousSourceBackup;
       let previousInventoryBackup = current.previousInventoryBackup;
+      let previousProductionProgressBackup = current.previousProductionProgressBackup;
+      let productionProgressToRestore: PortableProductionProgress | null = null;
       let undoState: AppState | null = null;
       let undoRevision: number | null = null;
 
@@ -246,16 +269,20 @@ export class WorkspaceStore {
             assertPortableBackupSize(command.backup);
             {
               const backup = "planning" in command.backup
-                ? ("inventory" in command.backup ? validatePortableBackupV4(command.backup) : validatePortableBackupV3(command.backup))
+                ? (command.backup.schemaVersion === 5 ? validatePortableBackupV5(command.backup)
+                  : "inventory" in command.backup ? validatePortableBackupV4(command.backup) : validatePortableBackupV3(command.backup))
                 : null;
               const restoredPlanning = backup?.planning ?? stripSourceLinks(validateWorkspaceBackup(command.backup));
               previousSourceBackup = await exportSourceData(client);
               previousInventoryBackup = await exportInventoryData(client);
+              previousProductionProgressBackup = await exportProductionProgress(client);
+              await clearProductionProgress(client);
               await clearInventoryData(client);
               await clearSourceData(client);
               previousBackup = current.state;
               if (backup) await restoreSourceData(client, backup.sourceData);
               if (backup && "inventory" in backup) await restoreInventoryData(client, backup.inventory);
+              productionProgressToRestore = backup && "productionProgress" in backup ? backup.productionProgress : emptyProductionProgress();
               nextState = appendEvent(restoredPlanning, {
                 id: `event-${randomUUID()}`,
                 at: nowIso,
@@ -268,6 +295,8 @@ export class WorkspaceStore {
           case "workspace.resetDemo":
             previousSourceBackup = await exportSourceData(client);
             previousInventoryBackup = await exportInventoryData(client);
+            previousProductionProgressBackup = await exportProductionProgress(client);
+            await clearProductionProgress(client);
             await clearInventoryData(client);
             await clearSourceData(client);
             previousBackup = current.state;
@@ -293,6 +322,13 @@ export class WorkspaceStore {
           case "data.import": {
             const result = await applySourceImport(client, current.state, command.input, nowIso);
             await syncInventoryOrders(client, result.state, command.input, nowIso);
+            nextState = result.state;
+            break;
+          }
+          case "data.applySourceCorrection":
+          case "data.dismissSourceCorrection": {
+            const result = await executeSourceImportReview(client, current.state, command, nowIso);
+            if (result.inventoryChanged) await recalculateReservations(client, nowIso);
             nextState = result.state;
             break;
           }
@@ -335,7 +371,7 @@ export class WorkspaceStore {
             if (command.type === "planning.commitDraft" && command.previewRevision !== current.revision) {
               throw new ApiError(409, "STALE_DRAFT", "Inventory or capacity changed after this draft was generated. Generate it again.");
             }
-            nextState = await executeInventoryCommand(client, current.state, command as InventoryCommand, nowIso);
+            nextState = await executeInventoryCommand(client, current.state, command as InventoryCommand, nowIso, { commandId });
             if((command.type==="inventory.importBaseline"||command.type==="inventory.importWorkbook")&&command.input.includeBaseline)isDemo=false;
             break;
           default:
@@ -348,7 +384,7 @@ export class WorkspaceStore {
                   : job.actualQuantityMt;
                 nextState = await executeInventoryCommand(client, nextState, {
                   type: "production.recordReceipt", jobId: job.id, totalActualQuantity,
-                }, nowIso);
+                }, nowIso, { commandId, receiptSource: "completion" });
               }
             }
             if (command.type === "job.move") {
@@ -369,10 +405,12 @@ export class WorkspaceStore {
         previousBackup,
         previousSourceBackup,
         previousInventoryBackup,
+        previousProductionProgressBackup,
         undoState,
         undoRevision,
         updatedAt: nowIso,
       });
+      if (productionProgressToRestore) await restoreProductionProgress(client, productionProgressToRestore);
       await client.query(
         `INSERT INTO command_receipts(command_id, payload_hash, applied_revision, created_at)
          VALUES ($1, $2, $3, $4::timestamptz)`,
@@ -400,7 +438,8 @@ export class WorkspaceStore {
 async function loadWorkspace(client: pg.PoolClient, lock: false | "update"): Promise<LoadedWorkspace> {
   const lockClause = lock === "update" ? " FOR UPDATE" : "";
   const workspace = await client.query<WorkspaceRow>(
-    `SELECT revision, is_demo, settings, catalog, previous_backup, previous_source_backup, previous_inventory_backup, undo_state, undo_revision, updated_at
+    `SELECT revision, is_demo, settings, catalog, previous_backup, previous_source_backup, previous_inventory_backup,
+       previous_production_progress_backup, undo_state, undo_revision, updated_at
      FROM workspace WHERE id = 1${lockClause}`,
   );
   if (!workspace.rowCount) throw new Error("Workspace has not been initialized.");
@@ -419,8 +458,9 @@ async function loadWorkspace(client: pg.PoolClient, lock: false | "update"): Pro
     revision: safeRevision(row.revision),
     isDemo: row.is_demo,
     previousBackup: row.previous_backup === null ? null : validateWorkspaceBackup(row.previous_backup),
-    previousSourceBackup: row.previous_source_backup === null ? null : row.previous_source_backup as PortableSourceData,
+    previousSourceBackup: row.previous_source_backup === null ? null : normalizePreviousSourceData(row.previous_source_backup),
     previousInventoryBackup: row.previous_inventory_backup === null ? null : row.previous_inventory_backup as PortableInventoryData,
+    previousProductionProgressBackup: row.previous_production_progress_backup === null ? null : row.previous_production_progress_backup as PortableProductionProgress,
     undoState: row.undo_state === null ? null : validateWorkspaceBackup(row.undo_state),
     undoRevision: row.undo_revision === null ? null : safeRevision(row.undo_revision),
     updatedAt: new Date(row.updated_at).toISOString(),
@@ -431,7 +471,8 @@ async function persistWorkspace(client: pg.PoolClient, value: LoadedWorkspace): 
   await client.query(
     `UPDATE workspace SET revision = $1, is_demo = $2, settings = $3::jsonb,
        catalog = $4::jsonb, previous_backup = $5::jsonb, previous_source_backup = $6::jsonb,
-       previous_inventory_backup = $7::jsonb, undo_state = $8::jsonb, undo_revision = $9, updated_at = $10::timestamptz WHERE id = 1`,
+       previous_inventory_backup = $7::jsonb, previous_production_progress_backup=$8::jsonb,
+       undo_state = $9::jsonb, undo_revision = $10, updated_at = $11::timestamptz WHERE id = 1`,
     [
       value.revision,
       value.isDemo,
@@ -440,6 +481,7 @@ async function persistWorkspace(client: pg.PoolClient, value: LoadedWorkspace): 
       value.previousBackup === null ? null : JSON.stringify(value.previousBackup),
       value.previousSourceBackup === null ? null : JSON.stringify(value.previousSourceBackup),
       value.previousInventoryBackup === null ? null : JSON.stringify(value.previousInventoryBackup),
+      value.previousProductionProgressBackup === null ? null : JSON.stringify(value.previousProductionProgressBackup),
       value.undoState === null ? null : JSON.stringify(value.undoState),
       value.undoRevision,
       value.updatedAt,
@@ -493,8 +535,13 @@ async function persistWorkspace(client: pg.PoolClient, value: LoadedWorkspace): 
   await client.query("DELETE FROM history_events WHERE workspace_id=1 AND ordinal >= 1000000000");
 }
 
-function emptySourceData(): PortableSourceData { return { imports: [], orders: [], versions: [] }; }
+function emptySourceData(): PortableSourceDataWithReviews { return { imports: [], orders: [], versions: [], discrepancies: [] }; }
 function emptyInventoryData(): PortableInventoryData { return { items: [], imports: [], baselineReports: [], orders: [], ledger: [], reservations: [] }; }
+function emptyProductionProgress(): PortableProductionProgress { return { samples: [], resets: [] }; }
+function normalizePreviousSourceData(value: unknown): PortableSourceDataWithReviews {
+  const source = value as PortableSourceData & { discrepancies?: PortableSourceDataWithReviews["discrepancies"] };
+  return { imports: source.imports ?? [], orders: source.orders ?? [], versions: source.versions ?? [], discrepancies: source.discrepancies ?? [] };
+}
 
 function activateCalendar(state: AppState, effectiveFrom: string, dayStart: string, availableHours: number, nowIso: string): AppState {
   if (availableHours <= 0 || availableHours > 24) throw new Error("Available hours must be greater than zero and no more than 24.");

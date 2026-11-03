@@ -21,6 +21,7 @@ import { DatePicker } from './components/DatePicker';
 import { ReportDialog } from './components/ReportDialog';
 import { CopyPlanningDialog } from './components/CopyPlanningDialog';
 import type { ProductionReport } from './domain/reports';
+import { LiveProductionProvider } from './lib/liveProduction';
 
 const navigation = [
   { id: 'overview' as Page, label: 'Overview', icon: LayoutDashboard },
@@ -30,7 +31,7 @@ const navigation = [
   { id: 'history' as Page, label: 'History', icon: History },
   { id: 'settings' as Page, label: 'Settings', icon: Settings2 },
 ];
-export function App() { return <WorkspaceProvider><ListNavigationProvider><Dashboard /></ListNavigationProvider></WorkspaceProvider>; }
+export function App() { return <WorkspaceProvider><ListNavigationProvider><LiveProductionProvider><Dashboard /></LiveProductionProvider></ListNavigationProvider></WorkspaceProvider>; }
 
 function Dashboard() {
   const { state, board, date, setDate, page, navigate, openInput, editor, copyDialog, importOpen, sourceDialog, selectedId, toast, savedAt, storageWarning, notify, canUndo, undo,isDemo,storageMode,busy,refresh,hasConflict,resolveConflict,mutationLocked } = useWorkspace();

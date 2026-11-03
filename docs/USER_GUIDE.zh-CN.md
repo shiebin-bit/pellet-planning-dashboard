@@ -70,7 +70,7 @@ Daily stock 的 **Enter physical count** 会立即打开盘点弹窗，载入所
 
 Settings → **Backup & recovery** → Download backup 下载整个 workspace JSON。Restore JSON backup 会先预览，再由 Replace workspace 确认替换；它不会合并资料。替换或数据库版 Reset demo 前的一份 workspace 可以下载恢复，但只保留最近一次。
 
-数据库新版备份为 version 4，包含排产、Data、库存和完整流水；离线版为 version 2，包含排产及产品清单。旧版 version 1 仍能读取，但没有产品清单，恢复后清单为空；预览会明确提醒。恢复前应下载当前备份。
+数据库新版备份为 version 5，包含排产、Data、库存和完整流水；离线版为 version 2，包含排产及产品清单。旧版 version 1 仍能读取，但没有产品清单，恢复后清单为空；预览会明确提醒。恢复前应下载当前备份。
 
 旧离线资料：在原本浏览器、原本 HTML 路径打开 → 下载 JSON → 在数据库版导入。不会自动迁移。
 
@@ -107,7 +107,7 @@ Data 的 Plan production 或 Planning board 的 Plan from Data 使用同一个�
 
 四条线默认每天 07:00–19:00。Settings → Workspace 可修改 Planning day starts 和 Daily available hours，画面会预览结束时间，跨午夜时显示 +1 day。按 Save settings 后，从服务器当前马来西亚日期开始采用新工时，重算今天及之后未开始的排程；当天排不下的生产延到下一个工作时段。较早排产日期的计划沿用旧班次，已开始、暂停、完成的计划及实际时间保留。保存工时不会增删卡片或改变数量。Day 显示当班，Full plan 显示跨日分段。排产日期不会因队列延后而被改写，请同时查看计算后的开始日期。
 
-数据库 Download backup 生成版本 4，包含排产、Data 订单、导入批次、原始版本、库存及完整流水。旧版仍可读取；恢复前会提示缺少的订单、产品清单或库存资料，并保留上一份工作区供下载。含订单或库存的备份须在数据库版恢复。
+数据库 Download backup 生成版本 5，包含排产、Data 订单、导入批次、原始版本、库存及完整流水。旧版仍可读取；恢复前会提示缺少的订单、产品清单或库存资料，并保留上一份工作区供下载。含订单或库存的备份须在数据库版恢复。
 
 每次导入都应核对文件日期、数量／单位及变更预览，确认后才保存。公开仓库和自动测试只使用虚构工作簿。
 
@@ -161,3 +161,15 @@ Settings 分为 Workspace、Production rules、Unavailable periods、Products、
 尚未保存的已生成草稿，在关闭、Escape 或离开前会提醒。若订单、库存、排程或 Settings 有变动，或计划日期已过去，旧草稿可保留查看，但必须重新生成后才能 Confirm。重新生成会替换当前预览，手动调整需重新核对。其他标签页修改同一份草稿时，编辑会暂停；按 **Load latest browser draft** 载入后再继续。
 
 **Confirm** 才将卡片整批保存到 PostgreSQL。请求发出前会保留原请求编号；断线时先用 Retry connection 确认，刷新后可用 **Check previous save** 检查同一请求，不能另建一批。确认过的请求重复检查不会重复建卡。如果浏览器禁止或没有空间保存草稿，画面会报错并保留当前输入；此时不会发出新批次请求。损坏的浏览器草稿需要明确按 Discard 后才能重新保存。
+
+## 实时进度、指定日期工时与导入审核
+
+Planning 的 Now 线表示当前马来西亚时间，只在所查看的时间范围内显示。关联库存的运行／完成卡片会显示实际入库进度，例如 **40 / 100 Bags**；MT 保留三位小数。它来自已记录的产量，不会根据经过时间自动增加。
+
+至少有三次递增的实时产量记录、涵盖至少 15 分钟有效生产时间，而且最后一次不超过 20 分钟时，才显示 **Estimated finish** 及预计提前／延迟。暂停、更正、过期数据或记录不足时不显示不可靠的预计时间。Done 补录的最终数量不会伪装成实时速度样本。断网后保留的数字会标记 last known，可用 Retry progress 重试。
+
+临时加班／停线：Settings → Unavailable periods → **Date-specific working hours**。选今天或未来日期，逐线选择 Use normal calendar、Custom hours 或 Closed，填写原因后 Apply date hours。比如只让 PM1／PM2 加班至 21:00，其余线 Closed；第二天仍用正常班次。先保存普通 Settings 草稿，再应用日期工时。已有实际开始／完成的时段保持锁定；修改后重新生成未确认的排程草稿。
+
+Excel 重复订单仍不会自动覆盖。差异保存于 Data → **Import review queue**：打开记录，对照 Current 与 Imported candidate，勾选已核对字段，填写原因，再 Apply selected fields；不采用的差异可填写原因后 Dismiss review。DO、完整 Material code、单位和受保护字段不可覆盖。已有预留／排程／实际生产／取货时，不允许直接改订单数量。审核更正新增来源版本，历史卡片及库存流水保留原记录。
+
+数据库完整备份现在为 version 5，包含审核记录与实时进度样本；旧版本仍可恢复，但缺少的审核／进度记录会清空，恢复前会提醒并保留上一份完整工作区。离线备份仍为 version 2。

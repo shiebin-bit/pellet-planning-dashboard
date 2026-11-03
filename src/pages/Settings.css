@@ -118,6 +118,122 @@
   margin-bottom: 18px;
 }
 
+.calendar-settings-stack {
+  display: grid;
+  gap: 20px;
+}
+
+.working-hours-panel>.notice {
+  margin: 0 0 18px;
+}
+
+.working-hours-toolbar,
+.working-hours-save {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.working-hours-toolbar>.field {
+  width: min(280px,100%);
+}
+
+.working-hours-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.working-hours-saved {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.working-hours-saved>span {
+  margin-right: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.working-hours-saved>button {
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: white;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.working-hours-saved>button[aria-pressed=true] {
+  border-color: var(--action);
+  color: var(--action);
+  font-weight: 650;
+}
+
+.working-hours-grid {
+  display: grid;
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.working-hours-row {
+  display: grid;
+  grid-template-columns: minmax(125px,.7fr) minmax(180px,1.15fr) minmax(130px,.8fr) minmax(150px,.9fr);
+  align-items: end;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-left: 4px solid #9aa8b2;
+  background: #fbfcfc;
+}
+
+.working-hours-row.custom { border-left-color: var(--action); }
+.working-hours-row.closed { border-left-color: #b04a3f; background: #fff9f7; }
+
+.working-hours-line {
+  align-self: center;
+  display: grid;
+  gap: 3px;
+}
+
+.working-hours-line strong { font-size: 18px; }
+.working-hours-line span { color: var(--muted); font-size: 12px; }
+
+.working-hours-save {
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.working-hours-save>.field { flex: 1; }
+
+.working-hours-submit {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.working-hours-feedback {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-left: 3px solid #39744c;
+  background: #f1f8f3;
+  color: #225f38;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.working-hours-feedback.error {
+  border-left-color: #b04a3f;
+  background: #fff5f2;
+  color: #8f2f25;
+}
+
 @media(max-width:1000px) {
   .settings-rules-layout {
     grid-template-columns: 1fr;
@@ -127,6 +243,9 @@
   }
   .settings-backup-layout {
     grid-template-columns: 1fr;
+  }
+  .working-hours-row {
+    grid-template-columns: minmax(110px,.6fr) repeat(3,minmax(130px,1fr));
   }
 }
 
@@ -161,5 +280,27 @@
   }
   .settings-backup-layout .reset-area {
     padding: 18px;
+  }
+  .working-hours-toolbar,
+  .working-hours-save {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .working-hours-actions {
+    display: grid;
+    grid-template-columns: repeat(3,1fr);
+  }
+  .working-hours-submit {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .working-hours-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .working-hours-line {
+    grid-column: 1 / -1;
+  }
+  .working-hours-row>.field:last-child {
+    grid-column: 1 / -1;
   }
 }

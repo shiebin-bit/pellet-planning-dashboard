@@ -5,6 +5,7 @@ import {
   type CalendarPeriod,
   type CatalogProduct,
   type Downtime,
+  type DateLineWorkingHoursOverride,
   type HistoryEvent,
   type HistoryChange,
   type Job,
@@ -33,6 +34,7 @@ const MALAYSIA_OFFSET_MINUTES = 8 * 60;
 const MAX_SEARCH_DAYS = 3_700;
 const MAX_NOTE_LENGTH = 1_000;
 const MAX_CALENDAR_PERIODS = 10_000;
+const MAX_WORKING_HOURS_OVERRIDES = 40_000;
 
 export interface TimeInterval {
   start: number;
@@ -68,10 +70,16 @@ export function getBoard(state: AppState, date: string): Board {
   validateSettings(state.settings);
 
   const calendar = getCalendarForDate(state.settings, date);
-  const { start, end } = getShiftWindow(calendar, date);
+  const defaultWindow = getShiftWindow(calendar, date);
+  const lineWindows = new Map(LINE_IDS.map(lineId => [lineId, getWorkingHoursForDate(state.settings, date, lineId)]));
+  const openWindows = [...lineWindows.values()].filter(window => window.availableHours > 0).map(window => getShiftWindow(window, date));
+  const start = openWindows.length ? Math.min(...openWindows.map(window => window.start)) : defaultWindow.start;
+  const end = openWindows.length ? Math.max(...openWindows.map(window => window.end)) : defaultWindow.end;
   const scheduled = scheduleState(state);
 
   const lines = LINE_IDS.map((lineId): LineSchedule => {
+    const lineHours = lineWindows.get(lineId)!;
+    const lineWindow = getShiftWindow(lineHours, date);
     const allLineJobs = scheduled.byLine[lineId];
     const jobs = allLineJobs.filter(
       (job) =>
@@ -94,7 +102,7 @@ export function getBoard(state: AppState, date: string): Board {
     const productionMinutes = minutesForKind(boardSegments, "production");
     const changeoverMinutes = minutesForKind(boardSegments, "changeover");
     const availableMinutes = getAvailableIntervals(
-      calendar,
+      state.settings,
       lineId,
       date,
     ).reduce(
@@ -114,6 +122,7 @@ export function getBoard(state: AppState, date: string): Board {
       lineId,
       jobs,
       segments: boardSegments,
+      workingWindow: { ...lineWindow, source: lineHours.source },
       availableMinutes,
       productionMinutes,
       changeoverMinutes,
@@ -131,7 +140,11 @@ export function getBoard(state: AppState, date: string): Board {
           sum +
           job.segments.reduce(
             (jobSum, segment) =>
-              jobSum + Math.max(0, segment.end - Math.max(end, segment.start)) / MINUTE_MS,
+              jobSum + Math.max(
+                0,
+                (segment.end - segment.start) / MINUTE_MS
+                  - overlapMinutes(segment.start, segment.end, lineWindow.start, lineWindow.end),
+              ),
             0,
           ),
         0,
@@ -655,7 +668,8 @@ export function updateSettings(
   validateSettings(state.settings);
   validateSettings(settings, true);
   if (JSON.stringify(settings.calendarHistory ?? null) !== JSON.stringify(state.settings.calendarHistory ?? null)
-    || JSON.stringify(settings.calendarCutover ?? null) !== JSON.stringify(state.settings.calendarCutover ?? null)) {
+    || JSON.stringify(settings.calendarCutover ?? null) !== JSON.stringify(state.settings.calendarCutover ?? null)
+    || JSON.stringify(settings.workingHoursOverrides ?? null) !== JSON.stringify(state.settings.workingHoursOverrides ?? null)) {
     throw new Error("Production calendar metadata cannot be edited in ordinary settings.");
   }
   const now = new Date(nowIso).toISOString();
@@ -692,11 +706,13 @@ export function updateSettings(
       updated = { ...updated, lockedSegments: segments.map(segment => ({ ...segment })) };
     }
     if (calendarChanged && job.status === "pending" && !job.lockedSegments?.length && job.calendarManagedRelease === true && job.notBefore && job.date >= effectiveFrom) {
-      const calendar = getCalendarForDate(copiedSettings, job.date);
-      const shift = getShiftWindow(calendar, job.date);
-      const releaseFloor = job.date === effectiveFrom ? Math.max(shift.start, Date.parse(now)) : shift.start;
-      const nextNotBefore = new Date(releaseFloor).toISOString();
-      if (updated.notBefore !== nextNotBefore) updated = { ...updated, notBefore: nextNotBefore, updatedAt: now };
+      const calendar = getWorkingHoursForDate(copiedSettings, job.date, job.lineId);
+      if (calendar.availableHours > 0) {
+        const shift = getShiftWindow(calendar, job.date);
+        const releaseFloor = job.date === effectiveFrom ? Math.max(shift.start, Date.parse(now)) : shift.start;
+        const nextNotBefore = new Date(releaseFloor).toISOString();
+        if (updated.notBefore !== nextNotBefore) updated = { ...updated, notBefore: nextNotBefore, updatedAt: now };
+      }
     }
     if (updated.mode === "bags" && updated.status === "pending" && !updated.sourceOrderId && !updated.sourceAllocations?.length && !updated.bagWeightKgSnapshot) {
       const quantityMt = quantityFromBags(updated.bagCount ?? 0, copiedSettings.bagWeightKg);
@@ -715,6 +731,70 @@ export function updateSettings(
       getSettingsHistoryChanges(state.settings, copiedSettings),
     ),
   );
+}
+
+export function replaceWorkingHoursOverrides(
+  state: AppState,
+  date: string,
+  lines: Array<{ lineId: LineId; dayStart: string; availableHours: number }>,
+  reason: string,
+  nowIso = new Date().toISOString(),
+): AppState {
+  assertDate(date, "Working-hours date");
+  assertIsoDateTime(nowIso, "Working-hours update time");
+  const now = new Date(nowIso).toISOString();
+  const today = malaysiaDateAt(now);
+  if (date < today) throw new Error("Past working-hours overrides cannot be changed.");
+  const normalizedReason = requiredText(reason, "Working-hours reason");
+  if (normalizedReason.length > MAX_NOTE_LENGTH) throw new Error(`Working-hours reason cannot exceed ${MAX_NOTE_LENGTH} characters.`);
+  if (lines.length > LINE_IDS.length || new Set(lines.map(line => line.lineId)).size !== lines.length) {
+    throw new Error("Working-hours override lines must be unique.");
+  }
+  const replacement: DateLineWorkingHoursOverride[] = lines.map(line => {
+    assertLineId(line.lineId);
+    timeToMinutes(line.dayStart, "Working-hours start");
+    if (!Number.isFinite(line.availableHours) || line.availableHours < 0 || line.availableHours > 24) {
+      throw new Error("Working-hours available hours must be between 0 and 24.");
+    }
+    return { date, lineId: line.lineId, dayStart: line.dayStart, availableHours: line.availableHours, reason: normalizedReason, activatedAt: now };
+  });
+  const beforeRows = (state.settings.workingHoursOverrides ?? []).filter(row => row.date === date);
+  const oldSchedule = new Map(getScheduledJobs(state).map(job => [job.id, job]));
+  const nextRows = [...(state.settings.workingHoursOverrides ?? []).filter(row => row.date !== date), ...replacement]
+    .sort((left, right) => left.date.localeCompare(right.date) || LINE_IDS.indexOf(left.lineId) - LINE_IDS.indexOf(right.lineId));
+  const settings = cloneSettings({ ...state.settings, ...(nextRows.length ? { workingHoursOverrides: nextRows } : {}) });
+  if (!nextRows.length) delete settings.workingHoursOverrides;
+  validateSettings(settings);
+  const affectedLines = new Set<LineId>([...beforeRows.map(row => row.lineId), ...replacement.map(row => row.lineId)]);
+  const rebasedJobs = state.jobs.map(job => {
+    let updated = job;
+    if (job.status === "pending" && job.date === date && affectedLines.has(job.lineId) && job.calendarManagedRelease === true && job.notBefore) {
+      const hours = getWorkingHoursForDate(settings, date, job.lineId);
+      if (hours.availableHours > 0) {
+        const shift = getShiftWindow(hours, date);
+        const releaseFloor = date === today ? Math.max(shift.start, Date.parse(now)) : shift.start;
+        const notBefore = new Date(releaseFloor).toISOString();
+        if (notBefore !== job.notBefore) updated = { ...updated, notBefore, updatedAt: now };
+      }
+    }
+    return updated;
+  });
+  const projectedSchedule = new Map(getScheduledJobs({ ...state, settings, jobs: rebasedJobs }).map(job => [job.id, job]));
+  const jobs = rebasedJobs.map(job => {
+    if ((job.status !== "running" && job.status !== "completed") || job.lockedSegments?.length || job.quantityMt <= 0) return job;
+    const oldSegments = oldSchedule.get(job.id)?.segments ?? [];
+    const projectedSegments = projectedSchedule.get(job.id)?.segments ?? [];
+    if (sameScheduleSegments(oldSegments, projectedSegments)) return job;
+    if (!oldSegments.length) throw new Error(`Cannot update working hours until the existing plan for order ${job.orderNo} can be frozen.`);
+    return { ...job, lockedSegments: oldSegments.map(segment => ({ ...segment })) };
+  });
+  const next = { ...state, settings, jobs };
+  validateFutureDayCollisions(next);
+  return withEvent(next, jobs, event("settings.workingHours.updated", `Updated working hours for ${date}: ${normalizedReason}.`, undefined, now, [{
+    field: "settings.workingHoursOverrides",
+    before: compactAuditRows(beforeRows),
+    after: compactAuditRows(replacement),
+  }]));
 }
 
 export function createCatalogProduct(
@@ -1059,17 +1139,7 @@ function scheduleState(state: AppState): ScheduleResult {
           .sort(compareSegments);
         changeoverMinutes = minutesForKind(segments, "changeover");
       } else {
-        const calendar = getCalendarForDate(state.settings, job.date);
-        if (calendar.availableHours <= 0) {
-          const scheduledJob: ScheduledJob = {
-            ...cloneJob(job), plannedStart: null, plannedEnd: null, durationMinutes, rate,
-            changeoverMinutes, segments: [], overflow: false,
-          };
-          byLine[lineId].push(scheduledJob);
-          byId.set(job.id, scheduledJob);
-          previousJob = job;
-          continue;
-        }
+        const calendar = getWorkingHoursForDate(state.settings, job.date, lineId);
         let phaseCursor = Math.max(
           cursor ?? Number.NEGATIVE_INFINITY,
           businessDayStart(job.date, calendar.dayStart),
@@ -1077,13 +1147,14 @@ function scheduleState(state: AppState): ScheduleResult {
         );
         if (changeoverMinutes > 0) {
           const changeover = allocateWork(
-            calendar,
+            state.settings,
             lineId,
             job.id,
             "changeover",
             phaseCursor,
             changeoverMinutes,
             fixed,
+            job.date,
           );
           if (changeover) {
             segments.push(...changeover);
@@ -1093,13 +1164,14 @@ function scheduleState(state: AppState): ScheduleResult {
           }
         }
         const production = allocateWork(
-          calendar,
+          state.settings,
           lineId,
           job.id,
           "production",
           phaseCursor,
           durationMinutes,
           fixed,
+          job.date,
         );
         if (production) segments.push(...production);
       }
@@ -1107,7 +1179,7 @@ function scheduleState(state: AppState): ScheduleResult {
       const plannedStart = minOrNull(segments.map((segment) => segment.start));
       const plannedEnd = maxOrNull(segments.map((segment) => segment.end));
       if (plannedEnd !== null) cursor = Math.max(cursor ?? plannedEnd, plannedEnd);
-      const jobCalendar = getCalendarForDate(state.settings, job.date);
+      const jobCalendar = getWorkingHoursForDate(state.settings, job.date, lineId);
       const businessEnd = businessDayStart(job.date, jobCalendar.dayStart) + jobCalendar.availableHours * 60 * MINUTE_MS;
       const scheduledJob: ScheduledJob = {
         ...cloneJob(job),
@@ -1142,11 +1214,12 @@ function allocateWork(
   earliest: number,
   minutes: number,
   fixed: Interval[],
+  assignedDate: string,
 ): ScheduleSegment[] | null {
   if (minutes <= 0) return [];
   let remainingMs = minutes * MINUTE_MS;
   let cursor = earliest;
-  let date = businessDateAtOrBefore(cursor, settings.dayStart);
+  let date = assignedDate;
   const segments: ScheduleSegment[] = [];
 
   for (let searched = 0; searched < MAX_SEARCH_DAYS; searched += 1) {
@@ -1170,7 +1243,7 @@ function allocateWork(
       if (remainingMs <= 0.001) return segments;
     }
     date = addDays(date, 1);
-    cursor = Math.max(cursor, businessDayStart(date, settings.dayStart));
+    cursor = Math.max(cursor, getShiftWindow(getWorkingHoursForDate(settings, date, lineId), date).start);
   }
   return null;
 }
@@ -1192,13 +1265,14 @@ export function getAvailableIntervals(
   lineId: LineId,
   date: string,
 ): TimeInterval[] {
-  if (settings.availableHours <= 0) return [];
-  const available: Interval[] = [getShiftWindow(settings, date)];
+  const hours = getWorkingHoursForDate(settings, date, lineId);
+  if (hours.availableHours <= 0) return [];
+  const available: Interval[] = [getShiftWindow(hours, date)];
   const downtime = settings.downtime
     .filter(
       (item) => item.date === date && (item.lineId === "all" || item.lineId === lineId),
     )
-    .map((item) => downtimeInterval(item, settings.dayStart));
+    .map((item) => downtimeInterval(item, hours.dayStart));
   return subtractIntervals(available, downtime);
 }
 
@@ -1271,6 +1345,19 @@ export function getCalendarForDate(settings: Settings, assignedDate: string): Se
   const cutover = settings.calendarCutover;
   if (!cutover || assignedDate >= cutover.effectiveFrom) return settings;
   return { ...settings, dayStart: cutover.priorDayStart, availableHours: cutover.priorAvailableHours };
+}
+
+export function getWorkingHoursForDate(settings: Settings, assignedDate: string, lineId: LineId): {
+  dayStart: string;
+  availableHours: number;
+  source: "calendar" | "override";
+} {
+  assertDate(assignedDate, "Working-hours date");
+  assertLineId(lineId);
+  const override = settings.workingHoursOverrides?.find(row => row.date === assignedDate && row.lineId === lineId);
+  if (override) return { dayStart: override.dayStart, availableHours: override.availableHours, source: "override" };
+  const calendar = getCalendarForDate(settings, assignedDate);
+  return { dayStart: calendar.dayStart, availableHours: calendar.availableHours, source: "calendar" };
 }
 
 function normalizedProduct(value: string): string {
@@ -1347,6 +1434,23 @@ function validateSettings(settings: Settings, allowCalendarProjectionChange = fa
     if (downtime.lineId !== "all") assertLineId(downtime.lineId);
     timeToMinutes(downtime.start, "Downtime start");
     timeToMinutes(downtime.end, "Downtime end");
+  }
+  if (settings.workingHoursOverrides) {
+    if (settings.workingHoursOverrides.length > MAX_WORKING_HOURS_OVERRIDES) throw new Error(`Working-hours overrides cannot contain more than ${MAX_WORKING_HOURS_OVERRIDES} rows.`);
+    const identities = new Set<string>();
+    for (const row of settings.workingHoursOverrides) {
+      assertDate(row.date, "Working-hours override date");
+      assertLineId(row.lineId);
+      timeToMinutes(row.dayStart, "Working-hours override start");
+      if (!Number.isFinite(row.availableHours) || row.availableHours < 0 || row.availableHours > 24) throw new Error("Working-hours override available hours must be between 0 and 24.");
+      requiredText(row.reason, "Working-hours override reason");
+      if (row.reason.length > MAX_NOTE_LENGTH) throw new Error(`Working-hours override reason cannot exceed ${MAX_NOTE_LENGTH} characters.`);
+      assertIsoDateTime(row.activatedAt, "Working-hours override activation time");
+      const identity = `${row.date}:${row.lineId}`;
+      if (identities.has(identity)) throw new Error(`Working-hours overrides cannot duplicate ${row.lineId} on ${row.date}.`);
+      identities.add(identity);
+    }
+    validateWorkingHoursDoNotOverlap(settings);
   }
   if (settings.calendarCutover) {
     assertDate(settings.calendarCutover.effectiveFrom, "Calendar cutover date");
@@ -1492,9 +1596,32 @@ function cloneSettings(settings: Settings): Settings {
     rates: { ...settings.rates },
     slowProductPrefixes: [...settings.slowProductPrefixes],
     downtime: settings.downtime.map((item) => ({ ...item })),
+    ...(settings.workingHoursOverrides ? { workingHoursOverrides: settings.workingHoursOverrides.map(row => ({ ...row })) } : {}),
     ...(settings.calendarHistory ? { calendarHistory: settings.calendarHistory.map(period => ({ ...period })) } : {}),
     ...(settings.calendarCutover ? { calendarCutover: { ...settings.calendarCutover } } : {}),
   };
+}
+
+function compactAuditRows(rows: DateLineWorkingHoursOverride[]): string {
+  return JSON.stringify(rows.map(({ lineId, dayStart, availableHours, reason }) => ({ lineId, dayStart, availableHours, reason })));
+}
+
+function validateWorkingHoursDoNotOverlap(settings: Settings): void {
+  const dates = new Set<string>();
+  for (const row of settings.workingHoursOverrides ?? []) {
+    dates.add(row.date);
+    dates.add(addDays(row.date, -1));
+    dates.add(addDays(row.date, 1));
+  }
+  const ordered = [...dates].sort();
+  for (const lineId of LINE_IDS) {
+    for (let index = 1; index < ordered.length; index += 1) {
+      if (addDays(ordered[index - 1], 1) !== ordered[index]) continue;
+      const prior = getShiftWindow(getWorkingHoursForDate(settings, ordered[index - 1], lineId), ordered[index - 1]);
+      const current = getShiftWindow(getWorkingHoursForDate(settings, ordered[index], lineId), ordered[index]);
+      if (prior.end > current.start) throw new Error(`Working hours for ${lineId} overlap between ${ordered[index - 1]} and ${ordered[index]}.`);
+    }
+  }
 }
 
 function materializeCalendarHistory(settings: Settings): CalendarPeriod[] {
@@ -1538,13 +1665,6 @@ function businessDayStart(date: string, dayStart: string): number {
     Date.UTC(year, month - 1, day, hour, minute, 0, 0) -
     MALAYSIA_OFFSET_MINUTES * MINUTE_MS
   );
-}
-
-function businessDateAtOrBefore(timestamp: number, dayStart: string): string {
-  const malaysiaPoint = new Date(timestamp + MALAYSIA_OFFSET_MINUTES * MINUTE_MS);
-  let date = formatUtcDate(malaysiaPoint);
-  if (timestamp < businessDayStart(date, dayStart)) date = addDays(date, -1);
-  return date;
 }
 
 function addDays(date: string, days: number): string {
@@ -1651,6 +1771,12 @@ function compareIntervals(a: Interval, b: Interval): number {
 
 function compareSegments(a: ScheduleSegment, b: ScheduleSegment): number {
   return a.start - b.start || a.end - b.end;
+}
+
+function sameScheduleSegments(left: ScheduleSegment[], right: ScheduleSegment[]): boolean {
+  const normalize = (segments: ScheduleSegment[]) => segments.map(({ lineId, kind, start, end }) => ({ lineId, kind, start, end }))
+    .sort((a, b) => a.start - b.start || a.end - b.end || a.lineId.localeCompare(b.lineId) || a.kind.localeCompare(b.kind));
+  return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
 }
 
 function validInterval(interval: Interval): boolean {

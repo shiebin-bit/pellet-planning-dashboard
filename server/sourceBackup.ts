@@ -2,9 +2,11 @@ import { createHash } from "node:crypto";
 import type pg from "pg";
 import { validateWorkspaceBackup } from "../src/domain/backup";
 import type { AppState } from "../src/domain/types";
-import type { PortableSourceData, PortableWorkspaceBackupV3, SourceOrderFields } from "../src/domain/sourceTypes";
+import type { PortableSourceData, PortableSourceDataWithReviews, PortableSourceDiscrepancy, PortableWorkspaceBackupV3, SourceOrderFieldName, SourceOrderFields } from "../src/domain/sourceTypes";
 import type { PortableInventoryData, PortableWorkspaceBackupV4 } from "../src/domain/inventoryTypes";
+import type { PortableProductionProgress, PortableWorkspaceBackupV5 } from "../src/domain/productionProgress";
 import { getJobSourceAllocations } from "../src/domain/jobSources";
+import { SOURCE_REVIEWABLE_FIELD_NAMES } from "../src/domain/importReview";
 
 export function validatePortableBackupV4(value: unknown): PortableWorkspaceBackupV4 {
   const root = record(value, "backup");
@@ -13,6 +15,89 @@ export function validatePortableBackupV4(value: unknown): PortableWorkspaceBacku
   const legacy = validatePortableBackupV3({ schemaVersion: 3, exportedAt: root.exportedAt, planning: root.planning, sourceData: root.sourceData });
   return { schemaVersion: 4, exportedAt: legacy.exportedAt, planning: legacy.planning, sourceData: legacy.sourceData,
     inventory: validatePortableInventoryData(root.inventory, legacy.sourceData, legacy.planning) };
+}
+
+export function validatePortableBackupV5(value: unknown): PortableWorkspaceBackupV5 {
+  const root = record(value, "backup");
+  exact(root, ["schemaVersion", "exportedAt", "planning", "sourceData", "inventory", "productionProgress"], "backup");
+  if (root.schemaVersion !== 5) throw new Error("backup.schemaVersion must be 5.");
+  const rawSource = record(root.sourceData, "backup.sourceData");
+  exact(rawSource, ["imports", "orders", "versions", "discrepancies"], "backup.sourceData");
+  const legacy = validatePortableBackupV4({ schemaVersion: 4, exportedAt: root.exportedAt, planning: root.planning,
+    sourceData: { imports: rawSource.imports, orders: rawSource.orders, versions: rawSource.versions }, inventory: root.inventory });
+  const discrepancies = validatePortableDiscrepancies(rawSource.discrepancies, legacy.sourceData);
+  const productionProgress = validatePortableProductionProgress(root.productionProgress, legacy.planning);
+  return { schemaVersion: 5, exportedAt: legacy.exportedAt, planning: legacy.planning,
+    sourceData: { ...legacy.sourceData, discrepancies }, inventory: legacy.inventory, productionProgress };
+}
+
+function validatePortableDiscrepancies(value: unknown, sourceData: PortableSourceData): PortableSourceDiscrepancy[] {
+  const importIds = new Set(sourceData.imports.map(row => row.id));
+  const orderById = new Map(sourceData.orders.map(row => [row.id, row]));
+  const versions = new Map(sourceData.versions.map(row => [`${row.sourceOrderId}\0${row.version}`, row]));
+  const rows = array(value, "backup.sourceData.discrepancies", 500_000).map((item, index) => {
+    const path = `backup.sourceData.discrepancies[${index}]`; const row = record(item, path);
+    exact(row, ["id","sourceOrderId","importId","observedSourceVersion","candidateFields","candidateHash","changedFields","status","createdAt","resolvedAt","resolutionReason","selectedFields","appliedSourceVersion"], path);
+    if (row.status !== "pending" && row.status !== "applied" && row.status !== "dismissed") throw new Error(`${path}.status is invalid.`);
+    const status = row.status;
+    const candidateFields = sourceFields(row.candidateFields, `${path}.candidateFields`);
+    const changedFields = array(row.changedFields, `${path}.changedFields`, SOURCE_REVIEWABLE_FIELD_NAMES.length).map((field, fieldIndex) => {
+      if (typeof field !== "string" || !(SOURCE_REVIEWABLE_FIELD_NAMES as readonly string[]).includes(field)) throw new Error(`${path}.changedFields[${fieldIndex}] is invalid.`);
+      return field as SourceOrderFieldName;
+    });
+    if (!changedFields.length || new Set(changedFields).size !== changedFields.length) throw new Error(`${path}.changedFields must be nonempty and unique.`);
+    const selectedFields = row.selectedFields === null ? null : array(row.selectedFields, `${path}.selectedFields`, SOURCE_REVIEWABLE_FIELD_NAMES.length).map((field, fieldIndex) => {
+      if (typeof field !== "string" || !(SOURCE_REVIEWABLE_FIELD_NAMES as readonly string[]).includes(field)) throw new Error(`${path}.selectedFields[${fieldIndex}] is invalid.`);
+      return field as SourceOrderFieldName;
+    });
+    if (selectedFields && (!selectedFields.length || new Set(selectedFields).size !== selectedFields.length || selectedFields.some(field => !changedFields.includes(field)))) throw new Error(`${path}.selectedFields must be a nonempty unique subset of changedFields.`);
+    const result: PortableSourceDiscrepancy = { id: text(row.id, `${path}.id`, 200), sourceOrderId: text(row.sourceOrderId, `${path}.sourceOrderId`, 200),
+      importId: text(row.importId, `${path}.importId`, 200), observedSourceVersion: integer(row.observedSourceVersion, `${path}.observedSourceVersion`, 1),
+      candidateFields, candidateHash: sha256(row.candidateHash, `${path}.candidateHash`), changedFields, status,
+      createdAt: timestamp(row.createdAt, `${path}.createdAt`), resolvedAt: nullableTimestamp(row.resolvedAt, `${path}.resolvedAt`),
+      resolutionReason: nullableText(row.resolutionReason, `${path}.resolutionReason`, 1_000), selectedFields,
+      appliedSourceVersion: row.appliedSourceVersion === null ? null : integer(row.appliedSourceVersion, `${path}.appliedSourceVersion`, 1) };
+    if (result.candidateHash !== reviewFieldsHash(result.candidateFields)) throw new Error(`${path}.candidateHash does not match reviewable candidate fields.`);
+    if (status === "pending" && (result.resolvedAt || result.resolutionReason || result.selectedFields || result.appliedSourceVersion)) throw new Error(`${path} pending resolution fields must be null.`);
+    if (status === "applied" && (!result.resolvedAt || !result.resolutionReason?.trim() || !result.selectedFields || result.appliedSourceVersion === null)) throw new Error(`${path} applied resolution is incomplete.`);
+    if (status === "dismissed" && (!result.resolvedAt || !result.resolutionReason?.trim() || result.selectedFields || result.appliedSourceVersion !== null)) throw new Error(`${path} dismissed resolution is invalid.`);
+    return result;
+  });
+  unique(rows.map(row => row.id), "source discrepancy id");
+  unique(rows.map(row => `${row.sourceOrderId}\0${row.importId}\0${row.candidateHash}`), "source discrepancy identity");
+  for (const row of rows) {
+    const order = orderById.get(row.sourceOrderId);
+    const observed = versions.get(`${row.sourceOrderId}\0${row.observedSourceVersion}`);
+    if (!order || !observed || !importIds.has(row.importId)) throw new Error("A source discrepancy contains an orphan reference.");
+    const differences = SOURCE_REVIEWABLE_FIELD_NAMES.filter(field => JSON.stringify(observed.fields[field]) !== JSON.stringify(row.candidateFields[field]));
+    if (differences.length !== row.changedFields.length || differences.some(field => !row.changedFields.includes(field))) throw new Error("A source discrepancy changedFields value does not match its observed source version.");
+    if (row.appliedSourceVersion !== null) {
+      const applied = versions.get(`${row.sourceOrderId}\0${row.appliedSourceVersion}`);
+      if (!applied || applied.importId !== row.importId || row.appliedSourceVersion > order.latestVersion) throw new Error("An applied source discrepancy does not match an applied source version.");
+    }
+  }
+  return rows;
+}
+
+function validatePortableProductionProgress(value: unknown, planning: AppState): PortableProductionProgress {
+  const root = record(value, "backup.productionProgress"); exact(root, ["samples", "resets"], "backup.productionProgress");
+  const jobIds = new Set(planning.jobs.map(job => job.id));
+  const samples = array(root.samples, "backup.productionProgress.samples", 1_000_000).map((item,index) => {
+    const path=`backup.productionProgress.samples[${index}]`,row=record(item,path);
+    exact(row,["id","jobId","commandId","cumulativeScaled","sampledAt","recordedAt","source","trustworthy","untrustedReason"],path);
+    if(row.source!=="operator-live"&&row.source!=="completion")throw new Error(`${path}.source is invalid.`);
+    const trustworthy=bool(row.trustworthy,`${path}.trustworthy`),untrustedReason=nullableText(row.untrustedReason,`${path}.untrustedReason`,1000);
+    if(trustworthy ? untrustedReason!==null : !untrustedReason?.trim())throw new Error(`${path} trust metadata is invalid.`);
+    const cumulativeScaled=text(row.cumulativeScaled,`${path}.cumulativeScaled`,30);if(!/^\d+$/.test(cumulativeScaled)||BigInt(cumulativeScaled)>BigInt(Number.MAX_SAFE_INTEGER))throw new Error(`${path}.cumulativeScaled is invalid.`);
+    const sampledAt=timestamp(row.sampledAt,`${path}.sampledAt`),recordedAt=timestamp(row.recordedAt,`${path}.recordedAt`);if(sampledAt>recordedAt)throw new Error(`${path}.sampledAt cannot be after recordedAt.`);
+    return{id:text(row.id,`${path}.id`,200),jobId:text(row.jobId,`${path}.jobId`,200),commandId:text(row.commandId,`${path}.commandId`,200),cumulativeScaled,
+      sampledAt,recordedAt,source:row.source as "operator-live"|"completion",trustworthy,untrustedReason};
+  });
+  const resets=array(root.resets,"backup.productionProgress.resets",1_000_000).map((item,index)=>{const path=`backup.productionProgress.resets[${index}]`,row=record(item,path);
+    exact(row,["id","jobId","commandId","resetAt","reason"],path);return{id:text(row.id,`${path}.id`,200),jobId:text(row.jobId,`${path}.jobId`,200),commandId:text(row.commandId,`${path}.commandId`,200),resetAt:timestamp(row.resetAt,`${path}.resetAt`),reason:text(row.reason,`${path}.reason`,1000)};});
+  unique(samples.map(row=>row.id),"progress sample id");unique(resets.map(row=>row.id),"progress reset id");unique([...samples,...resets].map(row=>row.commandId),"progress command id");
+  for(const row of [...samples,...resets])if(!jobIds.has(row.jobId))throw new Error("Production progress refers to a missing production card.");
+  return{samples,resets};
 }
 
 export function validatePortableInventoryData(value: unknown, sourceData: PortableSourceData, planning: AppState): PortableInventoryData {
@@ -128,19 +213,21 @@ export function validatePortableBackupV3(value: unknown): PortableWorkspaceBacku
   return { schemaVersion: 3, exportedAt, planning, sourceData: { imports, orders, versions } };
 }
 
-export async function exportSourceData(client: pg.Pool | pg.PoolClient): Promise<PortableSourceData> {
+export async function exportSourceData(client: pg.Pool | pg.PoolClient): Promise<PortableSourceDataWithReviews> {
   // A PoolClient must not execute concurrent queries; pg 9 will reject that pattern.
   const imports = await client.query<any>("SELECT id, file_name, sheet_name, digest, semantic_digest, as_of_date::text AS as_of_date, row_count, imported_at FROM source_imports WHERE workspace_id = 1 ORDER BY imported_at, id");
   const orders = await client.query<any>("SELECT id, do_no, material_code, latest_version, latest_import_id, delivery_status, delivery_source, delivery_recorded_at, delivery_reason, needs_review, updated_at FROM source_orders WHERE workspace_id = 1 ORDER BY id");
   const versions = await client.query<any>("SELECT source_order_id, version, import_id, fields, content_hash, created_at FROM source_order_versions WHERE source_order_id IN (SELECT id FROM source_orders WHERE workspace_id = 1) ORDER BY source_order_id, version");
+  const discrepancies = await client.query<any>("SELECT * FROM source_order_discrepancies WHERE workspace_id=1 ORDER BY created_at,id");
   return {
     imports: imports.rows.map((row: any) => ({ id: row.id, fileName: row.file_name, sheetName: row.sheet_name, digest: row.digest, semanticDigest: row.semantic_digest, asOfDate: dbDate(row.as_of_date), rowCount: row.row_count, importedAt: new Date(row.imported_at).toISOString() })),
     orders: orders.rows.map((row: any) => ({ id: row.id, doNo: row.do_no, materialCode: row.material_code, latestVersion: row.latest_version, latestImportId: row.latest_import_id, deliveryStatus: row.delivery_status, deliverySource: row.delivery_source, deliveryRecordedAt: row.delivery_recorded_at ? new Date(row.delivery_recorded_at).toISOString() : null, deliveryReason: row.delivery_reason, needsReview: row.needs_review, updatedAt: new Date(row.updated_at).toISOString() })),
     versions: versions.rows.map((row: any) => ({ sourceOrderId: row.source_order_id, version: row.version, importId: row.import_id, fields: row.fields, contentHash: row.content_hash, createdAt: new Date(row.created_at).toISOString() })),
+    discrepancies: discrepancies.rows.map((row:any)=>({id:row.id,sourceOrderId:row.source_order_id,importId:row.import_id,observedSourceVersion:row.observed_source_version,candidateFields:row.candidate_fields,candidateHash:row.candidate_hash,changedFields:row.changed_fields,status:row.status,createdAt:new Date(row.created_at).toISOString(),resolvedAt:row.resolved_at?new Date(row.resolved_at).toISOString():null,resolutionReason:row.resolution_reason,selectedFields:row.selected_fields,appliedSourceVersion:row.applied_source_version})),
   };
 }
 
-export async function restoreSourceData(client: pg.PoolClient, data: PortableSourceData): Promise<void> {
+export async function restoreSourceData(client: pg.PoolClient, data: PortableSourceData | PortableSourceDataWithReviews): Promise<void> {
   for (const rows of chunks(data.imports, 1_000)) await client.query(
     `INSERT INTO source_imports(id, workspace_id, file_name, sheet_name, digest, semantic_digest, as_of_date, row_count, imported_at)
      SELECT id, 1, file_name, sheet_name, digest, semantic_digest, as_of_date::date, row_count, imported_at::timestamptz
@@ -159,6 +246,14 @@ export async function restoreSourceData(client: pg.PoolClient, data: PortableSou
        FROM jsonb_to_recordset($1::jsonb) AS x(source_order_id text, version integer, import_id text, fields jsonb, content_hash text, created_at text)`,
     [JSON.stringify(rows.map(row => ({ source_order_id: row.sourceOrderId, version: row.version, import_id: row.importId, fields: row.fields, content_hash: row.contentHash, created_at: row.createdAt })))],
   );
+  if ("discrepancies" in data) {
+    for (const rows of chunks(data.discrepancies, 1_000)) await client.query(
+      `INSERT INTO source_order_discrepancies(id,workspace_id,source_order_id,import_id,observed_source_version,candidate_fields,candidate_hash,changed_fields,status,created_at,resolved_at,resolution_reason,selected_fields,applied_source_version)
+       SELECT id,1,source_order_id,import_id,observed_source_version,candidate_fields,candidate_hash,changed_fields,status,created_at::timestamptz,resolved_at::timestamptz,resolution_reason,selected_fields,applied_source_version
+         FROM jsonb_to_recordset($1::jsonb) AS x(id text,source_order_id text,import_id text,observed_source_version integer,candidate_fields jsonb,candidate_hash text,changed_fields jsonb,status text,created_at text,resolved_at text,resolution_reason text,selected_fields jsonb,applied_source_version integer)`,
+      [JSON.stringify(rows.map(row=>({id:row.id,source_order_id:row.sourceOrderId,import_id:row.importId,observed_source_version:row.observedSourceVersion,candidate_fields:row.candidateFields,candidate_hash:row.candidateHash,changed_fields:row.changedFields,status:row.status,created_at:row.createdAt,resolved_at:row.resolvedAt,resolution_reason:row.resolutionReason,selected_fields:row.selectedFields,applied_source_version:row.appliedSourceVersion})))],
+    );
+  }
 }
 
 export async function exportInventoryData(client: pg.Pool | pg.PoolClient): Promise<PortableInventoryData> {
@@ -211,6 +306,11 @@ export function portableBackupV4(planning: AppState, sourceData: PortableSourceD
   return { schemaVersion: 4, exportedAt, planning, sourceData, inventory };
 }
 
+export function portableBackupV5(planning: AppState, sourceData: PortableSourceDataWithReviews, inventory: PortableInventoryData,
+  productionProgress: PortableProductionProgress, exportedAt = new Date().toISOString()): PortableWorkspaceBackupV5 {
+  return { schemaVersion: 5, exportedAt, planning, sourceData, inventory, productionProgress };
+}
+
 function sourceFields(value: unknown, path: string): SourceOrderFields {
   const row = record(value, path); const keys = ["doNo","deliveryDate","soldToParty","shipToParty","materialCode","description","quantity","unit","deliveryLeadDays","remark","daysOutstanding","medication","fmrOmed"];
   const optional = ["goodsMovementStatus","sourceSheet","sourceRow"]; const allowed=new Set([...keys,...optional]);for(const key of Object.keys(row))if(!allowed.has(key))throw new Error(`${path}.${key} is not supported.`);for(const key of keys)if(!(key in row))throw new Error(`${path}.${key} is required.`);if (row.unit !== "MT" && row.unit !== "Bags") throw new Error(`${path}.unit is invalid.`);
@@ -235,6 +335,9 @@ function unique(values:string[],label:string){if(new Set(values).size!==values.l
 function dbDate(value:string|Date):string{return value instanceof Date?`${value.getFullYear().toString().padStart(4,"0")}-${(value.getMonth()+1).toString().padStart(2,"0")}-${value.getDate().toString().padStart(2,"0")}`:String(value).slice(0,10)}
 function sha256(value:unknown,path:string):string{const result=text(value,path,64).toLocaleLowerCase("en-US");if(!/^[a-f0-9]{64}$/.test(result))throw new Error(`${path} must be a SHA-256 digest.`);return result}
 function fieldsHash(fields:SourceOrderFields):string{return createHash("sha256").update(canonicalJson(fields)).digest("hex")}
+function reviewFieldsHash(fields:SourceOrderFields):string{return createHash("sha256").update(canonicalJson(Object.fromEntries(SOURCE_REVIEWABLE_FIELD_NAMES.map(
+  field=>[field,fields[field]],
+)))).digest("hex")}
 function canonicalJson(value:unknown):string{if(value===null||typeof value!=="object")return JSON.stringify(value);if(Array.isArray(value))return `[${value.map(canonicalJson).join(",")}]`;const source=value as Record<string,unknown>;return `{${Object.keys(source).sort().map(key=>`${JSON.stringify(key)}:${canonicalJson(source[key])}`).join(",")}}`}
 function businessKey(doNo:string,materialCode:string):string{return `${doNo.trim().toLocaleUpperCase("en-US")}\u0000${materialCode.trim().toLocaleUpperCase("en-US")}`}
 function validDate(value:string):boolean{if(!/^\d{4}-\d{2}-\d{2}$/.test(value))return false;const [year,month,day]=value.split("-").map(Number);const parsed=new Date(Date.UTC(year,month-1,day));return parsed.getUTCFullYear()===year&&parsed.getUTCMonth()===month-1&&parsed.getUTCDate()===day}

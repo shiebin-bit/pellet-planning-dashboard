@@ -28,7 +28,7 @@ function job(id,date,lineId,sequence,extra={}){return {id,date,lineId,sequence,o
     job('COPY-CANCEL',sourceDate,'PM1',3,{status:'cancelled'}),
     job('TARGET-EXISTING',targetDate,'PM1',1)];
   const events=Array.from({length:112},(_,i)=>({id:'ACT-'+i,at:'2026-10-10T'+String(Math.floor(i/60)).padStart(2,'0')+':'+String(i%60).padStart(2,'0')+':00.000Z',type:'qa.fixture',message:'Fixture activity '+i}));
-  const fixture={...baseline.state,schemaVersion:2,catalog:[],jobs,events,settings:{...baseline.state.settings,downtime:[]}};
+  const fixture={...baseline.state,schemaVersion:2,catalog:[],jobs,events,settings:{...baseline.state.settings,workingHoursOverrides:undefined,calendarHistory:undefined,calendarCutover:undefined,dayStart:'07:00',availableHours:12,bagWeightKg:50,rates:{PM1:8.5,PM2:7.5,PM3:6.5,PM4:7},downtime:[]}};
   await command({type:'workspace.restore',backup:fixture});
   const browser=await chromium.launch({headless:true,...(!existsSync(chromium.executablePath())?{channel:'chrome'}:{})});
   let page;

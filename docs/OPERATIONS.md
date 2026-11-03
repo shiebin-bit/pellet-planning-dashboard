@@ -48,7 +48,7 @@ The named volume is `millplan_postgres_data` with the default project name. It s
 
 ## Backups
 
-Portable workspace: Settings → Download backup. The database application exports version 3, including planning, catalog, activity, imported orders and their source versions. Offline exports remain planning-only version 2. Import requires a preview and replaces the active workspace. Legacy versions 1/2 omit Data and trigger a warning; version 1 also restores an empty catalog. The preceding complete workspace is retained once. Download that recovery copy if it must be kept permanently.
+Portable workspace: Settings → Download backup. The database application exports version 5, including planning, catalog, activity, source orders/versions, import reviews, inventory ledger and production-progress samples/resets. Offline exports remain planning-only version 2. Import requires a preview and replaces the active workspace. Legacy versions 1/2 omit Data and trigger a warning; version 1 also restores an empty catalog. The preceding complete workspace is retained once. Download that recovery copy if it must be kept permanently.
 
 Full database:
 
@@ -115,3 +115,9 @@ Editable-calendar releases require no SQL migration or automatic settings rewrit
 
 
 Planning-safety releases add a read-only production-summary endpoint and browser-local drafts; they require no SQL migration or production data rewrite. Preserve the existing app/database configuration and loopback 5434 mapping during app-only updates. Browser drafts are separate per origin and browser profile and are not included in database or version 4 portable backups. If confirmation was interrupted, use Retry connection or, after reload, Check previous save to reuse the saved command receipt. Do not clear browser storage to resolve an unconfirmed save.
+
+## Progress / date-hours / review-queue release
+
+Retain a fresh PostgreSQL dump and portable backup before deployment. Migrations 012–013 add tables/recovery columns only; they must leave all existing jobs, source versions, stock movements, reservations and execution timestamps unchanged. Rehearse on a restored database, then deploy the app only with the existing Compose configuration and DataGrip localhost 5434 mapping. Compare complete pre-existing portable sections after rollout; new review/progress collections begin empty rather than deriving fictitious historical evidence.
+
+Portable backups are now v5. Restoring v1–4 clears the absent review/progress collections with a visible warning; v4 retains its inventory. Full PostgreSQL dumps remain the rollback source, including receipts and migrations. A binary that cannot parse date-specific settings or v5 backups must use its matching pre-upgrade database dump. Date exceptions only take effect when a planner explicitly saves them. Browser-local generated drafts remain outside portable backups and require regeneration after hours/revision changes.

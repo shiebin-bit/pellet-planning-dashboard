@@ -23,7 +23,9 @@
 .production-list-time { grid-column: 1 / -1; font-size: 13px; line-height: 1.6; font-variant-numeric: tabular-nums; }
 .production-list-reference { font-size: 12px; color: var(--muted); line-height: 1.5; }
 .production-list-arrow { justify-self: end; align-self: end; color: var(--action); }
+.production-list-live { grid-column: 1 / -1; }
 .production-list-unavailable { margin-top: 10px; padding: 10px; border: 1px dashed var(--border); font-size: 12px; line-height: 1.6; color: var(--muted); }
+.production-list-hours { padding: 9px 0 0; font-size: 12px; line-height: 1.6; color: var(--action); }
 .production-list-empty { padding: 20px 0; color: var(--muted); font-size: 13px; }
 .planning-mobile-view { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
 .planning-mobile-view p { max-width: 210px; color: var(--muted); font-size: 12px; line-height: 1.5; }

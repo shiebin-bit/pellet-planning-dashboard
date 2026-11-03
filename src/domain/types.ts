@@ -123,6 +123,17 @@ export interface CalendarPeriod {
   activatedAt: string | null;
 }
 
+/** One line's working window for one planning date. Omitted lines inherit the dated global calendar. */
+export interface DateLineWorkingHoursOverride {
+  date: string;
+  lineId: LineId;
+  dayStart: string;
+  availableHours: number;
+  reason: string;
+  /** Trusted server time for audit/recovery; clients cannot supply this through the replace command. */
+  activatedAt: string;
+}
+
 export interface Settings {
   siteName: string;
   timeZone: string;
@@ -134,6 +145,7 @@ export interface Settings {
   slowProductPrefixes: string[];
   slowRatePM2: number;
   downtime: Downtime[];
+  workingHoursOverrides?: DateLineWorkingHoursOverride[];
   calendarHistory?: CalendarPeriod[];
   /** Legacy read compatibility. New calendar edits materialize calendarHistory instead. */
   calendarCutover?: {
@@ -183,6 +195,7 @@ export interface LineSchedule {
   lineId: LineId;
   jobs: ScheduledJob[];
   segments: ScheduleSegment[];
+  workingWindow: { start: number; end: number; source: "calendar" | "override" };
   availableMinutes: number;
   productionMinutes: number;
   changeoverMinutes: number;

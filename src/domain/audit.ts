@@ -70,6 +70,12 @@ export function getSettingsHistoryChanges(before: Settings, after: Settings): Hi
     compactList(before.downtime),
     compactList(after.downtime),
   );
+  addChange(
+    changes,
+    "settings.workingHoursOverrides",
+    compactList(before.workingHoursOverrides ?? []),
+    compactList(after.workingHoursOverrides ?? []),
+  );
   return changes;
 }
 

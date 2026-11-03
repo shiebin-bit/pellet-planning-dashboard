@@ -1,0 +1,25 @@
+.planning-now {
+  position: absolute;
+  inset-block: 0;
+  z-index: 5;
+  border-left: 2px solid #a44715;
+  pointer-events: none;
+}
+.planning-now.with-label { z-index: 8; }
+.planning-now.with-label > span {
+  position: absolute;
+  bottom: 2px;
+  left: 0;
+  padding: 3px 5px;
+  transform: translateX(-50%);
+  background: #8a370c;
+  color: #fff;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.planning-now.near-start > span { transform: none; }
+.planning-now.near-end > span { transform: translateX(-100%); }
+@media print { .planning-now { display: none; } }

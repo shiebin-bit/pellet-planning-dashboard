@@ -1,4 +1,4 @@
-import { getAvailableIntervals, getBoard, getCalendarForDate, getRate, getScheduledJobs, getShiftWindow } from './engine';
+import { getAvailableIntervals, getBoard, getRate, getScheduledJobs, getShiftWindow, getWorkingHoursForDate } from './engine';
 import { LINE_IDS, type AppState, type LineId } from './types';
 import type { InventoryDraftJob, InventoryDraftPreview, InventoryDraftRequest, InventoryPlanningDemandRow } from './inventoryTypes';
 
@@ -46,15 +46,15 @@ export function planInventoryDraft(state: AppState, demands: InventoryPlanningDe
         : batchRemaining(batch);
       const candidates: Array<{ date: string; lineId: LineId; quantity: number; start: number; end: number }> = [];
       for (const date of days) for (const lineId of LINE_IDS) {
-        const settings = getCalendarForDate(state.settings, date);
+        const settings = getWorkingHoursForDate(state.settings, date, lineId);
         const shift = getShiftWindow(settings, date);
         const start = Math.max(shift.start, cursor[lineId], notBefore);
         if (start >= shift.end) continue;
-        const slots = getAvailableIntervals(settings, lineId, date)
+        const slots = getAvailableIntervals(state.settings, lineId, date)
           .map(interval => [Math.max(start, interval.start), interval.end] as [number, number])
           .filter(([slotStart, slotEnd]) => slotStart < slotEnd);
         const free = slots.reduce((sum, [a, b]) => sum + (b - a) / MINUTE, 0);
-        const change = previous[lineId] && previous[lineId] !== identity(demand) ? settings.changeoverMinutes : 0;
+        const change = previous[lineId] && previous[lineId] !== identity(demand) ? state.settings.changeoverMinutes : 0;
         const rate = getRate(state.settings, lineId, demand.materialCode);
         const maxScaled = Math.floor(Math.max(0, free - change) / 60 * rate / mtPerBase * scale + 1e-7);
         const quantity = Math.min(iterationLimit, maxScaled) / scale;

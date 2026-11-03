@@ -10,9 +10,11 @@ import type {
   SourceImportPreviewContext,
   SourceOrderDetail,
   SourceOrderFields,
+  SourceOrderFieldName,
   SourceOrderPage,
   SourceOrderSummary,
 } from "../src/domain/sourceTypes";
+import { SOURCE_IDENTITY_FIELDS, SOURCE_REVIEWABLE_FIELD_NAMES } from "../src/domain/importReview";
 import type { JobSourceAllocation } from "../src/domain/types";
 import { getJobSourceAllocations, jobHasSourceOrder } from "../src/domain/jobSources";
 import { ApiError } from "./errors";
@@ -55,32 +57,34 @@ async function buildSourceImportPreview(
   const rows = input.rows.map(fields => {
     const current = existing.get(sourceKey(fields.doNo, fields.materialCode));
     const annotation = annotations.get(sourceKey(fields.doNo, fields.materialCode));
-    const hash = fieldsHash(fields);
     const previousFields = current
       ? useEffectiveManualFields ? effectiveSourceFields(current.fields, current) : current.fields
       : null;
     const nextFields = useEffectiveManualFields
       ? effectiveIncomingSourceFields(fields, current, annotation)
       : fields;
-    const changedFields = current ? [...new Set([...Object.keys(previousFields!), ...Object.keys(nextFields)])].filter(key =>
-      JSON.stringify(previousFields![key as keyof SourceOrderFields]) !== JSON.stringify(nextFields[key as keyof SourceOrderFields])) : [];
-    if (current && dbDate(current.as_of_date) !== input.asOfDate) changedFields.push("asOfDate");
+    const changedFields: string[] = current ? [...changedSourceFields(previousFields!, nextFields)] : [];
+    const reviewChangedFields = current ? changedSourceFields(current.fields, fields) : [];
     return {
       key: `${fields.doNo} / ${fields.materialCode}`,
-      // Disposition describes the workbook comparison. Import action describes
-      // persistence: an existing business identity is always append-only skipped.
-      disposition: (!current ? "added" : current.content_hash === hash && dbDate(current.as_of_date) === input.asOfDate ? "unchanged" : "changed") as "added" | "unchanged" | "changed",
-      importAction: current ? "skip-existing" as const : "insert" as const,
+      // Existing identities remain append-only on import. Raw differences are
+      // persisted separately and require an explicit reviewed correction.
+      disposition: (!current ? "added" : reviewChangedFields.length ? "changed" : "unchanged") as "added" | "unchanged" | "changed",
+      importAction: !current ? "insert" as const : reviewChangedFields.length ? "queue-review" as const : "skip-unchanged" as const,
       existingOrderId: current?.id ?? null,
       fields: nextFields,
       ...(current ? { previousFields, previousAsOfDate: dbDate(current.as_of_date) } : {}),
       changedFields,
+      ...(current ? {
+        currentVersion: current.latest_version,
+        protectedFields: previewProtectedFields(current),
+      } : {}),
       ...(context && current ? { operationalChanged: changedFields.length > 0 } : {}),
     };
   });
   return {
     added: rows.filter(row => row.disposition === "added").length,
-    skipped: rows.filter(row => row.importAction === "skip-existing").length,
+    skipped: rows.filter(row => row.importAction !== "insert").length,
     unchanged: rows.filter(row => row.disposition === "unchanged").length,
     changed: rows.filter(row => row.disposition === "changed").length,
     ...(context ? { operationalChanged: rows.filter(row => row.operationalChanged).length } : {}),
@@ -100,7 +104,9 @@ export async function applySourceImport(
     [semanticDigest],
   );
   if (duplicate.rowCount) {
-    return { state: appendEvent(state, nowIso, "data.import.duplicate", `Skipped duplicate import ${input.fileName}.`), sourceChanged: false };
+    const queued = await queueSourceImportReviews(client, duplicate.rows[0].id, input.rows, nowIso);
+    const suffix = queued ? ` Backfilled ${queued} missing review ${queued === 1 ? "item" : "items"}.` : "";
+    return { state: appendEvent(state, nowIso, "data.import.duplicate", `Skipped duplicate import ${input.fileName}.${suffix}`), sourceChanged: queued > 0 };
   }
   // Keep audit/event comparison semantics based on raw SAP values. Existing
   // business identities are never updated; only previously unseen identities
@@ -113,6 +119,7 @@ export async function applySourceImport(
     [importId, input.fileName, input.sheetName, input.digest, semanticDigest, input.asOfDate, input.rows.length, nowIso],
   );
   const existing = await existingByKeys(client, input.rows);
+  let queued = 0;
   for (const fields of input.rows) {
     const key = sourceKey(fields.doNo, fields.materialCode);
     const current = existing.get(key);
@@ -126,10 +133,70 @@ export async function applySourceImport(
         [id, fields.doNo, fields.materialCode, importId, nowIso],
       );
       await insertVersion(client, id, 1, importId, fields, hash, nowIso);
+    } else if (changedSourceFields(current.fields, fields).length) {
+      queued += await insertSourceImportReview(client, current, importId, fields, reviewFieldsHash(fields), nowIso);
     }
   }
-  const message = `Imported source orders from ${input.fileName}: ${preview.added} added, ${preview.skipped} existing skipped (${preview.changed} changed, ${preview.unchanged} unchanged).`;
-  return { state: appendEvent(state, nowIso, "data.imported", message), sourceChanged: preview.added > 0 };
+  const message = `Imported source orders from ${input.fileName}: ${preview.added} added, ${queued} queued for review, ${preview.unchanged} unchanged.`;
+  return { state: appendEvent(state, nowIso, "data.imported", message), sourceChanged: preview.added > 0 || queued > 0 };
+}
+
+/**
+ * Replays only the discrepancy derivation for an already-recorded source
+ * import. This is intentionally safe for inventory-workbook deduplication: it
+ * never inserts an import, source version, inventory movement, or reservation.
+ */
+export async function backfillSourceImportReviews(
+  client: pg.PoolClient,
+  input: SourceImportInput,
+  nowIso: string,
+): Promise<number> {
+  const existingImport = await client.query<{ id: string }>(
+    "SELECT id FROM source_imports WHERE workspace_id=1 AND semantic_digest=$1",
+    [semanticImportDigest(input)],
+  );
+  return existingImport.rowCount ? queueSourceImportReviews(client, existingImport.rows[0].id, input.rows, nowIso) : 0;
+}
+
+async function queueSourceImportReviews(
+  client: pg.PoolClient,
+  importId: string,
+  rows: SourceOrderFields[],
+  nowIso: string,
+): Promise<number> {
+  const existing = await existingByKeys(client, rows);
+  let queued = 0;
+  for (const fields of rows) {
+    const current = existing.get(sourceKey(fields.doNo, fields.materialCode));
+    if (!current) continue;
+    if (changedSourceFields(current.fields, fields).length) {
+      queued += await insertSourceImportReview(client, current, importId, fields, reviewFieldsHash(fields), nowIso);
+    }
+  }
+  return queued;
+}
+
+async function insertSourceImportReview(
+  client: pg.PoolClient,
+  current: ExistingSourceRow,
+  importId: string,
+  candidate: SourceOrderFields,
+  candidateHash: string,
+  nowIso: string,
+): Promise<number> {
+  const changedFields = changedSourceFields(current.fields, candidate);
+  if (!changedFields.length) return 0;
+  const inserted = await client.query(
+    `INSERT INTO source_order_discrepancies(
+       id,workspace_id,source_order_id,import_id,observed_source_version,candidate_fields,candidate_hash,
+       changed_fields,status,created_at,resolved_at,resolution_reason,selected_fields,applied_source_version)
+     VALUES ($1,1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,'pending',$8::timestamptz,NULL,NULL,NULL,NULL)
+     ON CONFLICT (workspace_id,source_order_id,import_id,candidate_hash) DO NOTHING`,
+    [`review-${randomUUID()}`, current.id, importId, current.latest_version, JSON.stringify(candidate), candidateHash,
+      JSON.stringify(changedFields), nowIso],
+  );
+  if (inserted.rowCount) return 1;
+  return 0;
 }
 
 export async function createJobFromSource(
@@ -190,7 +257,7 @@ export async function createJobFromSource(
     } : job),
     events: next.events.map(event => event.jobId === createdId && event.type === "job.created" ? { ...event, at: nowIso } : event),
   };
-  await client.query("UPDATE source_orders SET needs_review = false, updated_at = $2::timestamptz WHERE id = $1", [input.sourceOrderId, nowIso]);
+  await client.query("UPDATE source_orders SET needs_review=false,updated_at=$2::timestamptz WHERE id=$1", [input.sourceOrderId, nowIso]);
   return { state: next, sourceChanged: true };
 }
 
@@ -343,7 +410,7 @@ export async function setDeliveryStatus(
   }
   await client.query(
     `UPDATE source_orders SET delivery_status = $2, delivery_source = $3,
-       delivery_recorded_at = $4::timestamptz, delivery_reason = $5, needs_review = false,
+       delivery_recorded_at = $4::timestamptz, delivery_reason = $5, needs_review=false,
        updated_at = $6::timestamptz WHERE id = $1`,
     [sourceOrderId, delivered ? "delivered" : "pending", delivered ? "manual" : null, delivered ? nowIso : null, reason?.trim() || null, nowIso],
   );
@@ -403,7 +470,7 @@ export async function listSourceOrders(pool: pg.Pool, query: URLSearchParams): P
     `WITH ${inventoryProgressCtes()}, base AS (
        SELECT o.id, o.latest_version, o.latest_import_id AS import_id, i.file_name, i.as_of_date::text AS as_of_date,
          o.delivery_status, o.delivery_source, o.delivery_recorded_at, o.delivery_reason,
-         (o.needs_review OR ${sourcePlanningMismatchSql()} OR
+         (o.needs_review OR EXISTS(SELECT 1 FROM source_order_discrepancies d WHERE d.source_order_id=o.id AND d.status='pending') OR ${sourcePlanningMismatchSql()} OR
            (COALESCE(ip.is_inventory_tracked, false) AND COALESCE(ip.inventory_needs_review, false))) AS needs_review,
          o.updated_at,
          ${effectiveFieldsSql()} AS fields, j.id AS job_id, j.status AS job_status, j.source_order_version AS job_source_version,
@@ -520,7 +587,7 @@ function sourceViewSql(where: string): string {
   return `WITH ${inventoryProgressCtes()}
     SELECT o.id, o.latest_version, o.latest_import_id AS import_id, i.file_name, i.as_of_date::text AS as_of_date,
     o.delivery_status, o.delivery_source, o.delivery_recorded_at, o.delivery_reason,
-    (o.needs_review OR ${sourcePlanningMismatchSql()} OR
+    (o.needs_review OR EXISTS(SELECT 1 FROM source_order_discrepancies d WHERE d.source_order_id=o.id AND d.status='pending') OR ${sourcePlanningMismatchSql()} OR
       (COALESCE(ip.is_inventory_tracked, false) AND COALESCE(ip.inventory_needs_review, false))) AS needs_review,
     o.updated_at,
     ${effectiveFieldsSql()} AS fields, ${productionStatusSql()} AS production_status, j.id AS job_id, j.status AS job_status, j.source_order_version AS job_source_version,
@@ -749,6 +816,18 @@ function effectiveIncomingSourceFields(
   };
 }
 
+function changedSourceFields(current: SourceOrderFields, candidate: SourceOrderFields): SourceOrderFieldName[] {
+  return SOURCE_REVIEWABLE_FIELD_NAMES.filter(field => JSON.stringify(current[field]) !== JSON.stringify(candidate[field]));
+}
+
+function previewProtectedFields(current: ExistingSourceRow): SourceOrderFieldName[] {
+  const protectedFields = new Set<SourceOrderFieldName>(SOURCE_IDENTITY_FIELDS);
+  if (current.manual_due_date) protectedFields.add("deliveryDate");
+  if (current.manual_medication) protectedFields.add("medication");
+  if (current.manual_fmr_omed) protectedFields.add("fmrOmed");
+  return [...protectedFields];
+}
+
 async function insertVersion(client: pg.PoolClient, orderId: string, version: number, importId: string, fields: SourceOrderFields, hash: string, nowIso: string) {
   await client.query(
     `INSERT INTO source_order_versions(source_order_id, version, import_id, fields, content_hash, created_at)
@@ -777,6 +856,12 @@ function sourcePlanningMismatch(fields: SourceOrderFields, snapshot: Job["source
 
 function fieldsHash(fields: SourceOrderFields): string {
   return createHash("sha256").update(canonicalJson(fields)).digest("hex");
+}
+
+function reviewFieldsHash(fields: SourceOrderFields): string {
+  return createHash("sha256").update(canonicalJson(Object.fromEntries(SOURCE_REVIEWABLE_FIELD_NAMES.map(
+    field => [field, fields[field]],
+  )))).digest("hex");
 }
 
 function semanticImportDigest(input: SourceImportInput): string {

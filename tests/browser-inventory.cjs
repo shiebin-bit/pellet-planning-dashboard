@@ -31,7 +31,7 @@ async function fixture(file) {
 (async () => {
  await fs.mkdir(output,{recursive:true}); const backup = await json('/api/backup'); let browser,page;
  try {
-  const current = await json('/api/workspace'); await command({type:'workspace.restore',backup:{...current.state,jobs:[],events:[],settings:{...current.state.settings,dayStart:'07:00',availableHours:12,downtime:[]}}});
+  const current = await json('/api/workspace'); await command({type:'workspace.restore',backup:{...current.state,jobs:[],events:[],settings:{...current.state.settings,workingHoursOverrides:undefined,calendarHistory:undefined,calendarCutover:undefined,dayStart:'07:00',availableHours:12,downtime:[]}}});
   const file=path.join(output,'fictional-daily-stock.xlsm'); await fixture(file);
   browser=await chromium.launch({headless:true,...(!existsSync(chromium.executablePath())?{channel:'chrome'}:{})});
   page=await browser.newPage({viewport:{width:1440,height:900},timezoneId:'Asia/Kuala_Lumpur'}); page.setDefaultTimeout(15000);
@@ -112,7 +112,7 @@ async function fixture(file) {
   for(const viewport of [{width:390,height:844},{width:320,height:760}]){await page.setViewportSize(viewport);await manage.click();await stockDetails.waitFor();assert.ok(await stockDetails.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;}));await page.screenshot({path:path.join(output,'stock-details-'+viewport.width+'.png')});await page.keyboard.press('Escape');await stockDetails.waitFor({state:'hidden'});}
   await page.setViewportSize({width:1440,height:900});
   await page.getByRole('tab',{name:'Daily stock',exact:true}).click();await page.getByLabel('Stock date',{exact:true}).fill(yesterday);await wait(async()=>await page.locator('.source-table tbody tr').count()===2);
-  const after=await json('/api/backup');assert.equal(after.schemaVersion,4);assert.ok(after.inventory.ledger.length>=3);
+  const after=await json('/api/backup');assert.equal(after.schemaVersion,5);assert.ok(after.inventory.ledger.length>=3);
   for(const viewport of [{width:390,height:844},{width:320,height:760}]){await page.setViewportSize(viewport);await page.waitForTimeout(350);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(output,`daily-${viewport.width}.png`),fullPage:true});}
   await command({type:'data.import',input:{fileName:'fictional-protected-order.xlsx',sheetName:'bulk order',digest:'f'.repeat(64),asOfDate:yesterday,rows:[{doNo:'QA-PROTECTED',goodsMovementStatus:'A',sourceSheet:'bulk order',sourceRow:2,deliveryDate:tomorrow,soldToParty:'Fictional customer',shipToParty:'Fictional ship-to',materialCode:'7.0000000000000',description:'Fictional feed',quantity:20,unit:'MT',deliveryLeadDays:null,remark:'',daysOutstanding:null,medication:'',fmrOmed:''}]}});
   const protectedId=(await json('/api/data?search=QA-PROTECTED')).items[0].id;await command({type:'data.updateManualFields',sourceOrderId:protectedId,patch:{medication:'QA protected med',fmrOmed:'QA protected FMR'}});
@@ -132,7 +132,7 @@ async function fixture(file) {
   await page.getByLabel('Search order data').fill('QA-BAG-100');const bagProgress=page.getByLabel('Production progress QA-BAG-100',{exact:true});await bagProgress.locator('summary').waitFor();await bagProgress.locator('summary').click();assert.doesNotMatch(await bagProgress.innerText(),/\d\.\d+ Bags/);
   await page.getByRole('button',{name:'Planning board',exact:true}).click();await page.getByRole('button',{name:'Plan from Data',exact:true}).click();const picker=page.getByRole('dialog',{name:'Choose an order to plan',exact:true});await picker.getByLabel('Search order data').fill('QA-BULK-20');await picker.getByText('0.001 MT to plan',{exact:true}).waitFor();assert.equal(await picker.locator('thead th').count(),9);assert.match(await picker.getByLabel('Production progress QA-BULK-20').innerText(),/19\.999 MT reserved/);await page.keyboard.press('Escape');
   console.log('PASS Readable seven-column orders and full picker preserve 0.001 MT shortages, exact reserved quantities and integer Bags');
-  assert.deepEqual(errors,[]);console.log('PASS stock ledger, daily stock, backup v4, desktop/mobile rendering and browser console');
+  assert.deepEqual(errors,[]);console.log('PASS stock ledger, daily stock, backup v5, desktop/mobile rendering and browser console');
  } catch(e) {if(page)await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw e;}
  finally {if(page)await page.unrouteAll({behavior:'ignoreErrors'});if(browser)await browser.close();await command({type:'workspace.restore',backup});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

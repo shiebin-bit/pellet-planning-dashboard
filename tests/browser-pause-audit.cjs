@@ -18,7 +18,7 @@ function job(id,date,lineId,extra={}){return {id,date,lineId,sequence:1,orderNo:
   await fs.mkdir(output,{recursive:true});
   const baseline=await get();const backupResponse=await fetch(base+'/api/backup');assert.equal(backupResponse.status,200);const baselineBackup=await backupResponse.json();
   const completed=job('QA-RECORDED-STOPS','2026-10-01','PM4',{status:'completed',actualStart:'2026-10-01T01:00:00.000Z',actualEnd:'2026-10-02T02:00:00.000Z',actualQuantityMt:9.5,pauseIntervals:[{pausedAt:'2026-10-01T15:00:00.000Z',resumedAt:'2026-10-02T02:00:00.000Z',reason:'Recorded overnight material shortage'}]});
-  const fixture={...baseline.state,jobs:[job('QA-PAUSE',today(),'PM1'),completed],events:[{id:'LEGACY-EVENT',at:'2026-10-01T00:00:00.000Z',type:'job.updated',message:'Legacy event without structured changes'}],catalog:[],settings:{...baseline.state.settings,dayStart:'08:30',availableHours:23,downtime:[]}};
+  const fixture={...baseline.state,jobs:[job('QA-PAUSE',today(),'PM1'),completed],events:[{id:'LEGACY-EVENT',at:'2026-10-01T00:00:00.000Z',type:'job.updated',message:'Legacy event without structured changes'}],catalog:[],settings:{...baseline.state.settings,workingHoursOverrides:undefined,calendarHistory:undefined,calendarCutover:undefined,dayStart:'08:30',availableHours:23,downtime:[]}};
   await command({type:'workspace.restore',backup:fixture});
   const browser=await chromium.launch({headless:true,...(!existsSync(chromium.executablePath())?{channel:'chrome'}:{})});
   let page;

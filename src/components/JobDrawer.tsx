@@ -18,6 +18,7 @@ import { useCurrentTime } from '../lib/useCurrentTime';
 import { InventoryReceiptForm } from './InventoryWorkspace';
 import './JobDrawer.css';
 import { MoveImpactDialog } from './MoveImpactDialog';
+import { LiveProduction } from './LiveProduction';
 
 export function JobDrawer() {
   const {selectedJob:job,closeJob,openJob,editJob,state,board,commit,busy,storageWarning,storageMode,refresh,hasConflict,resolveConflict,mutationLocked,savedAt}=useWorkspace();
@@ -96,6 +97,7 @@ export function JobDrawer() {
         {job.plannedStart?<><div className="planned-time-range"><div><span>START</span><strong>{timeLabel(job.plannedStart)}</strong><small>{dateLabel(toDateTimeInput(job.plannedStart).slice(0,10),true)}</small></div><ArrowRight size={20}/><div><span>END</span><strong>{timeLabel(job.plannedEnd)}</strong><small>{dateLabel(toDateTimeInput(job.plannedEnd).slice(0,10),true)}</small></div></div><div className="schedule-breakdown"><span>Changeover before this task</span><strong>{durationLabel(job.changeoverMinutes,true)}</strong></div>{job.segments.filter(segment=>segment.kind==='production').length>1&&<p className="field-help">Production is split around unavailable time. All segments belong to this task.</p>}</>:<p className="subtle-empty">Add a quantity to calculate the planned time.</p>}
       </section>
       <section className="drawer-section" inert={missing&&hasConflict}><div className="drawer-section-title"><Clock3 size={16}/><h3>Actual production</h3><span className="muted small">MYT</span></div>
+        {job.inventoryItemId && (job.status === 'running' || job.status === 'completed') && <LiveProduction jobId={job.id}/>}
         {pending?<p className="field-help">Start production records the current time automatically. Use the action bar below.</p>:
         <><div className="actual-time-row"><span>Actual start</span><strong>{fullDateTime(job.actualStart)}</strong></div><div className="actual-time-row"><span>Actual end</span><strong>{fullDateTime(job.actualEnd)}</strong></div>{elapsed!==null&&<div className="actual-time-row"><span>Elapsed time</span><strong>{durationLabel(elapsed)}</strong></div>}
         {job.status==='completed'&&<><ActualOutputResult job={job}/><p className="field-help">Elapsed time includes any stops. It is separate from planned production time.</p></>}

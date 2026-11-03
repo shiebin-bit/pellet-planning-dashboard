@@ -20,6 +20,8 @@ export interface SourceOrderFields {
   fmrOmed: string;
 }
 
+export type SourceOrderFieldName = keyof SourceOrderFields;
+
 export interface SourceImportInput {
   fileName: string;
   sheetName: string;
@@ -40,20 +42,63 @@ export interface SourceImportPreviewContext {
 }
 
 export type ImportRowDisposition = "added" | "unchanged" | "changed";
+export type SourceImportAction = "insert" | "queue-review" | "skip-unchanged";
 
 export interface SourceImportPreviewRow {
   key: string;
   disposition: ImportRowDisposition;
   /** Persistence outcome: existing order identities are never changed by an import. */
-  importAction: "insert" | "skip-existing";
+  importAction: SourceImportAction;
   existingOrderId: string | null;
   fields: SourceOrderFields;
   /** Effective values currently retained for this order, including protected manual inventory fields. */
   previousFields?: SourceOrderFields | null;
   previousAsOfDate?: string | null;
   changedFields: string[];
+  /** Fields the correction workflow will not allow for the current order. */
+  protectedFields?: SourceOrderFieldName[];
+  currentVersion?: number | null;
   /** True when an existing order's effective operational values would change. */
   operationalChanged?: boolean;
+}
+
+export type SourceImportReviewStatus = "pending" | "applied" | "dismissed";
+
+export interface SourceImportReviewProvenance {
+  id: string;
+  fileName: string;
+  sheetName: string;
+  digest: string;
+  asOfDate: string;
+  importedAt: string;
+}
+
+export interface SourceImportReview {
+  id: string;
+  status: SourceImportReviewStatus;
+  sourceOrderId: string;
+  doNo: string;
+  materialCode: string;
+  observedSourceVersion: number;
+  currentSourceVersion: number;
+  currentFields: SourceOrderFields;
+  candidateFields: SourceOrderFields;
+  changedFields: SourceOrderFieldName[];
+  protectedFields: SourceOrderFieldName[];
+  sourceImport: SourceImportReviewProvenance;
+  createdAt: string;
+  resolvedAt: string | null;
+  resolutionReason: string | null;
+  selectedFields: SourceOrderFieldName[] | null;
+  appliedSourceVersion: number | null;
+}
+
+export interface SourceImportReviewPage {
+  items: SourceImportReview[];
+  page: number;
+  pageSize: 50;
+  total: number;
+  counts: Record<SourceImportReviewStatus, number>;
 }
 
 export interface SourceImportPreview {
@@ -154,6 +199,26 @@ export interface PortableSourceData {
     sourceOrderId: string; version: number; importId: string; fields: SourceOrderFields;
     contentHash: string; createdAt: string;
   }>;
+}
+
+export interface PortableSourceDiscrepancy {
+  id: string;
+  sourceOrderId: string;
+  importId: string;
+  observedSourceVersion: number;
+  candidateFields: SourceOrderFields;
+  candidateHash: string;
+  changedFields: SourceOrderFieldName[];
+  status: SourceImportReviewStatus;
+  createdAt: string;
+  resolvedAt: string | null;
+  resolutionReason: string | null;
+  selectedFields: SourceOrderFieldName[] | null;
+  appliedSourceVersion: number | null;
+}
+
+export interface PortableSourceDataWithReviews extends PortableSourceData {
+  discrepancies: PortableSourceDiscrepancy[];
 }
 
 export interface PortableWorkspaceBackupV3 {

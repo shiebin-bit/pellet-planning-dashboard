@@ -8,10 +8,11 @@ import {
 import type { Active, CollisionDetection, DragEndEvent, Over } from '@dnd-kit/core';
 import { AlertTriangle, ArrowUpRight, ChevronDown, Copy, GripVertical, LockKeyhole, Plus, Undo2 } from 'lucide-react';
 import { StatusLegend } from '../components/Shared';
-import { getCalendarForDate } from '../domain/engine';
+import { getWorkingHoursForDate } from '../domain/engine';
+import { nonWorkingWindows } from '../domain/planningWindows';
 import { isJobPaused } from '../domain/production-results';
-import type { Downtime, LineId, LineSchedule, ScheduledJob, ScheduleSegment } from '../domain/types';
-import { downtimeRange, durationLabel, numberLabel, timeLabel } from '../lib/format';
+import type { Settings, LineId, LineSchedule, ScheduledJob, ScheduleSegment } from '../domain/types';
+import { downtimeRange, durationLabel, fullDateTime, numberLabel, timeLabel } from '../lib/format';
 import { useWorkspace } from '../lib/workspace';
 import { productLabel } from '../lib/productLabel';
 import { CombinePlanningButton } from '../components/CombinePlanningDialog';
@@ -22,6 +23,9 @@ import { ProductionList } from '../components/ProductionList';
 import { useListState } from '../lib/listNavigation';
 import { MoveImpactDialog } from '../components/MoveImpactDialog';
 import type { MoveImpactInput } from '../domain/moveImpact';
+import { PlanningNow } from '../components/PlanningNow';
+import { useLiveProduction } from '../lib/liveProduction';
+import { receiptProgressLabel } from '../components/LiveProduction';
 
 type PlanRange = 'day' | 'full';
 
@@ -49,7 +53,6 @@ export function Planning() {
     useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
     useSensor(KeyboardSensor, { keyboardCodes: { start: ['Space'], end: ['Space', 'Enter'], cancel: ['Escape'] } }),
   );
-  const calendar = getCalendarForDate(state.settings, board.date);
   const jobs = board.lines.flatMap(line => line.jobs);
   const previousPlan = useRef({ boardStart: board.start, ends: plannedEnds(jobs) });
   const active = jobs.find(job => job.id === activeId);
@@ -59,6 +62,7 @@ export function Planning() {
   const hours = range === 'full' ? fullHours : dayHours;
   const windowEnd = board.start + hours * 3_600_000;
   const ticks = getTicks(hours);
+  const { now } = useLiveProduction();
 
   function dragName(item: Active) {
     const job = jobs.find(job => job.id === item.data.current?.jobId);
@@ -99,6 +103,7 @@ export function Planning() {
   }
 
   return <div className={`page planning-page hplan-page ${activeId?'is-dragging':''}`}>
+    <span className="sr-only">Current time {fullDateTime(now)} MYT.{now < board.start || now >= windowEnd ? ' Outside the displayed planning range.' : ''}</span>
     {movePreview && <MoveImpactDialog input={movePreview} onClose={() => setMovePreview(null)} onSaved={() => setMovePreview(null)}/>}
     <div className="page-heading hplan-heading">
       <div><h1>Planning board</h1><p>{listView?'Production sequence and orders, grouped by line.':'Drag a not-started card to another line. Click for details.'}</p></div>
@@ -116,7 +121,7 @@ export function Planning() {
     </div>
 
     {smallScreen&&<div className="planning-mobile-view"><div className="hplan-range" role="group" aria-label="Planning view"><button type="button" aria-pressed={mobileView==='list'} className={mobileView==='list'?'active':''} onClick={()=>setMobileView('list')}>List</button><button type="button" aria-pressed={mobileView==='timeline'} className={mobileView==='timeline'?'active':''} onClick={()=>setMobileView('timeline')}>Timeline</button></div><p>{listView?'Tap a card for details and moves. Switch to Timeline to drag.':'Hold a not-started card, then drag to move it.'}</p></div>}
-    {listView?<ProductionList lines={board.lines} start={board.start} end={windowEnd} date={board.date} downtime={state.settings.downtime} dayStart={calendar.dayStart} bagWeightKg={state.settings.bagWeightKg} selectedId={selectedId} disabled={mutationLocked||hasConflict} onOpen={openJob} onAdd={openInput}/>:<DndContext sensors={sensors} collisionDetection={collision} accessibility={{
+    {listView?<ProductionList lines={board.lines} start={board.start} end={windowEnd} date={board.date} settings={state.settings} bagWeightKg={state.settings.bagWeightKg} selectedId={selectedId} disabled={mutationLocked||hasConflict} onOpen={openJob} onAdd={openInput}/>:<DndContext sensors={sensors} collisionDetection={collision} accessibility={{
       screenReaderInstructions: { draggable: 'Press Enter to open production details. Press Space to pick up a card, arrow keys to move, Space to drop, or Escape to cancel. On a touch screen, hold the card briefly before dragging.' },
       announcements: {
         onDragStart: ({ active }) => `Picked up ${dragName(active)}.`,
@@ -127,8 +132,8 @@ export function Planning() {
     }} onDragStart={event => setActiveId(String(event.active.data.current?.jobId ?? event.active.id))} onDragCancel={() => setActiveId(null)} onDragEnd={onDragEnd}>
       <section className="hplan-board" data-board-range={range} aria-label={`${hours}-hour production plan`}>
         <div className="hplan-axis-label"><strong>MYT</strong><span>UTC+8</span></div>
-        <div className="hplan-axis" aria-hidden="true">{ticks.map(hour => <div key={hour} className="hplan-axis-tick" style={{ left: `${hour / hours * 100}%` }}><span>{timeLabel(board.start + hour * 3_600_000)}</span>{hour >= 24 && hour % 24 === 0 && <small>+{hour / 24}d</small>}</div>)}</div>
-        {board.lines.map(line => <LineRow key={line.lineId} line={line} start={board.start} end={windowEnd} hours={hours} downtime={state.settings.downtime} dayStart={calendar.dayStart} availableHours={calendar.availableHours} activeId={activeId} selectedId={selectedId} onOpen={openJob} onAdd={openInput}/>) }
+        <div className="hplan-axis" aria-hidden="true">{ticks.map(hour => <div key={hour} className="hplan-axis-tick" style={{ left: `${hour / hours * 100}%` }}><span>{timeLabel(board.start + hour * 3_600_000)}</span>{hour >= 24 && hour % 24 === 0 && <small>+{hour / 24}d</small>}</div>)}<PlanningNow now={now} start={board.start} end={windowEnd} label/></div>
+        {board.lines.map(line => <LineRow key={line.lineId} line={line} start={board.start} end={windowEnd} hours={hours} settings={state.settings} activeId={activeId} selectedId={selectedId} onOpen={openJob} onAdd={openInput} now={now}/>) }
       </section>
       <DragOverlay dropAnimation={null}>{active ? <div className={`hplan-drag-card ${active.issue ? 'issue' : active.status}`}><GripVertical size={17}/><div><strong>{productLabel(active)}</strong><span>{numberLabel(active.quantityMt)} MT</span></div><small>{active.lineId}</small></div> : null}</DragOverlay>
     </DndContext>}
@@ -139,9 +144,10 @@ export function Planning() {
   </div>;
 }
 
-function LineRow({ line, start, end, hours, downtime, dayStart, availableHours, activeId, selectedId, onOpen, onAdd }: {
-  line: LineSchedule; start: number; end: number; hours: number; downtime: Downtime[];
-  dayStart: string; availableHours: number; activeId: string | null; selectedId: string | null;
+function LineRow({ line, start, end, hours, settings, activeId, selectedId, onOpen, onAdd, now }: {
+  line: LineSchedule; start: number; end: number; hours: number; settings: Settings;
+  now: number;
+  activeId: string | null; selectedId: string | null;
   onOpen: (id: string) => void; onAdd: (lineId?: LineId) => void;
 }) {
   const { setNodeRef } = useDroppable({ id: `hplan-line-${line.lineId}`, data: { lineId: line.lineId } });
@@ -150,15 +156,12 @@ function LineRow({ line, start, end, hours, downtime, dayStart, availableHours, 
   const isTarget = Boolean(activeId && over?.data.current?.lineId === line.lineId);
   const hasVisibleProduction = line.jobs.some(job => job.segments.some(segment => segment.kind === 'production' && segment.end > start && segment.start < end));
   return <>
-    <div ref={labelRef} data-line-label={line.lineId} className={`hplan-line-label ${isTarget ? 'is-over' : ''}`}><div><strong>{line.lineId}</strong><button type="button" onClick={() => onAdd(line.lineId)} aria-label={`Add production to ${line.lineId}`}><Plus size={15}/></button></div><span>{numberLabel(line.plannedMt)} MT</span><small>{line.utilisation === null ? '—' : `${numberLabel(line.utilisation * 100, 0)}% planned`}</small></div>
+    <div ref={labelRef} data-line-label={line.lineId} className={`hplan-line-label ${line.workingWindow.source === 'override' ? 'has-hours-override' : ''} ${isTarget ? 'is-over' : ''}`}><div><strong>{line.lineId}</strong><button type="button" onClick={() => onAdd(line.lineId)} aria-label={`Add production to ${line.lineId}`}><Plus size={15}/></button></div><span>{numberLabel(line.plannedMt)} MT</span><small>{line.utilisation === null ? '—' : `${numberLabel(line.utilisation * 100, 0)}% planned`}</small>{line.workingWindow.source === 'override' && <small className="hplan-hours-override" title="Working-hours exception for this date">{line.workingWindow.end === line.workingWindow.start ? 'Closed · exception' : `${timeLabel(line.workingWindow.start)}–${timeLabel(line.workingWindow.end)} · exception`}</small>}</div>
     <div ref={setNodeRef} data-line-id={line.lineId} className={`hplan-track ${isTarget ? 'is-over' : ''}`} aria-label={`${line.lineId} timeline`}>
+      <PlanningNow now={now} start={start} end={end}/>
       {getTicks(hours).map(hour => <span key={hour} className={`hplan-gridline ${hour > 0 && hour % 24 === 0 ? 'day-boundary' : ''}`} style={{ left: `${hour / hours * 100}%` }}/>) }
-      {Array.from({ length: Math.ceil(hours / 24) }, (_, day) => {
-        const offStart = day * 24 + availableHours;
-        const offEnd = Math.min((day + 1) * 24, hours);
-        return offStart < hours && offEnd > offStart ? <span key={`off-${day}`} className="hplan-off-hours" style={{ left: `${offStart / hours * 100}%`, width: `${(offEnd - offStart) / hours * 100}%` }} title="Outside available hours"/> : null;
-      })}
-      {downtime.filter(item => item.lineId === line.lineId || item.lineId === 'all').map(item => <BackgroundInterval key={item.id} className="hplan-downtime" interval={downtimeRange(item, dayStart)} start={start} end={end} title={`Unavailable · ${item.reason}`}/>) }
+      {nonWorkingWindows(settings,line.lineId,start,end).map(interval => <BackgroundInterval key={`off-${interval.start}`} className="hplan-off-hours" interval={interval} start={start} end={end} title="Outside available hours"/>)}
+      {settings.downtime.filter(item => item.lineId === line.lineId || item.lineId === 'all').map(item => <BackgroundInterval key={item.id} className="hplan-downtime" interval={downtimeRange(item, getWorkingHoursForDate(settings,item.date,line.lineId).dayStart)} start={start} end={end} title={`Unavailable · ${item.reason}`}/>) }
       {line.jobs.map(job => <JobSegments key={job.id} job={job} start={start} end={end} activeId={activeId} selected={selectedId === job.id} onOpen={() => onOpen(job.id)}/>) }
       {!hasVisibleProduction && <button type="button" className="hplan-empty" onClick={() => onAdd(line.lineId)}><Plus size={17}/>Add to {line.lineId}</button>}
       {isTarget && <span className="hplan-append">Drop here · {line.lineId}</span>}
@@ -185,6 +188,9 @@ function ProductionSegment({ segment, job, start, end, primary, activeId, select
   segment: ScheduleSegment; job: ScheduledJob; start: number; end: number; primary: boolean;
   activeId: string | null; selected: boolean; onOpen: () => void;
 }) {
+  const { jobs: productionProgress, stale: progressStale } = useLiveProduction();
+  const progress = productionProgress.get(job.id);
+  const received = progress && progress.actualTotal !== null ? receiptProgressLabel(progress) : null;
   const locked = job.status !== 'pending';
   const allocations = getJobSourceAllocations(job);
   const { attributes, listeners, setNodeRef: dragRef } = useDraggable({
@@ -200,12 +206,13 @@ function ProductionSegment({ segment, job, start, end, primary, activeId, select
   const clippedEnd = Math.min(end, segment.end);
   const paused = isJobPaused(job);
   const status = job.issue ? 'issue' : paused ? 'paused' : job.status;
-  const detail = `${productLabel(job)} · ${numberLabel(job.quantityMt)} MT · ${allocations.length} orders · ${timeLabel(segment.start)}–${timeLabel(segment.end)} · ${job.issue ? `Issue: ${job.issue.reason}` : paused ? 'Paused' : job.status}`;
+  const detail = `${productLabel(job)} · ${numberLabel(job.quantityMt)} MT · ${allocations.length} orders · ${timeLabel(segment.start)}–${timeLabel(segment.end)} · ${job.issue ? `Issue: ${job.issue.reason}` : paused ? 'Paused' : job.status}${received ? ` · ${received} received${progressStale ? ', last known' : ''}` : ''}`;
   const insert=isOver&&activeId&&activeId!==job.id;
   const preview=usePlanningCardPreview(job,!!activeId);
   return <div ref={node => {dragRef(node);dropRef(node);preview.anchor.current=node;}} {...preview.events} data-job-id={primary ? job.id : undefined} data-production-job={job.id} data-draggable={!locked} className={`hplan-card ${status} ${selected ? 'selected' : ''} ${activeId===job.id ? 'dragging' : ''} ${insert ? 'drop-before' : ''} ${segment.end > end ? 'clipped-end' : ''}`} style={intervalStyle(clippedStart, clippedEnd, start, end)}>
     <button type="button" className="hplan-card-open" {...(!locked?attributes:{})} {...(!locked?listeners:{})} onClick={()=>{preview.close();onOpen();}} aria-describedby={[!locked?attributes['aria-describedby']:undefined,preview.descriptionId].filter(Boolean).join(' ')||undefined} aria-label={`Open ${productLabel(job)} on ${job.lineId}${primary?'':' continued segment'}`} aria-description={`${detail}. ${locked?'This production plan is locked.':'Drag anywhere on this card to move it. On touch screens, hold briefly then drag. Enter opens details; Space starts a keyboard move.'}`}/>
-    <div className="hplan-card-content" aria-hidden="true"><strong className="hplan-code-short">{productLabel(job)}</strong><strong className="hplan-code-full">{productLabel(job)}</strong><span className="hplan-quantity">{numberLabel(job.quantityMt)} MT<small className="hplan-packaging">{job.mode === 'bags' ? 'Bags' : 'Bulk'}</small>{allocations.length > 1 && <small className="hplan-order-count">{allocations.length} orders</small>}</span><span className="hplan-time">{timeLabel(segment.start)}–{timeLabel(segment.end)}</span><span className="hplan-state">{job.issue ? <AlertTriangle size={12}/> : locked ? <LockKeyhole size={11}/> : null}{job.issue ? 'Issue' + (paused ? ' · Paused' : '') : paused ? 'Paused' : job.status === 'running' ? 'Running' : job.status === 'completed' ? 'Done' : primary ? 'Planned' : 'Continued'}</span></div>
+    <div className="hplan-card-content" aria-hidden="true"><strong className="hplan-code-short">{productLabel(job)}</strong><strong className="hplan-code-full">{productLabel(job)}</strong><span className="hplan-quantity">{numberLabel(job.quantityMt)} MT<small className="hplan-packaging">{job.mode === 'bags' ? 'Bags' : 'Bulk'}</small>{allocations.length > 1 && <small className="hplan-order-count">{allocations.length} orders</small>}</span><span className="hplan-time">{timeLabel(segment.start)}–{timeLabel(segment.end)}</span><span className="hplan-state" title={received ? `${received} received${progressStale ? ' · last known' : ''}` : undefined}>{job.issue ? <AlertTriangle size={12}/> : locked ? <LockKeyhole size={11}/> : null}{job.issue ? 'Issue' + (paused ? ' · Paused' : '') : paused ? 'Paused' : job.status === 'running' ? 'Running' : job.status === 'completed' ? 'Done' : primary ? 'Planned' : 'Continued'}{received && <span className="hplan-receipt-label"> · {received}{progressStale ? ' · last known' : ''}</span>}</span></div>
+    {received && progress && <span className="hplan-receipt-meter" aria-hidden="true"><i style={{width:`${progress.plannedTotal > 0 ? Math.max(0,Math.min(100,(progress.actualTotal ?? 0)/progress.plannedTotal*100)) : 0}%`}}/></span>}
     {!locked && <span className="hplan-drag-handle" aria-hidden="true"><GripVertical size={15}/></span>}
     {insert && <span className="hplan-insert">Insert</span>}
     {preview.preview}

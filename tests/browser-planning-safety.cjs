@@ -29,7 +29,7 @@ function manualInput(orderNo, date, lineId, quantityMt) {
   const backup = await json('/api/backup');
   let browser, page;
   try {
-    const settings = { ...backup.planning.settings, dayStart: '07:00', availableHours: 2, changeoverMinutes: 0, rates: { PM1: 10, PM2: 10, PM3: 10, PM4: 10 }, slowProductPrefixes: [], downtime: [] };
+    const settings = { ...backup.planning.settings, workingHoursOverrides: undefined, calendarHistory: undefined, calendarCutover: undefined, dayStart: '07:00', availableHours: 2, changeoverMinutes: 0, rates: { PM1: 10, PM2: 10, PM3: 10, PM4: 10 }, slowProductPrefixes: [], downtime: [] };
     await command({ type: 'workspace.restore', backup: { ...backup.planning, jobs: [], events: [], catalog: [], settings } });
     const material = '7.0000099700000';
     await command({ type: 'inventory.importBaseline', input: {

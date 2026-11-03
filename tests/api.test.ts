@@ -459,10 +459,11 @@ integration("PostgreSQL workspace API", () => {
       method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify(laterBaseline),
     });
     const laterPreviewBody = await laterPreview.json();
-    assert.equal(laterPreviewBody.changed, 1);
+    assert.equal(laterPreviewBody.changed, 0);
+    assert.equal(laterPreviewBody.unchanged, 1);
     assert.equal(laterPreviewBody.skipped, 1);
-    assert.equal(laterPreviewBody.rows[0].importAction, "skip-existing");
-    assert.deepEqual(laterPreviewBody.rows[0].changedFields, ["asOfDate"]);
+    assert.equal(laterPreviewBody.rows[0].importAction, "skip-unchanged");
+    assert.deepEqual(laterPreviewBody.rows[0].changedFields, []);
     assert.deepEqual(laterPreviewBody.rows[0].previousFields, sourceImport.rows[0]);
     assert.equal(laterPreviewBody.rows[0].previousFields.deliveryLeadDays, 0);
     assert.equal(laterPreviewBody.rows[0].previousFields.daysOutstanding, null);
@@ -533,7 +534,7 @@ integration("PostgreSQL workspace API", () => {
 
     const backupResponse = await fetch(`${baseUrl}/api/backup`);
     const backup = await backupResponse.json();
-    assert.equal(backup.schemaVersion, 4);
+    assert.equal(backup.schemaVersion, 5);
     assert.equal(backup.sourceData.orders.length, 1);
     assert.equal(backup.planning.jobs[0].sourceOrderId, source.id);
 
@@ -595,7 +596,7 @@ integration("PostgreSQL workspace API", () => {
     const preview = await previewResponse.json();
     assert.deepEqual({ added: preview.added, changed: preview.changed, unchanged: preview.unchanged, skipped: preview.skipped },
       { added: 1, changed: 1, unchanged: 0, skipped: 1 });
-    assert.equal(preview.rows.find((row: any) => row.fields.doNo === "DO-STABLE").importAction, "skip-existing");
+    assert.equal(preview.rows.find((row: any) => row.fields.doNo === "DO-STABLE").importAction, "queue-review");
     assert.equal(preview.rows.find((row: any) => row.fields.doNo === "DO-NEW").importAction, "insert");
 
     assert.equal((await postCommand(2, "append-only-mixed", { type: "data.import", input: mixed })).status, 200);
@@ -823,11 +824,11 @@ integration("PostgreSQL workspace API", () => {
     const planningPreviewBody = await planningPreview.json();
     assert.equal(planningPreviewBody.changed, 1);
     assert.equal(planningPreviewBody.skipped, 1);
-    assert.equal(planningPreviewBody.rows[0].importAction, "skip-existing");
+    assert.equal(planningPreviewBody.rows[0].importAction, "queue-review");
     assert.equal(planningPreviewBody.rows[0].changedFields.includes("quantity"), true);
     assert.equal((await postCommand(3, "review-import-planning", { type: "data.import", input: planningUpdate })).status, 200);
     source = ((await (await fetch(`${baseUrl}/api/data?search=DO-REVIEW`)).json()) as SourceOrderPage).items[0];
-    assert.equal(source.needsReview, false);
+    assert.equal(source.needsReview, true);
     assert.equal(source.version, 1);
     assert.equal(source.quantity, sourceImport.rows[0].quantity);
   });

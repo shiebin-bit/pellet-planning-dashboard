@@ -6,6 +6,7 @@ import type { ScheduledJob } from '../domain/types';
 import { numberLabel, STATUS_LABELS, TIME_ZONE } from '../lib/format';
 import { isJobPaused } from '../domain/production-results';
 import './PlanningCardPreview.css';
+import { LiveProduction } from './LiveProduction';
 
 // Removing a hovered portal can expose a different card under the same pointer.
 // Wait for an intentional pointer movement before allowing any card to reopen.
@@ -57,6 +58,7 @@ export function usePlanningCardPreview(job: ScheduledJob, dragging: boolean) {
     <div className="planning-preview-heading"><strong>{productLabel(job)}</strong><span>{job.lineId}</span></div>
     <p>{job.productCode}</p><p>{job.description||'No product description'}</p>
     <dl><div><dt>Quantity</dt><dd>{job.mode==='bags'&&job.bagCount!==null?`${numberLabel(job.bagCount,0)} Bags · `:''}{numberLabel(job.quantityMt)} MT</dd></div><div><dt>Order</dt><dd>{getJobSourceAllocations(job).length > 1 ? `${getJobSourceAllocations(job).length} orders: ${getJobSourceAllocations(job).map(a=>a.sourceSnapshot.doNo).join(', ')}` : job.orderNo||'No order reference'}</dd></div><div><dt>Planned start</dt><dd>{plannedTime(job.plannedStart)}</dd></div><div><dt>Planned end</dt><dd>{plannedTime(job.plannedEnd)}</dd></div><div><dt>Status</dt><dd>{job.issue?'Issue':isJobPaused(job)?'Paused':STATUS_LABELS[job.status]}</dd></div><div><dt>Destination</dt><dd>{job.bin?`Bin ${job.bin}`:'Not assigned'}</dd></div></dl>
+    {job.inventoryItemId && (job.status === 'running' || job.status === 'completed') && <LiveProduction jobId={job.id} compact/>}
     {job.issue&&<p className="planning-preview-issue">{job.issue.reason}</p>}
     <small>Times in MYT. Click or press Enter for full details.</small>
   </div>,document.body):null;

@@ -34,7 +34,12 @@ import type {
 import type { SourceImportInput, SourceOrderFields } from "../src/domain/sourceTypes";
 import type { AppState, HistoryEvent, Job } from "../src/domain/types";
 import { ApiError } from "./errors";
-import { applySourceImport } from "./sourceData";
+import { applySourceImport, backfillSourceImportReviews } from "./sourceData";
+import {
+  recordProductionProgressReset,
+  recordProductionProgressSample,
+  type ProductionProgressCommandContext,
+} from "./productionProgress";
 
 interface ItemRow {
   id: string; catalog_id: string | null; material_code: string; description: string; unit: InventoryUnit;
@@ -129,7 +134,12 @@ export async function applyInventoryWorkbook(
     "SELECT id FROM inventory_imports WHERE workspace_id = 1 AND semantic_digest = $1",
     [semanticDigest],
   );
-  if (duplicate.rowCount) return appendEvent(state, nowIso, "inventory.import.duplicate", `Skipped duplicate inventory import ${input.fileName}.`);
+  if (duplicate.rowCount) {
+    let queued = 0;
+    for (const source of input.orders) queued += await backfillSourceImportReviews(client, source, nowIso);
+    const suffix = queued ? ` Backfilled ${queued} missing review ${queued === 1 ? "item" : "items"}.` : "";
+    return appendEvent(state, nowIso, "inventory.import.duplicate", `Skipped duplicate inventory import ${input.fileName}.${suffix}`);
+  }
   if (input.includeBaseline) {
     const seeded = await client.query("SELECT 1 FROM inventory_imports WHERE workspace_id=1 AND included_baseline LIMIT 1");
     if (seeded.rowCount) throw new ApiError(409, "BASELINE_ALREADY_IMPORTED", "Physical closing stock has already been seeded. Import later workbooks without baseline stock.");
@@ -254,6 +264,7 @@ export async function executeInventoryCommand(
   state: AppState,
   command: InventoryCommand,
   nowIso: string,
+  progressContext: ProductionProgressCommandContext = {},
 ): Promise<AppState> {
   switch (command.type) {
     case "inventory.importBaseline": return applyInventoryWorkbook(client, state, command.input, nowIso, true);
@@ -305,9 +316,9 @@ export async function executeInventoryCommand(
       await recalculateReservations(client, nowIso);
       return appendEvent(state, nowIso, "inventory.received", `Recorded inventory receipt for ${item.material_code}.`);
     }
-    case "production.recordReceipt": return recordProductionReceipt(client, state, command, nowIso);
-    case "production.correct": return correctProduction(client, state, command, nowIso);
-    case "production.correctJobTotal": return correctJobProductionTotal(client, state, command, nowIso);
+    case "production.recordReceipt": return recordProductionReceipt(client, state, command, nowIso, progressContext);
+    case "production.correct": return correctProduction(client, state, command, nowIso, progressContext);
+    case "production.correctJobTotal": return correctJobProductionTotal(client, state, command, nowIso, progressContext);
     case "delivery.record": return recordDelivery(client, state, command, nowIso);
     case "delivery.reverse": return reverseDelivery(client, state, command, nowIso);
     case "data.updateManualFields": return updateManualFields(client, state, command, nowIso);
@@ -315,7 +326,7 @@ export async function executeInventoryCommand(
   }
 }
 
-async function recordProductionReceipt(client: pg.PoolClient, state: AppState, command: Extract<InventoryCommand, { type: "production.recordReceipt" }>, nowIso: string): Promise<AppState> {
+async function recordProductionReceipt(client: pg.PoolClient, state: AppState, command: Extract<InventoryCommand, { type: "production.recordReceipt" }>, nowIso: string, progressContext: ProductionProgressCommandContext): Promise<AppState> {
   const job = state.jobs.find(candidate => candidate.id === command.jobId);
   if (!job) throw new ApiError(400, "JOB_NOT_FOUND", "The production job no longer exists.");
   if (!job.inventoryItemId) throw new ApiError(400, "JOB_INVENTORY_ITEM_REQUIRED", "Link the job to an inventory item before recording production.");
@@ -325,12 +336,22 @@ async function recordProductionReceipt(client: pg.PoolClient, state: AppState, c
   if (total < posted) throw new ApiError(409, "PRODUCTION_TOTAL_DECREASED", "Use production.correctJobTotal to reduce an already posted receipt.");
   if (total === posted) return state;
   await reconcileJobProduction(client, job, item, total, command.occurredOn ?? malaysiaDateAt(nowIso), nowIso, `production-${randomUUID()}`, `Production receipt total ${scaledToQuantity(item.unit, total)} ${item.unit}.`);
+  if (progressContext.commandId) await recordProductionProgressSample(client, {
+    commandId: progressContext.commandId,
+    job,
+    unit: item.unit,
+    cumulativeScaled: total,
+    previousScaled: posted,
+    occurredOn: command.occurredOn ?? malaysiaDateAt(nowIso),
+    recordedAt: nowIso,
+    source: progressContext.receiptSource ?? "operator-live",
+  });
   const actualQuantityMt=item.unit==="Bags"?scaledToQuantity(item.unit,total)*(job.bagWeightKgSnapshot??item.bag_weight_kg??50)/1000:scaledToQuantity(item.unit,total);
   const next={...state,jobs:state.jobs.map(row=>row.id===job.id&&row.status==="completed"?{...row,actualQuantityMt,updatedAt:nowIso}:row)};
   return appendEvent(next, nowIso, "production.received", `Received production for ${job.orderNo}.`, job.id);
 }
 
-async function correctProduction(client: pg.PoolClient, state: AppState, command: Extract<InventoryCommand, { type: "production.correct" }>, nowIso: string): Promise<AppState> {
+async function correctProduction(client: pg.PoolClient, state: AppState, command: Extract<InventoryCommand, { type: "production.correct" }>, nowIso: string, progressContext: ProductionProgressCommandContext): Promise<AppState> {
   if (await replayPosting(client, command.postingKey, command)) return state;
   const original = await movementById(client, command.movementId, true);
   if (original.movement_type !== "production") throw new ApiError(400, "PRODUCTION_MOVEMENT_REQUIRED", "Only a production receipt can be corrected here.");
@@ -341,17 +362,19 @@ async function correctProduction(client: pg.PoolClient, state: AppState, command
   const corrected = quantityToScaled(item.unit, command.correctedTotalQuantity, "corrected total quantity");
   if(corrected===await jobProductionTotal(client,job.id))return state;
   await reconcileJobProduction(client,job,item,corrected,command.occurredOn??malaysiaDateAt(nowIso),nowIso,command.postingKey,command.reason,hashCanonical(command));
+  if (progressContext.commandId) await recordProductionProgressReset(client, { commandId: progressContext.commandId, jobId: job.id, resetAt: nowIso, reason: command.reason });
   const actualQuantityMt=item.unit==="Bags"?scaledToQuantity(item.unit,corrected)*(job?.bagWeightKgSnapshot??item.bag_weight_kg??50)/1000:scaledToQuantity(item.unit,corrected);
   return appendEvent({...state,jobs:state.jobs.map(row=>row.id===original.job_id&&row.status==="completed"?{...row,actualQuantityMt,updatedAt:nowIso}:row)}, nowIso, "production.corrected", `Corrected a production receipt: ${command.reason}`, original.job_id);
 }
 
-async function correctJobProductionTotal(client:pg.PoolClient,state:AppState,command:Extract<InventoryCommand,{type:"production.correctJobTotal"}>,nowIso:string):Promise<AppState>{
+async function correctJobProductionTotal(client:pg.PoolClient,state:AppState,command:Extract<InventoryCommand,{type:"production.correctJobTotal"}>,nowIso:string,progressContext:ProductionProgressCommandContext):Promise<AppState>{
   if(await replayPosting(client,command.postingKey,command))return state;
   const job=state.jobs.find(row=>row.id===command.jobId);if(!job)throw new ApiError(400,"JOB_NOT_FOUND","The production job no longer exists.");
   if(!job.inventoryItemId)throw new ApiError(400,"JOB_INVENTORY_ITEM_REQUIRED","Link the job to an inventory item before correcting production.");
   const item=await requireItem(client,job.inventoryItemId,true),corrected=quantityToScaled(item.unit,command.correctedTotalQuantity,"corrected total quantity");
   if(corrected===await jobProductionTotal(client,job.id))return state;
   await reconcileJobProduction(client,job,item,corrected,command.occurredOn??malaysiaDateAt(nowIso),nowIso,command.postingKey,command.reason,hashCanonical(command));
+  if(progressContext.commandId)await recordProductionProgressReset(client,{commandId:progressContext.commandId,jobId:job.id,resetAt:nowIso,reason:command.reason});
   const actualQuantityMt=item.unit==="Bags"?scaledToQuantity(item.unit,corrected)*(job.bagWeightKgSnapshot??item.bag_weight_kg??50)/1000:scaledToQuantity(item.unit,corrected);
   return appendEvent({...state,jobs:state.jobs.map(row=>row.id===job.id&&row.status==="completed"?{...row,actualQuantityMt,updatedAt:nowIso}:row)},nowIso,"production.corrected",`Corrected a production receipt: ${command.reason}`,job.id);
 }

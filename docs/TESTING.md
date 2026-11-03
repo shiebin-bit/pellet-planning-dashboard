@@ -128,3 +128,18 @@ Local feature verification: 152 unit tests, 33 PostgreSQL API tests, a productio
 ## Excel dependency compatibility
 
 `npm test` also runs `tests/dependency-compatibility.test.cjs`. It resolves the dependency copies used by ExcelJS and ZipStream and checks workbook buffer/stream round trips, both Archiver utility glob implementations (including exclusion), archive glob/ignore and ZIP reading. Targeted overrides retain ExcelJS 4.4 and Archiver 5 while replacing the vulnerable Unzipper/Glob/Minimatch paths. These overrides cross some transitive declared ranges; keep the compatibility regression, review the lockfile on updates, and require clean install, audit, build and browser import/export checks. Do not replace this with an audit suppression or a global Minimatch override that breaks older callable exports.
+
+
+## Live progress, date exceptions and source reviews
+
+The isolated API suite adds receipt progress, working-hours and source-review tests. Coverage includes native whole Bags/0.001MT totals; trusted live samples, pauses, stale data and correction resets; command retries and stale revisions; date-specific overtime/closures with protected history and invalid-calendar rollback; append-only imports; business-field-only differences (rolling counters and worksheet position do not queue); protected quantities/manual fields; selected reasoned corrections and V5 recovery/round trips. The stored legacy review flag remains distinct from pending queue visibility.
+
+Three additional browser scripts use fictional data, loopback ports other than8080, explicit replace opt-in and a portable-backup restore in finally:
+
+- `browser-live-progress.cjs`: Now across four lines; authoritative40/100Bags to50/100Bags; labelled estimate rendering via a fictional response; stale retention/hiding and retry;320/390px layouts. Estimate arithmetic itself is verified by domain/API tests.
+- `browser-working-hours.cjs`: reasoned14-hour PM1/PM2 overtime with PM3/PM4 closed (280MT), normal four-line hours next day (480MT), untouched historical card, unsaved-date guard and mobile layouts.
+- `browser-import-reviews.cjs`: retained duplicate source data, protected reserved quantity, reason/selected fields, draft preservation, dismissal,51-row pagination, mobile dialog and V5 backup.
+
+Before production rollout, a restored private production dump is migrated in a separate rehearsal database. Existing tables and complete planning/source/inventory sections must compare equal; new review/progress collections start empty. Company data and rehearsal evidence stay in ignored backups, never test fixtures or GitHub.
+
+Local release verification on3November2026 passed181 domain tests,1 dependency compatibility test,42 PostgreSQL API tests, all15 browser scripts, the production build and a runtime dependency audit with0 reported vulnerabilities. Browser fixture calendars are isolated from preceding API date exceptions; receipt API fixtures work outside shift hours. CI runs the same full suites on a fresh database.

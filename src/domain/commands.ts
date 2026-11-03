@@ -17,11 +17,14 @@ import {
   updateCatalogProduct,
   updateJob,
   updateSettings,
+  replaceWorkingHoursOverrides,
 } from "./engine";
 import { validateSettingsUpdate, validateWorkspaceBackup } from "./backup";
 import type { AppState, JobInput, LineId, Settings } from "./types";
 import type { CreateJobFromSourceInput, CreateJobFromSourcesInput, PortableWorkspaceBackupV3, SourceImportInput } from "./sourceTypes";
 import { parseInventoryCommand, type InventoryCommand, type PortableWorkspaceBackupV4 } from './inventoryTypes';
+import { parseImportReviewCommand, type ImportReviewCommand } from './importReview';
+import type { PortableWorkspaceBackupV5 } from './productionProgress';
 
 export type CopyBatchQuantity =
   | { mode: "bags"; bagCount: number }
@@ -43,6 +46,7 @@ export type CatalogUpdatePatch = Partial<CatalogCreateInput>;
 
 export type Command =
   | InventoryCommand
+  | ImportReviewCommand
   | { type: "job.create"; input: JobInput }
   | { type: "job.update"; jobId: string; patch: Partial<JobInput> }
   | { type: "job.move"; jobId: string; toLineId: LineId; beforeJobId?: string }
@@ -63,10 +67,11 @@ export type Command =
   | { type: "catalog.update"; productId: string; patch: CatalogUpdatePatch }
   | { type: "catalog.setActive"; productId: string; active: boolean }
   | { type: "settings.update"; settings: Settings }
+  | { type: "settings.replaceWorkingHoursOverrides"; date: string; lines: Array<{ lineId: LineId; dayStart: string; availableHours: number }>; reason: string }
   | { type: "settings.activateCalendar"; effectiveFrom: string; dayStart: string; availableHours: number }
   | { type: "data.import"; input: SourceImportInput }
   | { type: "data.setDeliveryStatus"; sourceOrderId: string; delivered: boolean; reason?: string }
-  | { type: "workspace.restore"; backup: AppState | PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 }
+  | { type: "workspace.restore"; backup: AppState | PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 | PortableWorkspaceBackupV5 }
   | { type: "workspace.resetDemo"; date: string }
   | { type: "workspace.undoLastMove" };
 
@@ -134,11 +139,14 @@ export function executeCommand(
     case "catalog.setActive":
       return setCatalogProductActive(state, command.productId, command.active, context.nowIso ?? new Date().toISOString());
     case "settings.update": return updateSettings(state, command.settings, context.nowIso ?? new Date().toISOString());
+    case "settings.replaceWorkingHoursOverrides": return replaceWorkingHoursOverrides(state, command.date, command.lines, command.reason, context.nowIso ?? new Date().toISOString());
     case "job.createFromSource":
     case "job.createFromSources":
     case "settings.activateCalendar":
     case "data.import":
     case "data.setDeliveryStatus":
+    case "data.applySourceCorrection":
+    case "data.dismissSourceCorrection":
     case "workspace.restore":
     case "workspace.resetDemo":
     case "workspace.undoLastMove":
@@ -266,6 +274,21 @@ export function parseCommand(value: unknown): Command {
       const settings = validateSettingsUpdate(source.settings);
       return { type, settings };
     }
+    case "settings.replaceWorkingHoursOverrides": {
+      exact(source, ["type", "date", "lines", "reason"], "command");
+      const lines = array(source.lines, "command.lines", 4).map((value, index) => {
+        const row = object(value, `command.lines[${index}]`);
+        exact(row, ["lineId", "dayStart", "availableHours"], `command.lines[${index}]`);
+        return {
+          lineId: lineId(row.lineId, `command.lines[${index}].lineId`),
+          dayStart: clock(row.dayStart, `command.lines[${index}].dayStart`),
+          availableHours: finite(row.availableHours, `command.lines[${index}].availableHours`, 0),
+        };
+      });
+      if (lines.some(line => line.availableHours > 24)) throw new Error("command.lines availableHours must be 24 or less.");
+      if (new Set(lines.map(line => line.lineId)).size !== lines.length) throw new Error("command.lines cannot contain duplicate production lines.");
+      return { type, date: date(source.date, "command.date"), lines, reason: text(source.reason, "command.reason", 1_000) };
+    }
     case "settings.activateCalendar":
       exact(source, ["type", "effectiveFrom", "dayStart", "availableHours"], "command");
       return {
@@ -288,9 +311,12 @@ export function parseCommand(value: unknown): Command {
       if (!result.delivered && !result.reason) throw new Error("command.reason is required when reopening delivery.");
       return result;
     }
+    case "data.applySourceCorrection":
+    case "data.dismissSourceCorrection":
+      return parseImportReviewCommand(value);
     case "workspace.restore":
       exact(source, ["type", "backup"], "command");
-      if (plainPortableV3(source.backup)) return { type, backup: source.backup as unknown as PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 };
+      if (plainPortableV3(source.backup)) return { type, backup: source.backup as unknown as PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 | PortableWorkspaceBackupV5 };
       return { type, backup: validateWorkspaceBackup(source.backup) };
     case "workspace.resetDemo":
       exact(source, ["type", "date"], "command");
@@ -512,8 +538,12 @@ function sha256(value: unknown, path: string): string {
 function plainPortableV3(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const source = value as Record<string, unknown>;
-  if (source.schemaVersion !== 3 && source.schemaVersion !== 4) return false;
-  exact(source, source.schemaVersion === 4 ? ["schemaVersion", "exportedAt", "planning", "sourceData", "inventory"] : ["schemaVersion", "exportedAt", "planning", "sourceData"], "command.backup");
+  if (source.schemaVersion !== 3 && source.schemaVersion !== 4 && source.schemaVersion !== 5) return false;
+  exact(source, source.schemaVersion === 5
+    ? ["schemaVersion", "exportedAt", "planning", "sourceData", "inventory", "productionProgress"]
+    : source.schemaVersion === 4
+      ? ["schemaVersion", "exportedAt", "planning", "sourceData", "inventory"]
+      : ["schemaVersion", "exportedAt", "planning", "sourceData"], "command.backup");
   return true;
 }
 

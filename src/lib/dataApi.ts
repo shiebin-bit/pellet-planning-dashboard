@@ -1,5 +1,5 @@
 import { ApiError } from './api';
-import type { SourceImportInput, SourceImportPreviewContext, SourceImportPreview, SourceOrderDetail, SourceOrderPage } from '../domain/sourceTypes';
+import type { SourceImportInput, SourceImportPreviewContext, SourceImportPreview, SourceImportReview, SourceImportReviewPage, SourceImportReviewStatus, SourceOrderDetail, SourceOrderPage } from '../domain/sourceTypes';
 
 export async function dataRequest<T>(path: string, body?: unknown): Promise<T> {
   const controller = new AbortController();
@@ -20,3 +20,6 @@ export const readSourceOrder = (id: string) => dataRequest<SourceOrderDetail>('/
 export const previewSourceImport = (input: SourceImportInput, context?: SourceImportPreviewContext) => dataRequest<SourceImportPreview>('/api/data/preview', context ? {input, context} : input);
 export interface ImportBatchOption { id: string; fileName: string; asOfDate: string; importedAt: string; rowCount: number }
 export const readImportBatches = () => dataRequest<ImportBatchOption[]>('/api/data/imports');
+export const readSourceImportReviews = (status: SourceImportReviewStatus, page: number) =>
+  dataRequest<SourceImportReviewPage>(`/api/data/reviews?status=${encodeURIComponent(status)}&page=${page}`);
+export const readSourceImportReview = (id: string) => dataRequest<SourceImportReview>('/api/data/reviews/' + encodeURIComponent(id));

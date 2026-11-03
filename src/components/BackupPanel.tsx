@@ -3,6 +3,7 @@ import { useEffect,useRef,useState } from 'react';
 import { HardDrive,Upload,Download } from 'lucide-react';
 import type { PortableWorkspaceBackupV3 } from '../domain/sourceTypes';
 import type { AppState } from '../domain/types';
+import type { PortableWorkspaceBackupV5 } from '../domain/productionProgress';
 import { parseWorkspaceBackup } from '../domain/backup';
 import { exportBackup, exportDatabaseBackup } from '../lib/export';
 import { dateLabel } from '../lib/format';
@@ -11,8 +12,9 @@ import './ReportDialog.css';
 
 export function BackupPanel(){
   const {state,restoreBackup,previousBackup,toast,storageMode,mutationLocked,hasConflict,confirmedRetry,notify}=useWorkspace();
-  const [candidate,setCandidate]=useState<AppState|PortableWorkspaceBackupV3|PortableWorkspaceBackupV4|null>(null);
+  const [candidate,setCandidate]=useState<AppState|PortableWorkspaceBackupV3|PortableWorkspaceBackupV4|PortableWorkspaceBackupV5|null>(null);
   const [legacy,setLegacy]=useState(false);
+  const [missingOperations,setMissingOperations]=useState(false);
   const [filename,setFilename]=useState('');
   const [reading,setReading]=useState(false);
   const [error,setError]=useState('');
@@ -28,26 +30,26 @@ export function BackupPanel(){
   const sourceOrders=candidate&&'planning' in candidate?candidate.sourceData.orders.length:0;
   async function download(previous=false){try{if(storageMode==='database')await exportDatabaseBackup(previous);else exportBackup(previous?previousBackup!:state,previous?'millplan-workspace-before-restore.json':undefined);}catch(reason){notify(reason instanceof Error?reason.message:'The backup could not be downloaded.',true);}}
   async function read(file:File){
-    const version=++request.current;setCandidate(null);setLegacy(false);setError('');setFailed(false);setFilename(file.name);setReading(true);
+    const version=++request.current;setCandidate(null);setLegacy(false);setMissingOperations(false);setError('');setFailed(false);setFilename(file.name);setReading(true);
     try{
       if(file.size>64*1024*1024)throw new Error('Choose a JSON backup smaller than 64 MB.');
       const text=await file.text();
       const raw=JSON.parse(text.replace(/^\uFEFF/,''));
-      let parsed:AppState|PortableWorkspaceBackupV3|PortableWorkspaceBackupV4;
-      if(raw.schemaVersion===3||raw.schemaVersion===4){
+      let parsed:AppState|PortableWorkspaceBackupV3|PortableWorkspaceBackupV4|PortableWorkspaceBackupV5;
+      if(raw.schemaVersion===3||raw.schemaVersion===4||raw.schemaVersion===5){
         if(!raw.sourceData||!Array.isArray(raw.sourceData.orders)||!Array.isArray(raw.sourceData.imports)||!Array.isArray(raw.sourceData.versions))throw new Error('This backup has invalid order data.');
-        if(storageMode==='offline'&&raw.schemaVersion===4)throw new Error('Restore inventory backups in the PostgreSQL workspace.');
+        if(storageMode==='offline'&&raw.schemaVersion>=4)throw new Error('Restore inventory backups in the PostgreSQL workspace.');
         if(storageMode==='offline'&&(raw.sourceData.orders.length||raw.sourceData.imports.length||raw.sourceData.versions.length))throw new Error('Restore this backup in the PostgreSQL workspace to retain imported order data.');
         parsed={...raw,planning:parseWorkspaceBackup(JSON.stringify(raw.planning))};
       }else parsed=parseWorkspaceBackup(text);
-      if(version===request.current){setCandidate(parsed);setLegacy(raw.schemaVersion<4);}
+      if(version===request.current){setCandidate(parsed);setLegacy(raw.schemaVersion<4);setMissingOperations(raw.schemaVersion<5);}
     }catch(reason){if(version===request.current)setError(reason instanceof Error?reason.message:'This backup could not be read.');}
     finally{if(version===request.current)setReading(false);}
   }
-  return <div className="panel settings-info backup-panel"><HardDrive size={21}/><h3>Workspace backup</h3>{storageMode==='database'&&<p>Importing replaces this PostgreSQL workspace. To migrate browser records, export JSON from the offline file first, then select it here.</p>}<p>Save all production records, imported orders, import versions, stock, production receipts, collections, products, settings and activity as JSON. Choose a backup to preview it before replacing this workspace.</p>
+  return <div className="panel settings-info backup-panel"><HardDrive size={21}/><h3>Workspace backup</h3>{storageMode==='database'&&<p>Importing replaces this PostgreSQL workspace. To migrate browser records, export JSON from the offline file first, then select it here.</p>}<p>Save all production records, imported orders, import versions, stock, production receipts, collections, products, settings, import reviews and production-progress samples as JSON. Choose a backup to preview it before replacing this workspace.</p>
     <div className="backup-controls"><button type="button" className="button secondary full-width" onClick={()=>void download()}><Download size={15}/>Download backup</button><button type="button" className="button secondary full-width" disabled={reading||mutationLocked||hasConflict} onClick={()=>input.current?.click()}><Upload size={15}/>{reading?'Reading backup…':'Restore JSON backup'}</button><input ref={input} type="file" accept=".json,application/json" hidden aria-label="Backup JSON file" onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void read(file);}}/></div>
     {error&&<p role="alert" className="backup-error">{error}</p>}
-    {candidate&&<section className="backup-preview" aria-label="Backup preview"><h4>Review before restoring</h4><dl><div><dt>File</dt><dd>{filename}</dd></div><div><dt>Site</dt><dd>{planning!.settings.siteName}</dd></div><div><dt>Production records</dt><dd>{planning!.jobs.length}</dd></div><div><dt>Planning dates</dt><dd>{dates.length?`${dateLabel(dates[0],true)} – ${dateLabel(dates[dates.length-1],true)}`:'No production records'}</dd></div><div><dt>Catalog products</dt><dd>{planning!.catalog.length}</dd></div><div><dt>Imported orders</dt><dd>{sourceOrders}</dd></div><div><dt>Activity entries</dt><dd>{planning!.events.length}</dd></div></dl>{legacy&&<p className="backup-error" role="alert">This older backup has no inventory ledger. Restoring it clears current stock and reservations; a full recovery copy is retained. Versions 1–2 also have no SAP order data.</p>}<p>This replaces the current {state.jobs.length} records, imported orders, products, settings and activity. Final validation runs before saving. Records are not merged. A copy of the current workspace is kept for download after restoring.</p>{failed&&failureMessage&&<p role="alert" className="backup-error">{failureMessage}</p>}<button type="button" className="button danger" disabled={mutationLocked||hasConflict} onClick={async()=>{if(await restoreBackup(candidate)){setCandidate(null);setFilename('');setFailed(false);}else setFailed(true);}}>Replace workspace with this backup</button><button type="button" className="text-link" disabled={mutationLocked} onClick={()=>{setCandidate(null);setFilename('');setFailed(false);}}>Cancel restore</button></section>}
+    {candidate&&<section className="backup-preview" aria-label="Backup preview"><h4>Review before restoring</h4><dl><div><dt>File</dt><dd>{filename}</dd></div><div><dt>Site</dt><dd>{planning!.settings.siteName}</dd></div><div><dt>Production records</dt><dd>{planning!.jobs.length}</dd></div><div><dt>Planning dates</dt><dd>{dates.length?`${dateLabel(dates[0],true)} – ${dateLabel(dates[dates.length-1],true)}`:'No production records'}</dd></div><div><dt>Catalog products</dt><dd>{planning!.catalog.length}</dd></div><div><dt>Imported orders</dt><dd>{sourceOrders}</dd></div><div><dt>Activity entries</dt><dd>{planning!.events.length}</dd></div></dl>{legacy&&<p className="backup-error" role="alert">This older backup has no inventory ledger. Restoring it clears current stock and reservations; a full recovery copy is retained. Versions 1–2 also have no SAP order data.</p>}{missingOperations&&<p className="backup-error" role="alert">This older backup has no saved import reviews or production-progress samples. Restoring it clears those records; inventory receipts are retained when the backup contains them. A full recovery copy is kept.</p>}<p>This replaces the current {state.jobs.length} records, imported orders, products, settings and activity. Final validation runs before saving. Records are not merged. A copy of the current workspace is kept for download after restoring.</p>{failed&&failureMessage&&<p role="alert" className="backup-error">{failureMessage}</p>}<button type="button" className="button danger" disabled={mutationLocked||hasConflict} onClick={async()=>{if(await restoreBackup(candidate)){setCandidate(null);setFilename('');setFailed(false);}else setFailed(true);}}>Replace workspace with this backup</button><button type="button" className="text-link" disabled={mutationLocked} onClick={()=>{setCandidate(null);setFilename('');setFailed(false);}}>Cancel restore</button></section>}
     {previousBackup&&<div className="backup-previous"><p>The workspace saved immediately before the latest workspace replacement is available here.</p><button type="button" className="text-link" onClick={()=>void download(true)}><Download size={14}/>Download previous workspace</button></div>}
   </div>;
 }

@@ -89,13 +89,13 @@ integration("inventory API", () => {
     assert.equal((await get<any[]>("/api/inventory/ledger")).filter(row => row.movementType === "baseline").length, 1);
 
     const backup = await get<any>("/api/backup");
-    assert.equal(backup.schemaVersion, 4);
+    assert.equal(backup.schemaVersion, 5);
     assert.equal(backup.inventory.items.length, 1);
     assert.equal(backup.inventory.ledger.length, 1);
     await ok(await command(2, "reset-after-backup", { type: "workspace.resetDemo", date: malaysiaToday() }));
     assert.equal((await get<InventorySnapshot>("/api/inventory")).items.length, 0);
     const previous = await get<any>("/api/backup/previous");
-    assert.equal(previous.schemaVersion, 4);
+    assert.equal(previous.schemaVersion, 5);
     assert.equal(previous.inventory.ledger.length, 1);
     await ok(await command(3, "restore-v4", { type: "workspace.restore", backup }));
     const restored = await get<InventorySnapshot>("/api/inventory");
@@ -212,7 +212,7 @@ integration("inventory API", () => {
     const response=await fetch(`${baseUrl}/api/data/preview`,{method:"POST",headers:{"Content-Type":"application/json",Origin:baseUrl},body:JSON.stringify({input:baseline.orders[0],context:{includeBaseline:true,annotations:baseline.annotations}})});assert.equal(response.status,200);
     const preview=await response.json();assert.equal(preview.changed,0);assert.equal(preview.unchanged,2);assert.equal(preview.skipped,2);assert.equal(preview.operationalChanged,1);
     const annotated=preview.rows.find((row:any)=>row.fields.doNo==="DO-100"),protectedRow=preview.rows.find((row:any)=>row.fields.doNo==="DO-200");
-    assert.equal(annotated.disposition,"unchanged");assert.equal(annotated.importAction,"skip-existing");assert.deepEqual(annotated.changedFields.sort(),["fmrOmed","medication"]);assert.equal(annotated.operationalChanged,true);assert.equal(annotated.fields.medication,"ANN-MED");assert.equal(annotated.fields.fmrOmed,"ANN-REF");
+    assert.equal(annotated.disposition,"unchanged");assert.equal(annotated.importAction,"skip-unchanged");assert.deepEqual(annotated.changedFields.sort(),["fmrOmed","medication"]);assert.equal(annotated.operationalChanged,true);assert.equal(annotated.fields.medication,"ANN-MED");assert.equal(annotated.fields.fmrOmed,"ANN-REF");
     assert.equal(protectedRow.operationalChanged,false);assert.deepEqual(protectedRow.changedFields,[]);assert.equal(protectedRow.fields.medication,"MANUAL-MED");assert.equal(protectedRow.fields.fmrOmed,"MANUAL-REF");
     await ok(await command(2,"first-baseline-after-orders",{type:"inventory.importBaseline",input:baseline}));
     orders=(await get<InventoryOrderProgressSnapshot>("/api/inventory/orders")).orders;
@@ -338,7 +338,7 @@ integration("inventory API", () => {
     assert.equal(review.total,1);assert.equal(review.items[0].id,progress.sourceOrderId);
     const nonManual={...input,includeBaseline:false,digest:"1".repeat(64),annotations:[],orders:input.orders.map(batch=>({...batch,digest:"2".repeat(64),rows:batch.rows.map(row=>({...row,medication:"SAP-B",fmrOmed:"SAP-REF-B"}))}))};
     const nonManualPreviewResponse=await fetch(`${baseUrl}/api/data/preview`,{method:"POST",headers:{"Content-Type":"application/json",Origin:baseUrl},body:JSON.stringify(nonManual.orders[0])});assert.equal(nonManualPreviewResponse.status,200);
-    const nonManualPreview=await nonManualPreviewResponse.json();assert.equal(nonManualPreview.changed,1);assert.equal(nonManualPreview.skipped,1);assert.equal(nonManualPreview.rows[0].importAction,"skip-existing");assert.deepEqual(nonManualPreview.rows[0].changedFields,[]);assert.equal(nonManualPreview.rows[0].fields.medication,"BASE-MED");assert.equal(nonManualPreview.rows[0].fields.fmrOmed,"BASE-REF");
+    const nonManualPreview=await nonManualPreviewResponse.json();assert.equal(nonManualPreview.changed,1);assert.equal(nonManualPreview.skipped,1);assert.equal(nonManualPreview.rows[0].importAction,"queue-review");assert.deepEqual(nonManualPreview.rows[0].changedFields,[]);assert.equal(nonManualPreview.rows[0].fields.medication,"BASE-MED");assert.equal(nonManualPreview.rows[0].fields.fmrOmed,"BASE-REF");
     await ok(await command(1,"nonmanual-bucket-workbook",{type:"inventory.importWorkbook",input:nonManual}));
     progress=(await get<InventoryOrderProgressSnapshot>("/api/inventory/orders")).orders[0];assert.equal(progress.medication,"BASE-MED");assert.equal(progress.fmrOmed,"BASE-REF");
     const draft=await postDraft();assert.equal(draft.demand.filter((row:any)=>row.purpose==="mto").length,0);
@@ -429,7 +429,7 @@ integration("inventory API", () => {
     summary=await get<InventoryProductionSummary>(`/api/inventory/production-summary?date=${malaysiaToday()}`);assert.equal(summary.netQuantityMt,30);assert.equal(summary.jobCount,1);
     assert.deepEqual(production.orderTotals.filter((row:any)=>row.total>0).map((row:any)=>[row.sourceOrderId,row.total]),[[source[0].id,30]]);
     const ledger=(await get<any[]>("/api/inventory/ledger")).filter(row=>row.jobId===job.id);assert.equal(ledger.reduce((sum,row)=>sum+row.quantityDelta,0),30);
-    const backup=await get<any>("/api/backup");assert.equal(backup.schemaVersion,4);assert.equal(backup.planning.jobs[0].sourceAllocations.length,2);
+    const backup=await get<any>("/api/backup");assert.equal(backup.schemaVersion,5);assert.equal(backup.planning.jobs[0].sourceAllocations.length,2);
   });
 
   it("rejects an edited draft that overbooks an order across multiple cards atomically",async()=>{

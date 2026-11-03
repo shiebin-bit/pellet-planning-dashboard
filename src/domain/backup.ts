@@ -3,6 +3,7 @@ import {
   type AppState,
   type CalendarPeriod,
   type CatalogProduct,
+  type DateLineWorkingHoursOverride,
   type Downtime,
   type HistoryEvent,
   type HistoryChange,
@@ -22,6 +23,7 @@ const MAX_CATALOG_PRODUCTS = 10_000;
 const MAX_EVENTS = 50_000;
 const MAX_DOWNTIME = 10_000;
 const MAX_CALENDAR_PERIODS = 10_000;
+const MAX_WORKING_HOURS_OVERRIDES = 40_000;
 const MAX_PREFIXES = 1_000;
 const MAX_SEGMENTS_PER_JOB = 20_000;
 const MAX_PAUSES_PER_JOB = 10_000;
@@ -478,7 +480,7 @@ function validateSettings(value: unknown, path: string, allowCalendarProjectionC
   const source = objectValue(value, path);
   onlyKeys(source, [
     "siteName", "timeZone", "dayStart", "availableHours", "changeoverMinutes",
-    "bagWeightKg", "rates", "slowProductPrefixes", "slowRatePM2", "downtime", "calendarHistory", "calendarCutover",
+    "bagWeightKg", "rates", "slowProductPrefixes", "slowRatePM2", "downtime", "workingHoursOverrides", "calendarHistory", "calendarCutover",
   ], path);
 
   const ratesValue = objectValue(required(source, "rates", path), `${path}.rates`);
@@ -545,7 +547,37 @@ function validateSettings(value: unknown, path: string, allowCalendarProjectionC
     }
     result.calendarHistory = periods;
   }
+  if (hasOwn(source, "workingHoursOverrides")) {
+    const identities = new Set<string>();
+    const overrides = arrayValue(
+      source.workingHoursOverrides,
+      `${path}.workingHoursOverrides`,
+      MAX_WORKING_HOURS_OVERRIDES,
+    ).map((row, index) => {
+      const override = validateWorkingHoursOverride(row, `${path}.workingHoursOverrides[${index}]`);
+      const identity = `${override.date}:${override.lineId}`;
+      if (identities.has(identity)) {
+        throw invalid(`${path}.workingHoursOverrides[${index}]`, `duplicates ${override.lineId} on ${override.date}`);
+      }
+      identities.add(identity);
+      return override;
+    }).sort((left, right) => left.date.localeCompare(right.date) || LINE_IDS.indexOf(left.lineId) - LINE_IDS.indexOf(right.lineId));
+    if (overrides.length) result.workingHoursOverrides = overrides;
+  }
   return result;
+}
+
+function validateWorkingHoursOverride(value: unknown, path: string): DateLineWorkingHoursOverride {
+  const source = objectValue(value, path);
+  onlyKeys(source, ["date", "lineId", "dayStart", "availableHours", "reason", "activatedAt"], path);
+  return {
+    date: dateValue(required(source, "date", path), `${path}.date`),
+    lineId: lineValue(required(source, "lineId", path), `${path}.lineId`),
+    dayStart: timeValue(required(source, "dayStart", path), `${path}.dayStart`),
+    availableHours: numberValue(required(source, "availableHours", path), `${path}.availableHours`, { min: 0, max: 24 }),
+    reason: nonEmptyString(required(source, "reason", path), `${path}.reason`, MAX_NOTE_LENGTH),
+    activatedAt: timestampValue(required(source, "activatedAt", path), `${path}.activatedAt`),
+  };
 }
 
 function validateCalendarPeriod(value: unknown, path: string): CalendarPeriod {

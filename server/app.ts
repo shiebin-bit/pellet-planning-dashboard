@@ -7,6 +7,7 @@ import { ApiError, badRequest } from "./errors";
 import type { WorkspaceStore } from "./store";
 import type { InventoryDraftRequest } from "../src/domain/inventoryTypes";
 import type { SourceImportInput, SourceImportPreviewContext } from "../src/domain/sourceTypes";
+import { parseProductionProgressJobIds } from "./productionProgress";
 
 export interface AppOptions {
   store: WorkspaceStore;
@@ -59,6 +60,10 @@ export function createApp(options: AppOptions): express.Express {
     if (!validDate(date)) throw badRequest("Production summary date must be a valid YYYY-MM-DD date.");
     response.json(await options.store.getInventoryProductionSummary(date));
   }));
+  app.get("/api/inventory/production-progress", asyncRoute(async (request, response) => {
+    const query = new URL(request.originalUrl, "http://localhost").searchParams;
+    response.json(await options.store.getProductionProgress(parseProductionProgressJobIds(query)));
+  }));
   app.get("/api/inventory/jobs/:id/production", asyncRoute(async (request,response)=>{
     const id=request.params.id;if(typeof id!=="string"||!id||id.length>200)throw badRequest("Invalid production card id.");
     response.json(await options.store.getJobProduction(id));
@@ -95,15 +100,28 @@ export function createApp(options: AppOptions): express.Express {
   }));
 
   app.get("/api/backup", asyncRoute(async (_request, response) => {
-    response.setHeader("Content-Disposition", `attachment; filename="millplan-backup-v4.json"`);
+    response.setHeader("Content-Disposition", `attachment; filename="millplan-backup-v5.json"`);
     response.json(await options.store.getPortableBackup());
   }));
 
   app.get("/api/backup/previous", asyncRoute(async (_request, response) => {
     const backup = await options.store.getPreviousPortableBackup();
     if (!backup) throw new ApiError(404, "PREVIOUS_BACKUP_NOT_FOUND", "No recovery backup is available.");
-    response.setHeader("Content-Disposition", `attachment; filename="millplan-previous-backup-v4.json"`);
+    response.setHeader("Content-Disposition", `attachment; filename="millplan-previous-backup-v5.json"`);
     response.json(backup);
+  }));
+
+  app.get("/api/data/reviews", asyncRoute(async (request, response) => {
+    const query = new URL(request.originalUrl, "http://localhost").searchParams;
+    response.json(await options.store.listSourceImportReviews(query));
+  }));
+
+  app.get("/api/data/reviews/:id", asyncRoute(async (request, response) => {
+    const id = request.params.id;
+    if (typeof id !== "string" || !id || id.length > 200) throw badRequest("Source review id is invalid.");
+    const review = await options.store.getSourceImportReview(id);
+    if (!review) throw new ApiError(404, "SOURCE_REVIEW_NOT_FOUND", "Import review item not found.");
+    response.json(review);
   }));
 
   app.get("/api/data/:id", asyncRoute(async (request, response) => {

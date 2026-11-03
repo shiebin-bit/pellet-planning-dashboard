@@ -28,7 +28,7 @@ function state(jobs: Job[]): AppState {
 }
 
 describe("source-linked production and calendar cutover", () => {
-  it("uses the prior calendar for an entire past-assigned backlog and 07:00-19:00 for current work", () => {
+  it("reselects the dated calendar as past-assigned backlog rolls into a new working day", () => {
     const past = linkedJob("past", "2026-10-21", 300);
     const current = { ...linkedJob("current", "2026-10-22", 130), sourceOrderId: "source-current", sequence: 2 };
     const app = state([past, current]);
@@ -37,7 +37,7 @@ describe("source-linked production and calendar cutover", () => {
     const schedule = getScheduledJobs(app);
     const pastSegments = schedule.find(job => job.id === "past")!.segments.filter(segment => segment.kind === "production");
     expect(new Date(pastSegments[0].start).toISOString()).toBe("2026-10-21T00:30:00.000Z");
-    expect(new Date(pastSegments[1].start).toISOString()).toBe("2026-10-22T00:30:00.000Z");
+    expect(new Date(pastSegments[1].start).toISOString()).toBe("2026-10-21T23:30:00.000Z");
     const currentJob = schedule.find(job => job.id === "current")!;
     expect(currentJob.plannedStart).toBe(pastSegments.at(-1)!.end);
     expect(currentJob.segments.every(segment => {

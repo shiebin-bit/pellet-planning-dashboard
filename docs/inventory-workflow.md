@@ -123,15 +123,18 @@ After confirmation, review the Planning board and destination bins. The generate
 
 ### Portable JSON
 
-The database workspace’s **Settings → Workspace backup** download is schema version 4. It includes:
+The database workspace’s **Settings → Workspace backup** download is schema version 5. It includes:
 
 - planning cards, catalog, settings, activity, and execution history;
 - the source graph: imported workbooks, source orders, immutable source versions, and links to planning cards; and
-- inventory items/policies, baseline reports, exact-bucket orders/statuses, reservations, the complete ledger, posting keys, and corrections.
+- inventory items/policies, baseline reports, exact-bucket orders/statuses, reservations, the complete ledger, posting keys, and corrections;
+- import discrepancy reviews and receipt-based progress samples/reset evidence.
 
 Restoring JSON is a reviewed **replace**, not a merge. Validation runs before the replacement, and the complete workspace that existed immediately before the replacement remains available as the previous recovery download.
 
-Legacy schema versions **1–3** do not contain the inventory ledger. The restore preview must warn that restoring one clears current inventory and reservations. The previous full recovery copy is retained so the operator can download it before deciding whether to continue. Version 4 inventory backups must be restored in the PostgreSQL workspace; offline localStorage remains planning-only.
+Legacy schema versions **1–3** do not contain the inventory ledger. The restore preview must warn that restoring one clears current inventory and reservations. The previous full recovery copy is retained so the operator can download it before deciding whether to continue. Versions 4–5 inventory backups must be restored in the PostgreSQL workspace; offline localStorage remains planning-only.
+
+Versions 1–4 have no review/progress collections. The restore preview warns before clearing those collections; v4 retains its inventory ledger.
 
 ### PostgreSQL dump
 
