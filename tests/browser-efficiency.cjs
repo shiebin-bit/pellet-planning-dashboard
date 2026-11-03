@@ -46,6 +46,7 @@ function job(id,date,lineId,sequence,extra={}){return {id,date,lineId,sequence,o
     await panel.getByRole('button',{name:'Deactivate QA-CAT',exact:true}).click();await wait(async()=>!(await get()).state.catalog[0].active);await panel.getByRole('button',{name:'Reactivate QA-CAT',exact:true}).click();await wait(async()=>(await get()).state.catalog[0].active);
     pass('Catalog create, case-insensitive duplicate, deactivate/reactivate preserve unsaved general settings');
 
+    page.once('dialog',async dialog=>{assert.match(dialog.message(),/Settings changes have not been saved/);await dialog.accept();});
     await page.getByRole('button',{name:'Planning board',exact:true}).click();await page.getByRole('button',{name:'Add production to PM1',exact:true}).click();
     let modal=page.getByRole('dialog',{name:'Add production',exact:true});
     await modal.getByRole('combobox',{name:'Product code',exact:false}).fill('fictional bulk');await modal.getByRole('option',{name:/QA-CAT/}).click();assert.equal(await modal.getByRole('button',{name:'Bulk',exact:true}).getAttribute('aria-pressed'),'true');

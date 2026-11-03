@@ -1,4 +1,6 @@
 import { productLabel } from '../lib/productLabel';
+import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { LegacyCarryoverNotice } from '../components/LegacyCarryoverNotice';
 import { ArrowUpRight, ChevronRight, ChevronDown, AlertTriangle } from 'lucide-react';
 import { useWorkspace } from '../lib/workspace';
@@ -8,19 +10,28 @@ import { SectionHeading, StatusBadge, EmptyState, TextLink } from '../components
 import { NeedsAttention,ProductionResults } from '../components/OperationsSummary';
 import { RecordedDowntime } from '../components/RecordedDowntime';
 import { getCalendarForDate } from '../domain/engine';
-import { getProductionResult, isJobPaused } from '../domain/production-results';
+import { getOverviewMetrics } from '../domain/overviewMetrics';
+import { isJobPaused } from '../domain/production-results';
+import { readProductionSummary } from '../lib/inventoryApi';
+import type { InventoryProductionSummary } from '../domain/inventoryTypes';
 
 export function Overview() {
-  const { board, state, navigate, openJob } = useWorkspace();
-  const totalMt = board.lines.reduce((sum, line) => sum + line.plannedMt, 0);
+  const { board, state, navigate, openJob, storageMode, savedAt, revision, refresh } = useWorkspace();
+  const metrics = useMemo(() => getOverviewMetrics(state, board.date), [state, board.date]);
+  const [receipts, setReceipts] = useState<InventoryProductionSummary | null>(null);
+  const [receiptError, setReceiptError] = useState(false);
+  const [receiptReload, setReceiptReload] = useState(0);
+  useEffect(() => {
+    let active = true; setReceipts(null); setReceiptError(false);
+    if (storageMode === 'database') readProductionSummary(board.date).then(data => { if (active) { setReceipts(data); if (data.revision !== revision) void refresh(); } }).catch(() => { if (active) setReceiptError(true); });
+    return () => { active = false; };
+  }, [board.date, savedAt, storageMode, receiptReload, revision, refresh]);
   const available = board.lines.reduce((sum, line) => sum + line.availableMinutes, 0);
   const production = board.lines.reduce((sum, line) => sum + line.productionMinutes, 0);
   const jobs = board.lines.flatMap(line => line.jobs).filter(job => job.status !== 'cancelled');
   const uniqueJobs = [...new Map(jobs.map(job => [job.id, job])).values()];
-  const completed = uniqueJobs.filter(job => job.status === 'completed').length;
-  const completedFromDate=state.jobs.filter(job=>job.date===board.date&&job.status==='completed');
-  const actualRecorded=completedFromDate.map(job=>getProductionResult(job)).filter(result=>result.actualQuantityMt!==null);
-  const actualMt=actualRecorded.reduce((sum,result)=>sum+result.actualQuantityMt!,0);
+  const assignedJobs = state.jobs.filter(job => job.date === board.date && job.status !== 'cancelled');
+  const completed = assignedJobs.filter(job => job.status === 'completed').length;
   const overflows = board.lines.filter(line => line.overflowMinutes > 0);
   const queue = uniqueJobs.filter(job => job.status === 'pending' || job.status === 'running').sort((a,b) => (a.plannedStart || Infinity) - (b.plannedStart || Infinity)).slice(0, 6);
   const calendar = getCalendarForDate(state.settings, board.date);
@@ -29,10 +40,10 @@ export function Overview() {
   return <div className="page overview-page">
     <div className="page-heading"><div><h1>Production overview</h1><p>Daily volume, capacity and production status.</p></div><span className="context-label">Daily production · 4 lines</span></div>
     <div className="metrics-grid">
-      <Metric label="Planned volume" value={numberLabel(totalMt)} unit="MT" caption={uniqueJobs.length + ' scheduled tasks · ' + board.backlog.length + ' awaiting quantity'} />
-      <Metric label="Recorded output" value={actualRecorded.length?numberLabel(actualMt):'—'} unit="MT" caption={actualRecorded.length+' / '+completedFromDate.length+' completed tasks recorded · '+dateLabel(board.date)} />
+      <Metric label="Assigned plan total" value={numberLabel(metrics.assignedDateMt, 2)} unit="MT" caption={<>{assignedJobs.length} tasks · {completed} completed<br/>Whole batches; includes carry-out</>} />
+      <Metric label="Planned within shift" value={numberLabel(metrics.inShiftPlannedMt, 2)} unit="MT" caption={<>Within {timeLabel(board.start)}–{timeLabel(board.end)}<br/>Carry-in included; shift time only</>} />
+      <Metric label="Production receipts" value={receipts?.date === board.date && receipts.revision === revision ? numberLabel(receipts.netQuantityMt, 3) : '—'} unit="MT" caption={storageMode !== 'database' ? 'Available in the PostgreSQL workspace' : receiptError ? <>Could not load receipts. <button className="text-link" onClick={() => setReceiptReload(n => n + 1)}>Retry</button></> : receipts?.date === board.date && receipts.revision === revision ? <>Net receipts + corrections<br/>{receipts.jobCount} production tasks · posting date{receipts.unconvertedCount > 0 && <><br/><strong>{receipts.unconvertedCount} historical entries excluded: saved bag weight unavailable</strong></>}</> : receipts ? <>Workspace changed. <button className="text-link" onClick={() => {void refresh(); setReceiptReload(n => n + 1);}}>Refresh receipts</button></> : 'Loading production receipts…'} />
       <Metric label="Planned utilisation" value={available ? numberLabel(production / available * 100, 0) : '—'} unit="%" caption={numberLabel(production / 60) + ' production hrs / ' + numberLabel(available / 60) + ' available hrs'} />
-      <Metric label="Tasks completed" value={String(completed)} unit={'/ ' + String(uniqueJobs.length)} caption="Confirmed with the Done action" />
     </div>
     <section className="panel schedule-panel">
       <SectionHeading title="Daily line schedule" description="Select a product to view its production details." action={<TextLink onClick={() => navigate('planning')}>Open planning board</TextLink>} />
@@ -97,6 +108,6 @@ function LineSummary({line,backlog,onOpen}:{line:LineSchedule;backlog:number;onO
     <ArrowUpRight size={15}/>
   </button>;
 }
-function Metric({label,value,unit,caption}:{label:string;value:string;unit:string;caption:string}) {
+function Metric({label,value,unit,caption}:{label:string;value:string;unit:string;caption:ReactNode}) {
   return <div className="metric"><div className="metric-label">{label}</div><div className="metric-value">{value}<small>{unit}</small></div><p>{caption}</p></div>;
 }

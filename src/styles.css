@@ -2007,6 +2007,9 @@ tbody tr:last-child td {
   height: 22px;
   flex-shrink: 0;
 }
+/* Local planning dialogs display save errors inline; floating feedback must not
+   cover their fixed action bars, including on small screens. */
+body:has(.editor-layer) .toast { display: none; }
 .toast.error {
   background: #fff0ed;
   color: #943b2e;

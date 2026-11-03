@@ -82,7 +82,7 @@ const wait=async(fn)=>{
       assert.ok(source&&target,'Expected visible source card and PM4 target before dragging');
       await page.mouse.move(source.x+source.width*.3,source.y+source.height*.35);await page.mouse.down();
       await page.mouse.move(source.x+source.width*.3+12,source.y+source.height*.35,{steps:3});
-      await page.mouse.move(target.x+target.width*.5,target.y+target.height*.5,{steps:15});await page.mouse.up();
+      await page.mouse.move(target.x+target.width*.5,target.y+target.height*.5,{steps:15});await page.mouse.up();await page.getByRole('button',{name:'Confirm move',exact:true}).click();await page.getByRole('dialog',{name:'Review production move',exact:true}).waitFor({state:'hidden'});
       await wait(async()=>(await job('QA-DB-A')).lineId==='PM4');await readyToDrag(a.id,'PM4');
     };
     await drag('PM1');assert.equal((await job('QA-DB-A')).binNeedsReview,true);

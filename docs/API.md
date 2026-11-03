@@ -7,6 +7,7 @@ Default base URL: `http://127.0.0.1:8080` (configurable through APP_PORT). Respo
 | Method and route | Result |
 | --- | --- |
 | `GET /api/health` | `{"status":"ok"}` when a database query succeeds; 503 on a recognized database outage |
+| `GET /api/inventory/production-summary?date=YYYY-MM-DD` | Repeatable-read `{revision,date,netQuantityMt,jobCount,unconvertedCount}`; exactly one valid date, no other filters |
 | `GET /api/workspace` | Consistent workspace envelope; `Cache-Control: no-store` |
 | `POST /api/commands` | Applies one validated command and returns the confirmed envelope |
 
@@ -159,3 +160,12 @@ Create accepts 1–500 unique order shares and derives the product, snapshots an
 Draft demand rows may include `sourceAllocationQuantity`: the actual order portion of physical `quantity`. Draft job `sourceAllocations` cannot exceed current unplanned order demand; their sum can be smaller than physical card quantity, with the balance becoming stock. Omit allocations for a pure stock continuation.
 
 `POST /api/inventory/draft` accepts optional boolean `combineSameProduct` (default `true`). Compatible MTO orders are grouped within the same due date before line allocation; each card retains its source allocations, with at most 500 orders per card. Different due dates remain separate batches. `false` keeps separate order cards while retaining due-date priority and normal changeover rules. Generation is read-only and does not alter existing cards.
+
+
+## Overview receipt summary and planning previews
+
+Production summary counts `production` movements and reversals of production by ledger `occurred_on`. Imported baseline production, receipts of other types, dispatch and stock adjustments are excluded. MT uses the immutable movement snapshot (or original production snapshot on reversal); bag conversion uses saved weight, never today's stock policy. Unknown bag conversions are omitted from net MT and counted in `unconvertedCount` (movement entries). `jobCount` counts distinct linked jobs, including a job whose net receipt is zero. The returned workspace revision identifies the same read snapshot; the client reconciles a mismatch before displaying it with planning metrics.
+
+Move review is a pure client-side calculation using shared scheduling rules and current order deadlines from the same revision. Confirm sends the existing `job.move` command with the unchanged workspace version guard. Deadline risk uses Malaysia calendar finish date, matching Generate planning.
+
+Generated drafts use browser-local storage key `millplan.planning-draft.v1`, with a strict version1 parser and 8 MB limit. There is no new server draft endpoint or database schema change. Saved drafts retain their base revision/timestamp; a changed workspace or passed planning date requires regeneration. Before `planning.commitDraft`, the exact command ID, expected revision and body are persisted. Reload retries reuse them so the command receipt resolves an already-committed result before stale checking. Local storage uses best-effort instance/timestamp/fingerprint checks and storage events for other tabs; it is not an atomic multi-user draft service. Workspace backup remains version4 and does not include this browser-local draft.

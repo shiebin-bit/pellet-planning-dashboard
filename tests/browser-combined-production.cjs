@@ -27,7 +27,7 @@ const sources = job => job.sourceAllocations || (job.sourceOrderId?[{sourceOrder
   await command({type:'workspace.restore',backup:{...backup.planning,jobs:[],events:[],settings:{...backup.planning.settings,dayStart:'07:00',availableHours:12,downtime:[]}}});
   await command({type:'inventory.importBaseline',input:{fileName:'fictional-stock.xlsm',digest:'b'.repeat(64),asOfDate:yesterday,includeBaseline:true,orders:[sourceInput],items:[{materialCode:material,description:sourceRows[0].description,unit:'MT',bagWeightKg:null,strategy:'mto',targetQuantity:0,needsReview:false,opening:0,production:0,received:0,salesReturn:0,rework:0,issue:0,closing:0,medication:'',fmrOmed:''}],annotations:[],packingBinTotal:null}});
   browser=await chromium.launch({headless:true,...(!existsSync(chromium.executablePath())?{channel:'chrome'}:{})});
-  page=await browser.newPage({viewport:{width:1366,height:900},acceptDownloads:true,timezoneId:'Asia/Kuala_Lumpur',reducedMotion:'reduce'});page.setDefaultTimeout(15000);
+  page=await browser.newPage({viewport:{width:1366,height:900},acceptDownloads:true,timezoneId:'Asia/Kuala_Lumpur',reducedMotion:'reduce'});page.setDefaultTimeout(15000);page.on('dialog',dialog=>dialog.accept());
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
   await page.goto(base+'/#/planning');await page.getByRole('button',{name:'Plan from Data',exact:true}).click();
   await page.getByRole('button',{name:'QA-COMB-1',exact:true}).click();let dialog=page.getByRole('dialog',{name:/^Plan production from orders?$/});await dialog.waitFor();

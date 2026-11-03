@@ -31,6 +31,7 @@ import {
   validateInventoryJobs,
   executeInventoryCommand,
   getInventorySnapshot,
+  getProductionSummary,
   getOrderProgress,
   listDailyStock,
   listLedger,
@@ -84,6 +85,24 @@ export class WorkspaceStore {
   async listSourceOrders(query: URLSearchParams) { return listSourceOrders(this.pool, query); }
   async getSourceOrder(id: string) { return getSourceOrder(this.pool, id); }
   async getInventory() { return getInventorySnapshot(this.pool); }
+  async getInventoryProductionSummary(date: string) {
+    const client = await this.pool.connect();
+    let inTransaction = false;
+    try {
+      await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
+      inTransaction = true;
+      const current = await loadWorkspace(client, false);
+      const result = await getProductionSummary(client, date, current.revision);
+      await client.query("COMMIT");
+      inTransaction = false;
+      return result;
+    } catch (error) {
+      if (inTransaction) await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
   async getJobProduction(jobId:string) {
     const client=await this.pool.connect();
     try{

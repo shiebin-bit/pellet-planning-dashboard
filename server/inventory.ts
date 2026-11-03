@@ -26,6 +26,7 @@ import type {
   InventoryOrderProgress,
   InventoryOrderProgressSnapshot,
   InventoryPlanningDemandRow,
+  InventoryProductionSummary,
   InventorySnapshot,
   InventoryUnit,
   InventoryWorkbookInput,
@@ -48,6 +49,71 @@ interface OrderRow {
 }
 
 interface BalanceRow { item_id: string; medication: string; fmr_omed: string; quantity_scaled: string }
+
+interface ProductionSummaryRow {
+  quantity_delta_scaled: string;
+  unit: InventoryUnit;
+  job_id: string | null;
+  bag_weight_kg: string | number | null;
+}
+
+export async function getProductionSummary(
+  client: pg.PoolClient,
+  date: string,
+  revision: number,
+): Promise<InventoryProductionSummary> {
+  const result = await client.query<ProductionSummaryRow>(
+    `SELECT l.quantity_delta_scaled::text,
+            CASE
+              WHEN l.movement_type = 'reversal' THEN COALESCE(original.metadata #>> '{snapshot,unit}', item.unit)
+              ELSE COALESCE(l.metadata #>> '{snapshot,unit}', item.unit)
+            END AS unit,
+            COALESCE(l.job_id, original.job_id) AS job_id,
+            CASE
+              WHEN l.movement_type = 'reversal' THEN
+                COALESCE(
+                  original.metadata #>> '{snapshot,bagWeightKg}',
+                  original_job.payload ->> 'bagWeightKgSnapshot'
+                )
+              ELSE
+                COALESCE(
+                  l.metadata #>> '{snapshot,bagWeightKg}',
+                  movement_job.payload ->> 'bagWeightKgSnapshot'
+                )
+            END AS bag_weight_kg
+       FROM inventory_ledger l
+       JOIN inventory_items item ON item.id = l.item_id
+       LEFT JOIN inventory_ledger original ON original.id = l.reverses_movement_id
+       LEFT JOIN jobs movement_job ON movement_job.id = l.job_id
+       LEFT JOIN jobs original_job ON original_job.id = original.job_id
+      WHERE l.workspace_id = 1
+        AND l.occurred_on = $1::date
+        AND (
+          l.movement_type = 'production'
+          OR (l.movement_type = 'reversal' AND original.movement_type = 'production')
+        )
+      ORDER BY l.recorded_at, l.id`,
+    [date],
+  );
+  let netQuantityMt = 0;
+  let unconvertedCount = 0;
+  const jobs = new Set<string>();
+  for (const row of result.rows) {
+    if (row.job_id !== null) jobs.add(row.job_id);
+    const scaled = numeric(row.quantity_delta_scaled);
+    if (row.unit === "MT") {
+      netQuantityMt += scaledToQuantity("MT", scaled);
+      continue;
+    }
+    const bagWeightKg = Number(row.bag_weight_kg);
+    if (!Number.isFinite(bagWeightKg) || bagWeightKg <= 0) {
+      unconvertedCount += 1;
+      continue;
+    }
+    netQuantityMt += scaledToQuantity("Bags", scaled) * bagWeightKg / 1_000;
+  }
+  return { revision, date, netQuantityMt, jobCount: jobs.size, unconvertedCount };
+}
 
 export async function applyInventoryWorkbook(
   client: pg.PoolClient,

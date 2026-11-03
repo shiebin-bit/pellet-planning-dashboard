@@ -10,7 +10,7 @@
 
 Overview 和 Planning board 的顶部工具栏显示排产日期、Today、Export 和 Add production。History 提供 Export 及可直接打开的 Date range report；Orders、Stock 和 Settings 不再显示排产日期或新增生产入口。左侧保留 Overview、Planning board、Data、Stock、History 和 Settings；平板会缩成图标，手机从左上角菜单展开。
 
-Overview 先显示四项总数和当日时间轴，点产品段可查看卡片；四项总数是 Planned volume、Recorded output、Planned utilisation 和 Tasks completed。Recorded output 统计所选排程日期已完成任务的已记录实际产量，并显示覆盖数；不代表该自然日所有入库量。时间轴之后先看 Needs attention 和 Plan vs actual；Line capacity details 与 Next production tasks 可按需展开，停机记录继续保留。Planning board 四条产线横向排列，电脑 1366 × 768 可完整查看；新增、复制、报表和卡片详情在当前页面弹出。
+Overview 先显示四项总数和当日时间轴，点产品段可查看卡片；四项总数是 Assigned plan total、Planned within shift、Production receipts 和 Planned utilisation。Assigned plan total 是分配给该排程日期的整张卡片总量；Planned within shift 按生产时段估算落在当前班次内的份额，包含前日延续的生产。Production receipts 按入账日期计算分次生产入库及更正／冲销，包括尚未 Done 的卡片；不代表精确的班次实际产量。旧袋装记录若缺少当时袋重，会列出未计入的笔数。时间轴之后先看 Needs attention 和 Plan vs actual；Line capacity details 与 Next production tasks 可按需展开，停机记录继续保留。Planning board 四条产线横向排列，电脑 1366 × 768 可完整查看；新增、复制、报表和卡片详情在当前页面弹出。
 
 ## 日常 planning
 
@@ -18,7 +18,7 @@ Overview 先显示四项总数和当日时间轴，点产品段可查看卡片�
 
 1. 在日期选择器直接选日期、月份和年份。
 2. 在 Planning board 按 Add production，或产线旁的 +，填写产线、产品、订单、bin 和数量。保存后等待数据库确认。
-3. 未开始的卡片可以直接拉到另一条产线。放在另一张卡片上会插入它前面，放在空白处则排在后面。移动后确认新的 bin。Undo 只能撤销最近一次移动，其他修改会使它失效。
+3. 未开始的卡片可以直接拉到另一条产线。放在另一张卡片上会插入它前面，放在空白处则排在后面。放下后先查看 Review production move：显示移动前后时间、受影响卡片、产线使用率及订单交期风险；按 Confirm move 才保存，Cancel move 保留原排程。详情内的 Apply move 也先打开这个预览。若资料已更新，关闭预览、刷新后再移动。移动后确认新的 bin。Undo 只能撤销最近一次移动，其他修改会使它失效。
 4. 点卡片看完整资料。底部固定操作栏的 Start production 自动记录当前实际开始时间；详情上下滚动时按钮仍在画面内。运行后按 Record quantity 跳到分次产量输入框，填写后再按 Record production quantity 入账。Mark as done 打开最终累计产量表单，底部 Confirm done 完成生产。
 5. 完成时按 Mark as done，填写实际 MT 和备注，再按 Confirm done。结束时间由服务器自动记录。
 
@@ -144,7 +144,7 @@ Daily stock 可选日期查看 Opening、Production、Received、Return、Rework
 
 ## Settings 标签与卡片预览
 
-Settings 分为 Workspace、Production rules、Unavailable periods、Products、Stock policies（数据库版）及 Backup & recovery。切换这些标签保留输入草稿，页面上方会固定显示 Save settings 和未保存提示。MT/hr 决定一批货需要多少生产时间；每日工时决定一天可以排多少生产。例如每小时 10 MT，8 小时最多安排 80 MT，12 小时最多安排 120 MT，换料及停机另行扣除。Save settings 只保存工作区、产能及停机列表；产品清单和库存政策各自保存，互不覆盖。如果其他标签有无效栏位，保存会自动打开对应标签并聚焦栏位。离开 Settings 页面仍会丢弃未保存草稿。
+Settings 分为 Workspace、Production rules、Unavailable periods、Products、Stock policies（数据库版）及 Backup & recovery。切换这些标签保留输入草稿，页面上方会固定显示 Save settings 和未保存提示。MT/hr 决定一批货需要多少生产时间；每日工时决定一天可以排多少生产。例如每小时 10 MT，8 小时最多安排 80 MT，12 小时最多安排 120 MT，换料及停机另行扣除。Save settings 只保存工作区、产能及停机列表；产品清单和库存政策各自保存，互不覆盖。如果其他标签有无效栏位，保存会自动打开对应标签并聚焦栏位。离开 Settings 页面前，如工作时间、产能或停机列表尚未保存，会询问是否放弃；取消可继续编辑，确认才离开。刷新或关闭浏览器也会使用浏览器的未保存提醒。产品及库存表单仍各自保存。
 
 排程卡片太窄时，鼠标悬停或用 Tab 聚焦可预览完整产品编号、说明、数量、订单、完整计划起止日期、状态及 bin。Escape 收起预览，Enter／点击打开完整详情；Space 开始键盘移动，方向键移动，Escape 取消移动。触屏继续点击查看详情，长按拖动。
 
@@ -152,3 +152,12 @@ Settings 分为 Workspace、Production rules、Unavailable periods、Products、
 合并卡片的实际产量只入库一次，按详情中的订单顺序分配，超过分配总数的部分计入库存。分批记录产量后，Done 输入最终累计数量，避免重复入库。
 
 自动草稿的订单分配量与额外库存分开显示。例如现货 30、订单 100、预设多生产 20，卡片总量为 90，其中订单分配 70、额外库存 20。展开 order allocation 可核对或调整；拆分卡片不会重复添加余量，未能安排的余量也会列在 Unscheduled demand。
+
+
+## 保存及继续自动排程草稿
+
+在 Generate planning 生成并调整草稿后，可按 **Save draft to this browser**。这一步只保存到当前浏览器及网址，不会建立生产卡片，也不会共享给其他人或进入数据库备份。关闭弹窗或刷新页面后，再打开 Generate planning，按 **Resume saved draft** 继续；每个浏览器／网址保留一份草稿。清除浏览器资料会移除草稿，换电脑或换网址也不会自动带过去。
+
+尚未保存的已生成草稿，在关闭、Escape 或离开前会提醒。若订单、库存、排程或 Settings 有变动，或计划日期已过去，旧草稿可保留查看，但必须重新生成后才能 Confirm。重新生成会替换当前预览，手动调整需重新核对。其他标签页修改同一份草稿时，编辑会暂停；按 **Load latest browser draft** 载入后再继续。
+
+**Confirm** 才将卡片整批保存到 PostgreSQL。请求发出前会保留原请求编号；断线时先用 Retry connection 确认，刷新后可用 **Check previous save** 检查同一请求，不能另建一批。确认过的请求重复检查不会重复建卡。如果浏览器禁止或没有空间保存草稿，画面会报错并保留当前输入；此时不会发出新批次请求。损坏的浏览器草稿需要明确按 Discard 后才能重新保存。

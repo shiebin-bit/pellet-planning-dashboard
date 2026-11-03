@@ -3,6 +3,7 @@ import { Save, Clock3, Factory, Plus, Trash2, Info, RotateCcw, Wrench } from 'lu
 import { useWorkspace } from '../lib/workspace';
 import { LINE_IDS } from '../domain/types';
 import { localDate } from '../lib/format';
+import { useLeaveGuard } from '../lib/leaveGuard';
 import type { Settings, Downtime } from '../domain/types';
 import { BackupPanel } from '../components/BackupPanel';
 import { StockBrowser } from '../components/InventoryWorkspace';
@@ -20,6 +21,7 @@ export function SettingsPage() {
   const {state,date,commit,resetDemo,busy,storageMode,hasConflict,resolveConflict,mutationLocked,confirmedRetry}=useWorkspace();
   const [form,setForm]=useState<Settings>(()=>structuredClone(state.settings));
   const [dirty,setDirty]=useState(false);
+  useLeaveGuard('settings', dirty, 'Your Settings changes have not been saved.');
   const shiftStart=form.dayStart.split(':').map(Number);
   const shiftEnd=shiftStart[0]*60+shiftStart[1]+form.availableHours*60;
   const shiftEndLabel=Number.isFinite(shiftEnd)?`${String(Math.floor(shiftEnd/60)%24).padStart(2,'0')}:${String(Math.round(shiftEnd%60)).padStart(2,'0')}${shiftEnd>=1440?' (+1 day)':''}`:'—';

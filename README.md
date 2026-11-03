@@ -28,10 +28,10 @@ The default setup serves only this PC. It has no login or user roles. Company-wi
 
 | Area | Features |
 | --- | --- |
-| Overview | Planned MT, recorded output with completion coverage, utilisation, completion, four line summaries, working-shift status timelines, recorded downtime by mill and items needing attention |
+| Overview | Whole assigned-date MT, estimated MT within the selected shift, net production receipts by posting date, planned utilisation, four line summaries, working-shift status timelines, recorded downtime by mill and items needing attention |
 | Planning board | Four horizontal lines on desktop; mobile defaults to per-line production lists with a Timeline switch for dragging; Day/Full plan; carry-over; changeover and downtime; direct date/month/year selection |
 | Planning batches | Due-date priority; optional same-product/same-due-date order batches with per-order quantities; capacity splits across lines/days; later-due batches stay separate |
-| Card movement | Drag a pending card to another line or sequence; destination-bin review; recalculated line rate; one-step Undo; keyboard and held-touch movement |
+| Card movement | Drag a pending card to another line or sequence; review before/after times, affected tasks, utilisation and order deadlines before confirming; destination-bin review; recalculated line rate; one-step Undo; keyboard and held-touch movement |
 | Production details | Same-product orders can share one card with separate allocations; Add/edit in a dialog; searchable product catalog with description/default delivery; manual products; bags or bulk, orders, bins, remarks and issues |
 | Copy planning | Select manual cards by source date/line (linked Excel orders are excluded), enter fresh order references and adjusted quantities, preview target utilisation/carry-over, then append the batch atomically |
 | Data | Customer orders, Excel worksheet/header mapping, insert-only Excel imports, saved-versus-Excel comparisons, retained raw order versions, quick views, searchable orders and expandable delivery/deadline filters; 50 rows per page |
@@ -55,11 +55,15 @@ On screens up to 600px, Planning opens a PM1–PM4 list showing product, packagi
 
 Orders, Stock, Daily stock and History remember their own search, filters, page and scroll positions while navigating in the current app session. Stock also remembers its selected tab and Daily stock date. Changing a filter resets its list to page one; Clear filters restores all Orders. A browser refresh starts fresh. The board's order picker has independent filters. Orders offers All orders, Needs production (remaining shortage after stock reservations and unfinished cards), Ready for pickup (remaining order covered by reserved stock), and Needs review. These views combine with search and the collapsed Advanced filters; summary totals cover every matching page. Legacy orders without an inventory baseline use their linked-card/production status.
 
-Settings has Workspace, Production rules, Unavailable periods, Products, Stock policies (database only), and Backup & recovery tabs. Drafts survive tab switches. The sticky Save settings bar applies only to workspace/rate/calendar drafts; catalog and stock changes save separately. Invalid planning settings reveal and focus their section before submitting. Navigating away from Settings still discards unsaved drafts.
+Settings has Workspace, Production rules, Unavailable periods, Products, Stock policies (database only), and Backup & recovery tabs. Drafts survive tab switches. The sticky Save settings bar applies only to workspace/rate/calendar drafts; catalog and stock changes save separately. Invalid planning settings reveal and focus their section before submitting. Leaving Settings with unsaved planning settings asks whether to stay or discard. Browser refresh/close also uses the browser’s unsaved-change warning.
 
 Card colours: **gray** not started, **blue** running, **yellow** paused, **green** completed, **red** issue. Yellow stripes indicate changeover. Started/completed plans stay locked, and each line can have only one running production.
 
 Database saves are confirmed before cards/forms show success. Concurrent stale changes keep the draft and require an explicit Reload latest before resubmitting. Uncertain saves keep the originating form open and offer Retry connection; retrying an acknowledged command cannot create a duplicate. Other changes refresh approximately every 15 seconds when no editor/details/settings draft is open.
+
+Generate planning supports **Save draft to this browser** and **Resume saved draft**. Edited quantities, lines and dates survive a reload. This is one draft per browser/origin, not a shared database draft or backup. Unsaved generated drafts warn on close; a changed workspace or passed planning date requires regeneration. Confirm persists its exact request ID before sending, so Check previous save after a reload can resolve a lost response without adding duplicate cards. Another tab changing the saved draft pauses editing until it is explicitly loaded.
+
+Overview separates whole quantities assigned to the selected date from the share of production time inside that shift (including carry-in). **Production receipts** is net stock-production posting quantity for the selected calendar date, including partial/running receipts and corrections; it is not measured physical shift output. Historical bag entries without a saved weight are excluded and counted explicitly. Plan vs actual remains a completed-task reconciliation.
 
 ## Excel orders → production → delivery
 

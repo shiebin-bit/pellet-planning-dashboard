@@ -51,6 +51,14 @@ export function createApp(options: AppOptions): express.Express {
   app.get("/api/inventory", asyncRoute(async (_request, response) => {
     response.json(await options.store.getInventory());
   }));
+  app.get("/api/inventory/production-summary", asyncRoute(async (request, response) => {
+    const query = new URL(request.originalUrl, "http://localhost").searchParams;
+    for (const [name] of query) if (name !== "date") throw badRequest(`Production summary filter ${name} is not supported.`);
+    if (query.getAll("date").length !== 1) throw badRequest("Production summary date must be supplied exactly once.");
+    const date = query.get("date")!;
+    if (!validDate(date)) throw badRequest("Production summary date must be a valid YYYY-MM-DD date.");
+    response.json(await options.store.getInventoryProductionSummary(date));
+  }));
   app.get("/api/inventory/jobs/:id/production", asyncRoute(async (request,response)=>{
     const id=request.params.id;if(typeof id!=="string"||!id||id.length>200)throw badRequest("Invalid production card id.");
     response.json(await options.store.getJobProduction(id));

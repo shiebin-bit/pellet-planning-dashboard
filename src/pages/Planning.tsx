@@ -20,6 +20,8 @@ import { AutoPlanningButton } from '../components/InventoryDraftDialog';
 import { usePlanningCardPreview } from '../components/PlanningCardPreview';
 import { ProductionList } from '../components/ProductionList';
 import { useListState } from '../lib/listNavigation';
+import { MoveImpactDialog } from '../components/MoveImpactDialog';
+import type { MoveImpactInput } from '../domain/moveImpact';
 
 type PlanRange = 'day' | 'full';
 
@@ -33,8 +35,9 @@ const collision: CollisionDetection = args => {
 };
 
 export function Planning() {
-  const { board, state, openJob, openInput, openCopy, openSource, storageMode, selectedId, commit, canUndo, undo, mutationLocked, hasConflict } = useWorkspace();
+  const { board, state, openJob, openInput, openCopy, openSource, storageMode, selectedId, canUndo, undo, mutationLocked, hasConflict } = useWorkspace();
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [movePreview, setMovePreview] = useState<MoveImpactInput | null>(null);
   const [range, setRange] = useState<PlanRange>('day');
   const [smallScreen,setSmallScreen]=useState(()=>window.matchMedia('(max-width:600px)').matches);
   const [mobileView,setMobileView]=useListState<'list'|'timeline'>('planning.mobileView','list');
@@ -92,11 +95,11 @@ export function Planning() {
     const id = String(event.active.data.current?.jobId ?? event.active.id);
     const beforeId = data?.beforeId as string | undefined;
     if (beforeId === id) return;
-    const source = jobs.find(job => job.id === id);
-    void commit({type:'job.move',jobId:id,toLineId:lineId,...(beforeId?{beforeJobId:beforeId}:{})}, source?.lineId !== lineId ? `Moved to ${lineId}. Check the destination bin.` : 'Production order updated.', true);
+    setMovePreview({jobId:id,toLineId:lineId,...(beforeId?{beforeJobId:beforeId}:{})});
   }
 
   return <div className={`page planning-page hplan-page ${activeId?'is-dragging':''}`}>
+    {movePreview && <MoveImpactDialog input={movePreview} onClose={() => setMovePreview(null)} onSaved={() => setMovePreview(null)}/>}
     <div className="page-heading hplan-heading">
       <div><h1>Planning board</h1><p>{listView?'Production sequence and orders, grouped by line.':'Drag a not-started card to another line. Click for details.'}</p></div>
       <div className="hplan-actions">

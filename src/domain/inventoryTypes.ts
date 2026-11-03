@@ -174,6 +174,18 @@ export interface InventorySnapshot {
   items: InventoryItemSnapshot[];
 }
 
+/** Ledger-backed production posted on one inventory date, normalized to metric tonnes. */
+export interface InventoryProductionSummary {
+  revision: number;
+  date: string;
+  /** Known MT only. Bag movements without an immutable historical weight are excluded. */
+  netQuantityMt: number;
+  /** Distinct non-null production job ids represented by included movements, even if their net is zero. */
+  jobCount: number;
+  /** Included bag movements that could not be converted without guessing a current policy. */
+  unconvertedCount: number;
+}
+
 export interface InventoryOrderProgress extends InventoryBucketKey {
   sourceOrderId: string;
   itemId: string;

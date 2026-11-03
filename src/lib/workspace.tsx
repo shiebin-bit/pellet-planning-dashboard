@@ -14,6 +14,7 @@ import { parseWorkspaceBackup } from '../domain/backup';
 import { PREVIOUS_WORKSPACE_KEY, storeRestoredWorkspace } from './restore';
 import { ApiError, readDatabaseWorkspace, sendCommand } from './api';
 import type { CommandRequest } from './api';
+import { confirmLeave } from './leaveGuard';
 
 export type Page = 'overview' | 'planning' | 'data' | 'stock' | 'history' | 'settings';
 const STORAGE_KEY = 'millplan.workspace.v1';
@@ -39,6 +40,7 @@ function loadState() {
 }
 interface Workspace {
   state: AppState; board: Board; date: string; setDate: (date: string) => void;
+  revision: number | null; workspaceUpdatedAt: string | null;
   page: Page; navigate: (page: Page) => void;
   selectedId: string | null; selectedJob: ScheduledJob | null;
   openJob: (id: string, goToPlanning?: boolean) => void; closeJob: () => void;
@@ -49,6 +51,7 @@ interface Workspace {
   copyDialog: { id: string; targetDate: string } | null;
   openCopy: () => void; closeCopy: () => void;
   commit: (command: Command, message: string, undoable?: boolean) => Promise<boolean>;
+  commitPrepared: (request: CommandRequest, message: string) => Promise<{ confirmed: boolean; uncertain: boolean }>;
   undo: () => Promise<void>; canUndo: boolean; toast: { message: string; error: boolean } | null;
   notify: (message: string, error?: boolean) => void;
   resetDemo: () => Promise<boolean>; isDemo: boolean; savedAt: string | null; storageWarning: string;
@@ -177,11 +180,15 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         blocked();
         return;
       }
+      if ((legacyInput || requested !== pageRef.current) && !confirmLeave()) {
+        window.history.replaceState(null, '', '#/' + pageRef.current);
+        return;
+      }
       if (legacyInput) {
         setSelectedId(null); setEditor({ jobId: null, lineId: 'PM1' });
         window.history.replaceState(null, '', '#/planning');
       }
-      setPage(requested);
+      pageRef.current = requested; setPage(requested);
     };
     update(); window.addEventListener('hashchange', update);
     return () => window.removeEventListener('hashchange', update);
@@ -209,8 +216,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const locked = () => saving.current || awaitingConfirmation.current;
   const blocked = () => { notify('Confirm the pending database save before leaving this work.', true); };
   const navigate = (next: Page) => {
-    if (locked()) { blocked(); return; }
-    window.location.hash = '/' + next; setPage(next);
+    if (locked()) { blocked(); return false; }
+    if (next !== pageRef.current && !confirmLeave()) return false;
+    pageRef.current = next;
+    window.location.hash = '/' + next; setPage(next); return true;
   };
   const changeDate = (next: string) => {
     if (locked()) { blocked(); return; }
@@ -220,16 +229,16 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     stateRef.current = next; setState(next); setSavedAt(new Date().toISOString()); setStorageWarning('');
   };
-  const commit: Workspace['commit'] = async (command, message, undoable = false) => {
+  const commit = async (command: Command, message: string, undoable = false, prepared?: CommandRequest): Promise<boolean> => {
     if (saving.current) { notify('A change is still being saved. Please wait.', true); return false; }
-    if (conflict.current) { notify('Reload the latest data before applying another change.', true); return false; }
+    if (conflict.current && !prepared) { notify('Reload the latest data before applying another change.', true); return false; }
     if (databaseMode && (!remote.current || uncertain.current)) {
       notify('Retry the database connection to confirm the previous save first.', true); return false;
     }
     saving.current = true; setBusy(true);
     try {
       if (databaseMode) {
-        const request = { expectedRevision: remote.current!.revision, commandId: crypto.randomUUID(), command };
+        const request = prepared ?? { expectedRevision: remote.current!.revision, commandId: crypto.randomUUID(), command };
         uncertain.current = request;
         const currentEditor = editorRef.current;
         uncertainSource.current = {
@@ -312,7 +321,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }
   return <WorkspaceContext.Provider value={{
     state, board, date, setDate: changeDate, page, navigate, selectedId, selectedJob,
-    openJob: (id, goToPlanning = false) => { if (locked()) { blocked(); return; } setCopyDialog(null); setEditor(null); setSelectedId(id); if (goToPlanning) navigate('planning'); },
+    revision: remote.current?.revision ?? null, workspaceUpdatedAt: remote.current?.updatedAt ?? null,
+    commitPrepared: async (request, message) => ({ confirmed: await commit(request.command, message, false, request), uncertain: uncertain.current !== null }),
+    openJob: (id, goToPlanning = false) => { if (locked()) { blocked(); return; } if (goToPlanning && !navigate('planning')) return; setCopyDialog(null); setEditor(null); setSelectedId(id); },
     closeJob: () => { if (locked()) { blocked(); return; } setSelectedId(null); }, editor,
     openInput: (lineId = 'PM1') => { if (locked()) { blocked(); return; } if (conflict.current) { notify('Reload the latest data before adding another task.', true); return; } setCopyDialog(null); setSelectedId(null); setEditor({ jobId: null, lineId }); },
     closeInput: () => { if (locked()) { blocked(); return; } setEditor(null); },

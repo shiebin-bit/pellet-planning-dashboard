@@ -28,3 +28,5 @@
 .draft-edit-table td > small { display: block; margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--muted); }
 .draft-edit-table summary { padding-block: 6px; cursor: pointer; font-size: 12px; }
 .draft-edit-table details .field { margin-top: 10px; }
+
+.draft-fields{border:0;padding:0;margin:0;min-width:0}.draft-saved-notice{display:flex;align-items:center;flex-wrap:wrap;gap:12px}.draft-saved-notice>span{flex:1;min-width:200px}

@@ -6,7 +6,7 @@ import { createApp } from "../server/app";
 import { runMigrations } from "../server/migrate";
 import { WorkspaceStore } from "../server/store";
 import { createDefaultSettings } from "../src/domain/defaults";
-import type { InventoryDraftJob, InventoryOrderProgressSnapshot, InventorySnapshot, InventoryWorkbookInput } from "../src/domain/inventoryTypes";
+import type { InventoryDraftJob, InventoryOrderProgressSnapshot, InventoryProductionSummary, InventorySnapshot, InventoryWorkbookInput } from "../src/domain/inventoryTypes";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integration = databaseUrl ? describe : describe.skip;
@@ -101,6 +101,61 @@ integration("inventory API", () => {
     const restored = await get<InventorySnapshot>("/api/inventory");
     assert.equal(restored.items[0].totalOnHand, 30);
     assert.equal(restored.items[0].totalReserved, 30);
+  });
+
+  it("validates the production-summary query and excludes imported baseline production", async () => {
+    for (const path of [
+      "/api/inventory/production-summary",
+      "/api/inventory/production-summary?date=2026-02-30",
+      "/api/inventory/production-summary?date=2026-10-18&date=2026-10-19",
+      "/api/inventory/production-summary?date=2026-10-18&extra=true",
+    ]) {
+      const response = await fetch(`${baseUrl}${path}`);
+      assert.equal(response.status, 400, path);
+    }
+    const input = baselineInput();
+    input.items[0].production = 5;
+    input.items[0].rework = 5;
+    await ok(await command(0, "summary-imported-baseline", { type: "inventory.importBaseline", input }));
+    assert.deepEqual(await get<InventoryProductionSummary>("/api/inventory/production-summary?date=2026-10-18"), {
+      revision: 1, date: "2026-10-18", netQuantityMt: 0, jobCount: 0, unconvertedCount: 0,
+    });
+  });
+
+  it("summarizes partial bag receipts and production reversals with immutable weights and explicit unknown coverage", async () => {
+    const input = baselineInput();
+    input.orders[0].rows[0] = { ...input.orders[0].rows[0], unit: "Bags", quantity: 100 };
+    input.items[0] = { ...input.items[0], unit: "Bags", bagWeightKg: 25, strategy: "mto", targetQuantity: 0, opening: 0, closing: 0 };
+    await ok(await command(0, "summary-bag-baseline", { type: "inventory.importBaseline", input }));
+    const order = (await get<InventoryOrderProgressSnapshot>("/api/inventory/orders")).orders[0];
+    const item = (await get<InventorySnapshot>("/api/inventory")).items[0];
+    const date = addDays(malaysiaToday(), 1);
+    const draft: InventoryDraftJob = {
+      draftId: "summary-bag-draft", itemId: item.itemId, sourceOrderId: order.sourceOrderId,
+      orderNo: order.doNo, materialCode: order.materialCode, description: order.description,
+      unit: "Bags", bagWeightKg: 25, productionPurpose: "mto", date, lineId: "PM1", quantity: 100,
+      notBefore: `${date}T00:00:00.000Z`, bin: "", remarks: "", medication: "", fmrOmed: "",
+    };
+    const committed = await json(await command(1, "summary-bag-commit", { type: "planning.commitDraft", previewRevision: 1, jobs: [draft] }));
+    const jobId = committed.state.jobs[0].id;
+    const receiptDate = addDays(malaysiaToday(), -1);
+    await ok(await command(2, "summary-bag-receipt", { type: "production.recordReceipt", jobId, totalActualQuantity: 40, occurredOn: receiptDate }));
+    let summary = await get<InventoryProductionSummary>(`/api/inventory/production-summary?date=${receiptDate}`);
+    assert.deepEqual(summary, { revision: 3, date: receiptDate, netQuantityMt: 1, jobCount: 1, unconvertedCount: 0 });
+    assert.deepEqual(await get<InventoryProductionSummary>(`/api/inventory/production-summary?date=${malaysiaToday()}`), { revision: 3, date: malaysiaToday(), netQuantityMt: 0, jobCount: 0, unconvertedCount: 0 });
+
+    await ok(await command(3, "summary-change-current-policy", { type: "inventory.configure", itemId: item.itemId, patch: { bagWeightKg: 50 } }));
+    await ok(await command(4, "summary-bag-correction", { type: "production.correctJobTotal", jobId, correctedTotalQuantity: 20, reason: "Scale correction", postingKey: "summary-bag-correction", occurredOn: malaysiaToday() }));
+    summary = await get<InventoryProductionSummary>(`/api/inventory/production-summary?date=${malaysiaToday()}`);
+    assert.deepEqual(summary, { revision: 5, date: malaysiaToday(), netQuantityMt: -0.5, jobCount: 1, unconvertedCount: 0 });
+
+    await pool.query(
+      `INSERT INTO inventory_ledger(id,workspace_id,item_id,medication,fmr_omed,movement_type,quantity_delta_scaled,occurred_on,recorded_at,posting_key,metadata)
+       VALUES ('legacy-summary-unknown',1,$1,'','','production',10,$2::date,now(),'legacy-summary-unknown',$3::jsonb)`,
+      [item.itemId, malaysiaToday(), JSON.stringify({ snapshot: { materialCode: order.materialCode, unit: "Bags" } })],
+    );
+    summary = await get<InventoryProductionSummary>(`/api/inventory/production-summary?date=${malaysiaToday()}`);
+    assert.deepEqual(summary, { revision: 5, date: malaysiaToday(), netQuantityMt: -0.5, jobCount: 1, unconvertedCount: 1 });
   });
 
   it("regenerates capacity after calendar edits and rejects stale draft commits without duplicates", async () => {
@@ -367,9 +422,11 @@ integration("inventory API", () => {
     assert.equal((await get<any>(`/api/data/${source[0].id}`)).linkedJobId,job.id);assert.equal((await get<any>(`/api/data/${source[1].id}`)).linkedJobId,job.id);
     await ok(await command(2,"group-receipt-60",{type:"production.recordReceipt",jobId:job.id,totalActualQuantity:60}));
     let production=await get<any>(`/api/inventory/jobs/${job.id}/production`);assert.equal(production.total,60);
+    let summary=await get<InventoryProductionSummary>(`/api/inventory/production-summary?date=${malaysiaToday()}`);assert.equal(summary.netQuantityMt,60);assert.equal(summary.jobCount,1);assert.equal(summary.unconvertedCount,0);
     assert.deepEqual(production.orderTotals.filter((row:any)=>row.sourceOrderId).map((row:any)=>[row.sourceOrderId,row.total]).sort(),[[source[0].id,40],[source[1].id,20]].sort());
     await ok(await command(3,"group-correct-30",{type:"production.correctJobTotal",jobId:job.id,correctedTotalQuantity:30,reason:"Scale correction",postingKey:"group-correct-30"}));
     production=await get<any>(`/api/inventory/jobs/${job.id}/production`);assert.equal(production.total,30);
+    summary=await get<InventoryProductionSummary>(`/api/inventory/production-summary?date=${malaysiaToday()}`);assert.equal(summary.netQuantityMt,30);assert.equal(summary.jobCount,1);
     assert.deepEqual(production.orderTotals.filter((row:any)=>row.total>0).map((row:any)=>[row.sourceOrderId,row.total]),[[source[0].id,30]]);
     const ledger=(await get<any[]>("/api/inventory/ledger")).filter(row=>row.jobId===job.id);assert.equal(ledger.reduce((sum,row)=>sum+row.quantityDelta,0),30);
     const backup=await get<any>("/api/backup");assert.equal(backup.schemaVersion,4);assert.equal(backup.planning.jobs[0].sourceAllocations.length,2);

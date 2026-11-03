@@ -17,6 +17,7 @@ import { ProductionStops } from './ProductionStops';
 import { useCurrentTime } from '../lib/useCurrentTime';
 import { InventoryReceiptForm } from './InventoryWorkspace';
 import './JobDrawer.css';
+import { MoveImpactDialog } from './MoveImpactDialog';
 
 export function JobDrawer() {
   const {selectedJob:job,closeJob,openJob,editJob,state,board,commit,busy,storageWarning,storageMode,refresh,hasConflict,resolveConflict,mutationLocked,savedAt}=useWorkspace();
@@ -25,6 +26,7 @@ export function JobDrawer() {
   const [toLine,setToLine]=useState<LineId>('PM1');
   const [beforeId,setBeforeId]=useState('');
   const [showMove,setShowMove]=useState(false);
+  const [reviewMove,setReviewMove]=useState(false);
   const [confirmCancel,setConfirmCancel]=useState(false);
   const [showIssue,setShowIssue]=useState(false);
   const [issueReason,setIssueReason]=useState('');
@@ -41,11 +43,11 @@ export function JobDrawer() {
   const now=useCurrentTime(job?.status==='running');
   useEffect(()=>{
     if(!job)return;
-    setToLine(job.lineId);setBeforeId('');setShowMove(false);setConfirmCancel(false);
+    setToLine(job.lineId);setBeforeId('');setShowMove(false);setReviewMove(false);setConfirmCancel(false);
     setShowIssue(false);setIssueReason('');setShowOutput(false);setShowCombine(false);
   },[job?.id]);
   useEffect(()=>{
-    if(!job||showCombine)return;
+    if(!job||showCombine||reviewMove)return;
     if(restoreCombineFocus.current){combineToggle.current?.focus();restoreCombineFocus.current=false;}
     else {previousFocus.current=document.activeElement as HTMLElement;closeRef.current?.focus();}
     const originalOverflow=document.body.style.overflow;document.body.style.overflow='hidden';
@@ -60,7 +62,7 @@ export function JobDrawer() {
     };
     window.addEventListener('keydown',key);
     return()=>{document.body.style.overflow=originalOverflow;window.removeEventListener('keydown',key);previousFocus.current?.focus();};
-  },[job?.id,showCombine]);
+  },[job?.id,showCombine,reviewMove]);
   if(!job)return null;
   const allocations=getJobSourceAllocations(job);
   const pending=job.status==='pending';
@@ -74,10 +76,11 @@ export function JobDrawer() {
   const closeOutput=()=>{setShowOutput(false);requestAnimationFrame(()=>{const target=outputToggle.current; if(target&&!target.disabled)target.focus();else closeRef.current?.focus();});};
   const reloadLatest=()=>{
     if(missing){resolveConflict();closeJob();return;}
-    setToLine(job.lineId);setBeforeId('');setShowMove(false);setConfirmCancel(false);
+    setToLine(job.lineId);setBeforeId('');setShowMove(false);setReviewMove(false);setConfirmCancel(false);
     setShowIssue(false);setIssueReason('');setShowOutput(false);resolveConflict();
   };
   if(showCombine)return <CombinePlanningDialog anchorJobId={job.id} onClose={()=>{restoreCombineFocus.current=true;setShowCombine(false);}} onSaved={id=>{setShowCombine(false);openJob(id);}}/>;
+  if(reviewMove)return <MoveImpactDialog input={{jobId:job.id,toLineId:toLine,...(beforeId?{beforeJobId:beforeId}:{})}} onClose={()=>{setReviewMove(false);requestAnimationFrame(()=>drawerRef.current?.querySelector<HTMLButtonElement>('.drawer-move-form .button')?.focus());}} onSaved={()=>{setReviewMove(false);setShowMove(false);}}/>;
   return <div className="drawer-layer"><button className="drawer-scrim" aria-label="Close production details" disabled={mutationLocked} onClick={closeJob}/><aside className="job-drawer" ref={drawerRef} role="dialog" aria-modal="true" aria-labelledby="drawer-title">
     <div className="drawer-top"><span>PRODUCTION DETAILS</span><button ref={closeRef} className="icon-button" disabled={mutationLocked} onClick={closeJob} aria-label="Close production details"><X size={21}/></button></div>
     <div className="drawer-body">
@@ -104,7 +107,7 @@ export function JobDrawer() {
       {(job.status==='pending'||job.status==='running')&&!job.issue&&<section className="drawer-section issue-actions" inert={mutationLocked||hasConflict}><button className="text-link danger-text" onClick={()=>setShowIssue(!showIssue)} aria-expanded={showIssue}><AlertTriangle size={16}/>Report a problem</button>{showIssue&&<div className="issue-form"><label className="field">Problem details<textarea value={issueReason} onChange={event=>setIssueReason(event.target.value)} placeholder="Describe the problem for the team…" maxLength={1000}/><small>The card turns red until the problem is resolved or production is completed.</small></label><button className="button danger full-width" disabled={busy||!issueReason.trim()} onClick={async()=>{if(await commit({type:'job.reportIssue',jobId:job.id,reason:issueReason},'Problem recorded. The card is now marked red.')){setShowIssue(false);setIssueReason('');}}}><AlertTriangle size={16}/>Mark as issue</button></div>}</section>}
 
       {job.remarks&&<section className="drawer-section"><h3>Remarks</h3><p className="drawer-remarks">{job.remarks}</p></section>}
-      {pending&&<section className="drawer-section" inert={mutationLocked||hasConflict}><button className="drawer-move-toggle" onClick={()=>setShowMove(!showMove)} aria-expanded={showMove}><MoveRight size={16}/><span>Move to another line or position</span><ArrowRight size={15}/></button>{showMove&&<div className="drawer-move-form"><div className="field-grid"><label className="field">Line<select value={toLine} onChange={e=>{setToLine(e.target.value as LineId);setBeforeId('');}}>{LINE_IDS.map(line=><option key={line}>{line}</option>)}</select></label><label className="field">Position<select value={beforeId} onChange={e=>setBeforeId(e.target.value)}><option value="">After the last task</option>{movableJobs.map(item=><option value={item.id} key={item.id}>Before {productLabel(item)} · {numberLabel(item.quantityMt)} MT</option>)}</select></label></div><button className="button secondary full-width" disabled={busy} onClick={async()=>{if(await commit({type:'job.move',jobId:job.id,toLineId:toLine,...(beforeId?{beforeJobId:beforeId}:{})},'Task moved. Check the destination bin.',true))setShowMove(false);}}>Apply move<ArrowRight size={15}/></button></div>}</section>}
+      {pending&&<section className="drawer-section" inert={mutationLocked||hasConflict}><button className="drawer-move-toggle" onClick={()=>setShowMove(!showMove)} aria-expanded={showMove}><MoveRight size={16}/><span>Move to another line or position</span><ArrowRight size={15}/></button>{showMove&&<div className="drawer-move-form"><div className="field-grid"><label className="field">Line<select value={toLine} onChange={e=>{setToLine(e.target.value as LineId);setBeforeId('');}}>{LINE_IDS.map(line=><option key={line}>{line}</option>)}</select></label><label className="field">Position<select value={beforeId} onChange={e=>setBeforeId(e.target.value)}><option value="">After the last task</option>{movableJobs.map(item=><option value={item.id} key={item.id}>Before {productLabel(item)} · {numberLabel(item.quantityMt)} MT</option>)}</select></label></div><button className="button secondary full-width" disabled={busy} onClick={()=>setReviewMove(true)}>Apply move<ArrowRight size={15}/></button></div>}</section>}
       <div className="drawer-created">Created {fullDateTime(job.createdAt)}<br/>Last updated {fullDateTime(job.updatedAt)}</div>
     </div>
     <div className="drawer-footer drawer-execution-footer" role="group" aria-label="Production actions">
