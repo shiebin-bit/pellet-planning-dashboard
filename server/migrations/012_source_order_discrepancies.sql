@@ -27,4 +27,3 @@ CREATE INDEX IF NOT EXISTS source_order_discrepancies_status_idx
   ON source_order_discrepancies (workspace_id, status, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS source_order_discrepancies_order_idx
   ON source_order_discrepancies (source_order_id, status);
-

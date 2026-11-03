@@ -50,7 +50,7 @@ export function ImportReviewQueue() {
       const saved=await commit(command,message);
       if(saved){setSelected(null);setReload(value=>value+1);}
       return saved;
-    }}/>} 
+    }}/>}
   </section>;
 }
 
