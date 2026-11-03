@@ -122,4 +122,9 @@ Calendar tests cover legacy materialization, repeated same-day changes, later ef
 
 `tests/browser-planning-safety.cjs` uses fictional fixtures and a disposable loopback database. It checks distinct assigned/in-shift/posting-date metrics, partial running receipts, move preview/cancel without commands, confirmed movement, Settings leave/stay, edited local draft reload, stale and other-tab blocking, exact-ID lost-response recovery, malformed/unavailable storage, and responsive dialogs. Unit tests cover carry-in/out proportional quantities, due-date and protected-task move effects, planner-produced backlog round trips, strict storage validation, capacity limits and storage conflict/failure behavior. Serial API tests cover read filters, baseline exclusion, correction dates, immutable 25kg reversal after a 50kg policy change, unknown historical conversions, and grouped-job counting.
 
-Local release verification: 152 unit tests, 33 PostgreSQL API tests, a production build and all 12 browser scripts passed against the disposable test database.
+Local feature verification: 152 unit tests, 33 PostgreSQL API tests, a production build and all 12 browser scripts passed against the disposable test database.
+
+
+## Excel dependency compatibility
+
+`npm test` also runs `tests/dependency-compatibility.test.cjs`. It resolves the dependency copies used by ExcelJS and ZipStream and checks workbook buffer/stream round trips, both Archiver utility glob implementations (including exclusion), archive glob/ignore and ZIP reading. Targeted overrides retain ExcelJS 4.4 and Archiver 5 while replacing the vulnerable Unzipper/Glob/Minimatch paths. These overrides cross some transitive declared ranges; keep the compatibility regression, review the lockfile on updates, and require clean install, audit, build and browser import/export checks. Do not replace this with an audit suppression or a global Minimatch override that breaks older callable exports.

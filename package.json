@@ -8,7 +8,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc -b && tsc -p tsconfig.server.json && vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "vitest run src",
+    "test": "vitest run src && node --test tests/dependency-compatibility.test.cjs",
     "start": "node --env-file-if-exists=.env --import tsx server/index.ts",
     "server:dev": "node --env-file-if-exists=.env --import tsx --watch server/index.ts",
     "db:migrate": "node --env-file-if-exists=.env --import tsx server/migrate.ts",
@@ -45,7 +45,14 @@
   },
   "overrides": {
     "exceljs": {
-      "uuid": "^11.1.1"
+      "uuid": "^11.1.1",
+      "unzipper": "^0.12.3"
+    },
+    "archiver-utils": {
+      "glob": "^14.0.2"
+    },
+    "readdir-glob": {
+      "minimatch": "^11.0.1"
     }
   }
 }
