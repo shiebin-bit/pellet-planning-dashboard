@@ -42,7 +42,7 @@ function loadState() {
 interface Workspace {
   state: AppState; board: Board; date: string; setDate: (date: string) => void;
   revision: number | null; workspaceUpdatedAt: string | null;
-  page: Page; navigate: (page: Page) => void;
+  page: Page; navigate: (page: Page) => boolean;
   selectedId: string | null; selectedJob: ScheduledJob | null;
   openJob: (id: string, goToPlanning?: boolean) => void; closeJob: () => void;
   editor: { jobId: string | null; lineId: LineId } | null;

@@ -112,9 +112,14 @@ async function discardDraft(page, draft) {
     assert.equal(quantities.reduce((sum, value) => sum + value, 0), 280);
     const lines = await draft.locator('select[aria-label^="Line draft-"]').evaluateAll(selects => selects.map(select => select.value));
     assert.deepEqual([...new Set(lines)].sort(), ['PM1', 'PM2']);
+    const confirm = draft.getByRole('button', { name: /^Confirm \d+ cards$/ });
+    assert.equal(await confirm.isEnabled(), true, 'Overtime within the configured line shift must be confirmable');
     await page.screenshot({ path: path.join(output, 'overtime-and-closures.png'), fullPage: true });
-    await discardDraft(page, draft);
-    pass('The board and generated draft use14-hour PM1/PM2 capacity and exclude closed PM3/PM4');
+    await confirm.click();
+    await draft.waitFor({state:'hidden'});
+    const savedOvertime = (await json('/api/workspace')).state.jobs.filter(job => job.date === planDate);
+    assert.equal(savedOvertime.reduce((sum,job) => sum + job.quantityMt,0),280);
+    pass('The board and draft use14-hour PM1/PM2 capacity, exclude closed lines, and save valid overtime cards');
 
     await chooseBoardDate(page, nextDate);
     assert.equal(await axis.first().innerText(), '07:00'); assert.equal(await axis.last().innerText(), '19:00');

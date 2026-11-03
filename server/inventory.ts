@@ -548,10 +548,7 @@ export async function getInventorySnapshot(pool: pg.Pool): Promise<InventorySnap
   try {
     await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
     const revision = await workspaceRevision(client);
-    const countDates = await client.query<{ baseline_date: string | null; last_count_date: string | null }>(
-      `SELECT min(as_of_date) FILTER (WHERE included_baseline)::text AS baseline_date,GREATEST(max(as_of_date),(SELECT max(occurred_on) FROM inventory_ledger WHERE metadata->>'physicalCount'='true'))::text AS last_count_date
-         FROM inventory_imports WHERE workspace_id=1 AND (included_baseline OR id IN (SELECT import_id FROM inventory_baseline_reports))`,
-    );
+    const countDates = await getInventoryFreshnessFromClient(client);
     const items = await allItems(client);
     const balances = await physicalBalances(client);
     const reservations = await reservationBalances(client);
@@ -567,10 +564,26 @@ export async function getInventorySnapshot(pool: pg.Pool): Promise<InventorySnap
       return { ...itemView(item), buckets, totalOnHand: sum(buckets.map(row => row.onHand)), totalReserved: sum(buckets.map(row => row.reserved)), totalAvailable: sum(buckets.map(row => row.available)) };
     });
     await client.query("COMMIT");
-    return { revision, asOfDate: malaysiaDateAt(new Date().toISOString()), baselineDate: countDates.rows[0]?.baseline_date ?? null,
-      lastCountDate: countDates.rows[0]?.last_count_date ?? null, items: result };
+    return { revision, asOfDate: malaysiaDateAt(new Date().toISOString()), baselineDate: countDates.baselineDate,
+      lastCountDate: countDates.lastCountDate, items: result };
   } catch (error) { await client.query("ROLLBACK").catch(() => undefined); throw error; }
   finally { client.release(); }
+}
+
+export async function getInventoryFreshnessFromClient(client: pg.PoolClient): Promise<{
+  baselineDate: string | null;
+  lastCountDate: string | null;
+}> {
+  const result = await client.query<{ baseline_date: string | null; last_count_date: string | null }>(
+    `SELECT min(as_of_date) FILTER (WHERE included_baseline)::text AS baseline_date,
+       GREATEST(max(as_of_date),(SELECT max(occurred_on) FROM inventory_ledger WHERE metadata->>'physicalCount'='true'))::text AS last_count_date
+       FROM inventory_imports
+      WHERE workspace_id=1 AND (included_baseline OR id IN (SELECT import_id FROM inventory_baseline_reports))`,
+  );
+  return {
+    baselineDate: result.rows[0]?.baseline_date ?? null,
+    lastCountDate: result.rows[0]?.last_count_date ?? null,
+  };
 }
 
 export async function getOrderProgress(pool: pg.Pool, state: AppState): Promise<InventoryOrderProgressSnapshot> {

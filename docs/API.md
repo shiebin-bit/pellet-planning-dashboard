@@ -9,9 +9,12 @@ Default base URL: `http://127.0.0.1:8080` (configurable through APP_PORT). Respo
 | `GET /api/health` | `{"status":"ok"}` when a database query succeeds; 503 on a recognized database outage |
 | `GET /api/inventory/production-summary?date=YYYY-MM-DD` | Repeatable-read `{revision,date,netQuantityMt,jobCount,unconvertedCount}`; exactly one valid date, no other filters |
 | `GET /api/workspace` | Consistent workspace envelope; `Cache-Control: no-store` |
+| `GET /api/operations-summary` | Read-only repeatable-read `{revision,serverNow,asOfDate,dueSoonThrough,counts,freshness}`; rejects all query parameters |
 | `POST /api/commands` | Applies one validated command and returns the confirmed envelope |
 
 Envelope:
+
+The operations summary captures one MYT date and counts all matching rows, independently of pagination. `counts.overdueToPlan` matches `/api/data?view=needs-production&deliveryTo=<yesterday>`; `dueSoon` matches pending delivery orders between `asOfDate` and `dueSoonThrough` (today + 3, inclusive). `stockShortages` counts standard blank-Medication/FMR MTS products whose available stock is below a non-null safety target; missing standard buckets count as zero stock and other variants cannot offset them. `pendingImportReviews` counts pending review rows. Freshness includes `latestOrderImport: {asOfDate,importedAt} | null`, `newestExcelAsOfDate`, `inventoryBaselineDate` and `lastVerifiedStockCountDate`. A late upload of an older file can therefore have a newer upload time and an older file date. This endpoint writes no records and changes no revision.
 
 ```typescript
 interface WorkspaceEnvelope {

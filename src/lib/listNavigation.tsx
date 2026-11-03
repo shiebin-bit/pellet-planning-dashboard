@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 type Position = { left: number; top: number; scope: string | number };
@@ -8,6 +8,16 @@ const ListMemory = createContext<Map<string, unknown> | null>(null);
 export function ListNavigationProvider({ children }: { children: ReactNode }) {
   const memory = useRef(new Map<string, unknown>());
   return <ListMemory.Provider value={memory.current}>{children}</ListMemory.Provider>;
+}
+
+/** Apply an explicit Overview destination after navigation is accepted. */
+export function useListPreset() {
+  const memory = useContext(ListMemory);
+  return useCallback((values: Record<string, unknown>, resetKeys: string[] = []) => {
+    if (!memory) return;
+    for (const key of resetKeys) memory.delete(key);
+    for (const [key, value] of Object.entries(values)) memory.set(key, value);
+  }, [memory]);
 }
 
 export function useListState<T>(key: string | null, initial: T | (() => T)) {

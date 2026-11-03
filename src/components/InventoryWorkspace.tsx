@@ -15,6 +15,7 @@ import { replenishmentShortage } from '../lib/stockPresentation';
 
 const qty = (value: number, unit: string) => `${numberLabel(value, unit === 'Bags' ? 0 : 3)} ${unit}`;
 const newKey = () => crypto.randomUUID();
+const standardBucket = (item: InventoryItemSnapshot) => item.buckets.find(bucket => !bucket.medication && !bucket.fmrOmed) ?? { medication: '', fmrOmed: '', onHand: 0, reserved: 0, available: 0 };
 
 export function StockBrowser({ policiesOnly = false }: { policiesOnly?: boolean }) {
   const { savedAt, commit, mutationLocked, hasConflict, toast } = useWorkspace();
@@ -49,8 +50,8 @@ export function StockBrowser({ policiesOnly = false }: { policiesOnly?: boolean 
     if (selected) readLedger(selected.itemId).then(data => { if (active) setLedger(data); }).catch(e => { if (active) setError(e.message); });
     return () => { active = false; };
   }, [selected?.itemId, savedAt, reload]);
-  const rows = items.filter(i => `${i.materialCode} ${i.description}`.toLowerCase().includes(search.toLowerCase()) && (!strategy || i.strategy === strategy) && (!low || i.strategy === 'mts' && (i.buckets.find(b=>!b.medication&&!b.fmrOmed)?.available ?? 0) < (i.targetQuantity ?? 0)));
-  const buckets = rows.flatMap(i => (i.buckets.length ? i.buckets : [{ medication: '', fmrOmed: '', onHand: 0, reserved: 0, available: 0 }]).filter(b => !variant || `${b.medication} ${b.fmrOmed}`.toLowerCase().includes(variant.toLowerCase())).map(b => ({ ...b, item: i })));
+  const rows = items.filter(i => `${i.materialCode} ${i.description}`.toLowerCase().includes(search.toLowerCase()) && (!strategy || i.strategy === strategy) && (!low || (replenishmentShortage(i, standardBucket(i)) ?? 0) > 0));
+  const buckets = rows.flatMap(i => (low ? [standardBucket(i)] : i.buckets.length ? i.buckets : [{ medication: '', fmrOmed: '', onHand: 0, reserved: 0, available: 0 }]).filter(b => !variant || `${b.medication} ${b.fmrOmed}`.toLowerCase().includes(variant.toLowerCase())).map(b => ({ ...b, item: i })));
   const display = policiesOnly ? rows : buckets;
   return <section className="inventory-workspace">
     <div className="inventory-toolbar"><label className="field">Product<input aria-label="Search stock" placeholder="Material or description" value={search} onChange={e => setSearch(e.target.value)}/></label><label className="field">Strategy<select value={strategy} onChange={e => setStrategy(e.target.value)}><option value="">All strategies</option><option value="mto">Make for order</option><option value="mts">Make for stock</option></select></label>{!policiesOnly && <><label className="field">Medication / FMR<input value={variant} onChange={e => setVariant(e.target.value)} placeholder="All stock variants"/></label><label className="checkbox-label"><input type="checkbox" checked={low} onChange={e => setLow(e.target.checked)}/>Below safety stock</label></>}<button className="button secondary" disabled={loading} onClick={() => setReload(n => n + 1)}><RefreshCw size={15}/>{loading&&loaded?'Refreshing…':'Refresh'}</button></div>

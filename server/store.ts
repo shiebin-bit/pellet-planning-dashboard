@@ -42,6 +42,7 @@ import {
   syncInventoryOrders,
 } from "./inventory";
 import { clearProductionProgress, exportProductionProgress, getProductionProgress, restoreProductionProgress } from "./productionProgress";
+import { getOperationsSummary } from "./operationsSummary";
 
 interface WorkspaceRow {
   revision: string;
@@ -86,6 +87,8 @@ export class WorkspaceStore {
   async health(): Promise<void> {
     await this.pool.query("SELECT 1");
   }
+
+  async getOperationsSummary() { return getOperationsSummary(this.pool); }
 
   async previewSourceImport(input: SourceImportInput, context?: SourceImportPreviewContext) { return previewSourceImport(this.pool, input, context); }
   async listSourceOrders(query: URLSearchParams) { return listSourceOrders(this.pool, query); }

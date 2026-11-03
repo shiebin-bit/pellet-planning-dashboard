@@ -9,7 +9,9 @@ import type { LineSchedule } from '../domain/types';
 import { SectionHeading, StatusBadge, EmptyState, TextLink } from '../components/Shared';
 import { NeedsAttention,ProductionResults } from '../components/OperationsSummary';
 import { RecordedDowntime } from '../components/RecordedDowntime';
-import { getCalendarForDate } from '../domain/engine';
+import { BusinessPriorities } from '../components/BusinessPriorities';
+import { getWorkingHoursForDate } from '../domain/engine';
+import { nonWorkingWindows } from '../domain/planningWindows';
 import { getOverviewMetrics } from '../domain/overviewMetrics';
 import { isJobPaused } from '../domain/production-results';
 import { readProductionSummary } from '../lib/inventoryApi';
@@ -34,7 +36,6 @@ export function Overview() {
   const completed = assignedJobs.filter(job => job.status === 'completed').length;
   const overflows = board.lines.filter(line => line.overflowMinutes > 0);
   const queue = uniqueJobs.filter(job => job.status === 'pending' || job.status === 'running').sort((a,b) => (a.plannedStart || Infinity) - (b.plannedStart || Infinity)).slice(0, 6);
-  const calendar = getCalendarForDate(state.settings, board.date);
   const span = board.end - board.start;
   const ticks = Array.from({length: 9}, (_, index) => board.start + span * index / 8);
   return <div className="page overview-page">
@@ -53,8 +54,9 @@ export function Overview() {
           <button className="timeline-line-label" onClick={() => navigate('planning')}><span className="line-id">{line.lineId}</span><small>{numberLabel(line.plannedMt)} MT</small></button>
           <div className="timeline-track">
             {ticks.map(tick => <span className="timeline-gridline" key={tick} style={{left:(tick-board.start)/span*100+'%'}} />)}
+            {nonWorkingWindows(state.settings,line.lineId,board.start,board.end).map(interval => <span key={`off-${interval.start}`} className="downtime-block overview-off-hours" style={{left:(interval.start-board.start)/span*100+'%',width:(interval.end-interval.start)/span*100+'%'}} title={`${line.lineId}: outside available hours`}/>)}
             {state.settings.downtime.filter(item => item.lineId === line.lineId || item.lineId === 'all').map(item => {
-              const {start,end} = downtimeRange(item,calendar.dayStart);
+              const {start,end} = downtimeRange(item,getWorkingHoursForDate(state.settings,item.date,line.lineId).dayStart);
               const left = Math.max(start, board.start), right = Math.min(end, board.end);
               return right > left && <span key={item.id} className="downtime-block" style={{left:(left-board.start)/span*100+'%',width:(right-left)/span*100+'%'}} title={'Unavailable: ' + item.reason} />;
             })}
@@ -74,6 +76,7 @@ export function Overview() {
       </div></div>
       <div className="schedule-legend"><span><i className="legend-pending" />Not started</span><span><i className="legend-running" />Running</span><span><i className="legend-paused" />Paused</span><span><i className="legend-completed" />Completed</span><span><i className="legend-issue" />Issue</span><span><i className="legend-changeover" />Changeover / line clean-up</span><span><i className="legend-downtime" />Unavailable</span><span className="legend-note">Time scale · {numberLabel(span / 3600000, 0)} hours</span></div>
     </section>
+    <BusinessPriorities/>
     <LegacyCarryoverNotice/>
     {(overflows.length > 0 || board.backlog.length > 0) && <div className="planning-notice"><AlertTriangle size={17} /><p>{overflows.length > 0 && <><strong>{overflows.map(line => line.lineId).join(', ')}</strong> continues beyond this planning day. </>}{board.backlog.length > 0 && <><strong>{board.backlog.length} tasks</strong> need a quantity before they can be scheduled.</>}</p><button onClick={() => navigate('planning')}>Review<ChevronRight size={15} /></button></div>}
     <div className="overview-analysis"><NeedsAttention/><ProductionResults jobs={state.jobs.filter(job=>job.date===board.date)}/></div>

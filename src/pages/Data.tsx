@@ -43,7 +43,7 @@ function OrderProgress({order, progress, compact}: {order: SourceOrderSummary; p
 }
 export function DataPage() {
   const { storageMode, openImport, mutationLocked, hasConflict } = useWorkspace();
-  const [section,setSection]=useState<'orders'|'reviews'>('orders');
+  const [section,setSection]=useListState<'orders'|'reviews'>('data.section','orders');
   return <div className="page data-page"><div className="page-heading"><div><h1>Orders</h1><p>Review customer orders, production progress, collections and imported differences.</p></div><div className="inventory-toolbar"><AutoPlanningButton/><button className="button primary" disabled={storageMode !== 'database' || mutationLocked || hasConflict} onClick={openImport}><Upload size={16}/>Import Excel</button></div></div>{storageMode === 'database' ? <><div className="order-views data-section-tabs" role="group" aria-label="Order data sections"><button aria-pressed={section==='orders'} onClick={()=>setSection('orders')}>Orders</button><button aria-pressed={section==='reviews'} onClick={()=>setSection('reviews')}>Import review queue</button></div>{section==='orders'?<DataBrowser/>:<ImportReviewQueue/>}</> : <div className="notice warning">Orders require the PostgreSQL workspace. Manual planning remains available offline.</div>}</div>;
 }
 

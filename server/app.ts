@@ -40,6 +40,12 @@ export function createApp(options: AppOptions): express.Express {
     response.json(await options.store.getWorkspace());
   }));
 
+  app.get("/api/operations-summary", asyncRoute(async (request, response) => {
+    const query = new URL(request.originalUrl, "http://localhost").searchParams;
+    for (const [name] of query) throw badRequest(`Operations summary filter ${name} is not supported.`);
+    response.json(await options.store.getOperationsSummary());
+  }));
+
   app.get("/api/data", asyncRoute(async (request, response) => {
     const query = new URL(request.originalUrl, "http://localhost").searchParams;
     response.json(await options.store.listSourceOrders(query));

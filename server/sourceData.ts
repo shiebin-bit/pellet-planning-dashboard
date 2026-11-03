@@ -420,80 +420,18 @@ export async function setDeliveryStatus(
   };
 }
 
-export async function listSourceOrders(pool: pg.Pool, query: URLSearchParams): Promise<SourceOrderPage> {
-  validateSourceListQuery(query);
-  const search = (query.get("search") ?? "").trim();
-  const values: unknown[] = [];
-  const where = ["o.workspace_id = 1"];
-  const dynamicWhere: string[] = [];
-  if (search) {
-    values.push(`%${search}%`);
-    dynamicWhere.push(`(do_no ILIKE $${values.length} OR material_code ILIKE $${values.length} OR fields->>'description' ILIKE $${values.length} OR fields->>'soldToParty' ILIKE $${values.length} OR fields->>'shipToParty' ILIKE $${values.length} OR fields->>'medication' ILIKE $${values.length} OR fields->>'fmrOmed' ILIKE $${values.length})`);
-  }
-  for (const [name, operator] of [["deliveryFrom", ">="], ["deliveryTo", "<="]] as const) {
-    const value = query.get(name);
-    if (value) { values.push(value); dynamicWhere.push(`delivery_date ${operator} $${values.length}::date`); }
-  }
-  const unit = query.get("unit");
-  if (unit) { values.push(unit); where.push(`v.fields->>'unit' = $${values.length}`); }
-  const deliveryStatus = query.get("deliveryStatus");
-  if (deliveryStatus) { values.push(deliveryStatus); where.push(`o.delivery_status = $${values.length}`); }
-  const importId = query.get("importId");
-  if (importId) { values.push(importId); where.push(`o.latest_import_id = $${values.length}`); }
-  const today = malaysiaDate();
-  const productionStatus = query.get("productionStatus");
-  if (productionStatus) { values.push(productionStatus); dynamicWhere.push(`production_status = $${values.length}`); }
-  const overdue = query.get("overdue");
-  const pickupOverdue = "delivery_status <> 'delivered' AND current_days_outstanding > 0";
-  const productionOverdue = "production_status NOT IN ('completed', 'external-complete') AND current_delivery_lead_days < 0";
-  if (overdue === "true" || overdue === "pickup") dynamicWhere.push(`(${pickupOverdue})`);
-  if (overdue === "production") dynamicWhere.push(`(${productionOverdue})`);
-  if (overdue === "false") dynamicWhere.push(`NOT (COALESCE((${pickupOverdue}), false) OR COALESCE((${productionOverdue}), false))`);
-  const view = query.get("view") ?? "all";
-  if (view === "needs-production") {
-    dynamicWhere.push(`delivery_status <> 'delivered' AND source_quantity > 0 AND (
-      (is_inventory_tracked AND net_to_plan_scaled > 0) OR
-      (NOT is_inventory_tracked AND source_net_to_plan_scaled > 0)
-    )`);
-  }
-  if (view === "ready-pickup") {
-    dynamicWhere.push(`delivery_status <> 'delivered' AND source_quantity > 0 AND (
-      (is_inventory_tracked AND remaining_to_collect_scaled > 0 AND reserved_scaled >= remaining_to_collect_scaled) OR
-      (NOT is_inventory_tracked AND production_status IN ('completed', 'external-complete'))
-    )`);
-  }
-  if (view === "needs-review") dynamicWhere.push("needs_review");
-  const requestedPage = Number(query.get("page") ?? 1);
+export async function listSourceOrders(
+  pool: pg.Pool | pg.PoolClient,
+  query: URLSearchParams,
+  referenceDay = malaysiaDate(),
+): Promise<SourceOrderPage> {
+  const { values, where, dynamicWhere, requestedPage } = sourceListFilters(query);
+  const today = referenceDay;
+  if (!validDate(today)) throw new Error("Source list reference day must be a valid date.");
   values.push(requestedPage);
   const pageParameter = `$${values.length}`;
   const result = await pool.query<SourceListResult>(
-    `WITH ${inventoryProgressCtes()}, base AS (
-       SELECT o.id, o.latest_version, o.latest_import_id AS import_id, i.file_name, i.as_of_date::text AS as_of_date,
-         o.delivery_status, o.delivery_source, o.delivery_recorded_at, o.delivery_reason,
-         (o.needs_review OR EXISTS(SELECT 1 FROM source_order_discrepancies d WHERE d.source_order_id=o.id AND d.status='pending') OR ${sourcePlanningMismatchSql()} OR
-           (COALESCE(ip.is_inventory_tracked, false) AND COALESCE(ip.inventory_needs_review, false))) AS needs_review,
-         o.updated_at,
-         ${effectiveFieldsSql()} AS fields, j.id AS job_id, j.status AS job_status, j.source_order_version AS job_source_version,
-         j.source_snapshot AS job_source_snapshot,
-         ${effectiveDeliveryDateSql()} AS delivery_date, o.do_no, o.material_code,
-         COALESCE((v.fields->>'quantity')::numeric, 0) AS source_quantity,
-         COALESCE(ip.is_inventory_tracked, false) AS is_inventory_tracked,
-         COALESCE(ip.net_to_plan_scaled, 0) AS net_to_plan_scaled,
-         ${sourceNetToPlanSql()} AS source_net_to_plan_scaled,
-         COALESCE(ip.reserved_scaled, 0) AS reserved_scaled,
-         COALESCE(ip.remaining_to_collect_scaled, 0) AS remaining_to_collect_scaled,
-         ip.inventory_unit,
-         ${productionStatusSql()} AS production_status,
-         (${effectiveDeliveryDateSql()} - '${today}'::date)::integer AS current_delivery_lead_days,
-         CASE WHEN o.delivery_status='delivered' THEN 0 ELSE GREATEST(0, ('${today}'::date - ${effectiveDeliveryDateSql()})::integer + 1) END AS current_days_outstanding
-       FROM source_orders o
-       JOIN source_order_versions v ON v.source_order_id = o.id AND v.version = o.latest_version
-       JOIN source_imports i ON i.id = o.latest_import_id
-       LEFT JOIN LATERAL (SELECT j.id,j.status,j.payload,a.source_order_version,a.source_snapshot FROM job_source_allocations a JOIN jobs j ON j.id=a.job_id WHERE a.source_order_id=o.id AND j.workspace_id=1 AND j.status<>'cancelled' ORDER BY j.ordinal DESC LIMIT 1) j ON true
-       LEFT JOIN source_allocation_progress sp ON sp.source_order_id=o.id
-       LEFT JOIN inventory_progress ip ON ip.source_order_id = o.id
-       WHERE ${where.join(" AND ")}
-     ), filtered AS (
+    `WITH ${sourceListRowsCte(where, today)}, filtered AS (
        SELECT * FROM base${dynamicWhere.length ? ` WHERE ${dynamicWhere.join(" AND ")}` : ""}
      ), stats AS (
        SELECT count(*)::integer AS total,
@@ -522,6 +460,103 @@ export async function listSourceOrders(pool: pg.Pool, query: URLSearchParams): P
     items, page: row.page, pageSize: 50, total: row.total,
     stats: { total: row.total, planned: row.planned, running: row.running, completed: row.completed, delivered: row.delivered, overdue: row.overdue },
   };
+}
+
+export async function countSourceOrders(
+  client: pg.Pool | pg.PoolClient,
+  query: URLSearchParams,
+  referenceDay: string,
+): Promise<number> {
+  const { values, where, dynamicWhere } = sourceListFilters(query);
+  if (!validDate(referenceDay)) throw new Error("Source list reference day must be a valid date.");
+  const result = await client.query<{ total: number }>(
+    `WITH ${sourceListRowsCte(where, referenceDay)}, filtered AS (
+       SELECT 1 FROM base${dynamicWhere.length ? ` WHERE ${dynamicWhere.join(" AND ")}` : ""}
+     ) SELECT count(*)::integer AS total FROM filtered`,
+    values,
+  );
+  return result.rows[0]?.total ?? 0;
+}
+
+function sourceListFilters(query: URLSearchParams): {
+  values: unknown[];
+  where: string[];
+  dynamicWhere: string[];
+  requestedPage: number;
+} {
+  validateSourceListQuery(query);
+  const search = (query.get("search") ?? "").trim();
+  const values: unknown[] = [];
+  const where = ["o.workspace_id = 1"];
+  const dynamicWhere: string[] = [];
+  if (search) {
+    values.push(`%${search}%`);
+    dynamicWhere.push(`(do_no ILIKE $${values.length} OR material_code ILIKE $${values.length} OR fields->>'description' ILIKE $${values.length} OR fields->>'soldToParty' ILIKE $${values.length} OR fields->>'shipToParty' ILIKE $${values.length} OR fields->>'medication' ILIKE $${values.length} OR fields->>'fmrOmed' ILIKE $${values.length})`);
+  }
+  for (const [name, operator] of [["deliveryFrom", ">="], ["deliveryTo", "<="]] as const) {
+    const value = query.get(name);
+    if (value) { values.push(value); dynamicWhere.push(`delivery_date ${operator} $${values.length}::date`); }
+  }
+  const unit = query.get("unit");
+  if (unit) { values.push(unit); where.push(`v.fields->>'unit' = $${values.length}`); }
+  const deliveryStatus = query.get("deliveryStatus");
+  if (deliveryStatus) { values.push(deliveryStatus); where.push(`o.delivery_status = $${values.length}`); }
+  const importId = query.get("importId");
+  if (importId) { values.push(importId); where.push(`o.latest_import_id = $${values.length}`); }
+  const productionStatus = query.get("productionStatus");
+  if (productionStatus) { values.push(productionStatus); dynamicWhere.push(`production_status = $${values.length}`); }
+  const overdue = query.get("overdue");
+  const pickupOverdue = "delivery_status <> 'delivered' AND current_days_outstanding > 0";
+  const productionOverdue = "production_status NOT IN ('completed', 'external-complete') AND current_delivery_lead_days < 0";
+  if (overdue === "true" || overdue === "pickup") dynamicWhere.push(`(${pickupOverdue})`);
+  if (overdue === "production") dynamicWhere.push(`(${productionOverdue})`);
+  if (overdue === "false") dynamicWhere.push(`NOT (COALESCE((${pickupOverdue}), false) OR COALESCE((${productionOverdue}), false))`);
+  const view = query.get("view") ?? "all";
+  if (view === "needs-production") {
+    dynamicWhere.push(`delivery_status <> 'delivered' AND source_quantity > 0 AND (
+      (is_inventory_tracked AND net_to_plan_scaled > 0) OR
+      (NOT is_inventory_tracked AND source_net_to_plan_scaled > 0)
+    )`);
+  }
+  if (view === "ready-pickup") {
+    dynamicWhere.push(`delivery_status <> 'delivered' AND source_quantity > 0 AND (
+      (is_inventory_tracked AND remaining_to_collect_scaled > 0 AND reserved_scaled >= remaining_to_collect_scaled) OR
+      (NOT is_inventory_tracked AND production_status IN ('completed', 'external-complete'))
+    )`);
+  }
+  if (view === "needs-review") dynamicWhere.push("needs_review");
+  const requestedPage = Number(query.get("page") ?? 1);
+  return { values, where, dynamicWhere, requestedPage };
+}
+
+function sourceListRowsCte(where: string[], today: string): string {
+  return `${inventoryProgressCtes()}, base AS (
+       SELECT o.id, o.latest_version, o.latest_import_id AS import_id, i.file_name, i.as_of_date::text AS as_of_date,
+         o.delivery_status, o.delivery_source, o.delivery_recorded_at, o.delivery_reason,
+         (o.needs_review OR EXISTS(SELECT 1 FROM source_order_discrepancies d WHERE d.source_order_id=o.id AND d.status='pending') OR ${sourcePlanningMismatchSql()} OR
+           (COALESCE(ip.is_inventory_tracked, false) AND COALESCE(ip.inventory_needs_review, false))) AS needs_review,
+         o.updated_at,
+         ${effectiveFieldsSql()} AS fields, j.id AS job_id, j.status AS job_status, j.source_order_version AS job_source_version,
+         j.source_snapshot AS job_source_snapshot,
+         ${effectiveDeliveryDateSql()} AS delivery_date, o.do_no, o.material_code,
+         COALESCE((v.fields->>'quantity')::numeric, 0) AS source_quantity,
+         COALESCE(ip.is_inventory_tracked, false) AS is_inventory_tracked,
+         COALESCE(ip.net_to_plan_scaled, 0) AS net_to_plan_scaled,
+         ${sourceNetToPlanSql()} AS source_net_to_plan_scaled,
+         COALESCE(ip.reserved_scaled, 0) AS reserved_scaled,
+         COALESCE(ip.remaining_to_collect_scaled, 0) AS remaining_to_collect_scaled,
+         ip.inventory_unit,
+         ${productionStatusSql()} AS production_status,
+         (${effectiveDeliveryDateSql()} - '${today}'::date)::integer AS current_delivery_lead_days,
+         CASE WHEN o.delivery_status='delivered' THEN 0 ELSE GREATEST(0, ('${today}'::date - ${effectiveDeliveryDateSql()})::integer + 1) END AS current_days_outstanding
+       FROM source_orders o
+       JOIN source_order_versions v ON v.source_order_id = o.id AND v.version = o.latest_version
+       JOIN source_imports i ON i.id = o.latest_import_id
+       LEFT JOIN LATERAL (SELECT j.id,j.status,j.payload,a.source_order_version,a.source_snapshot FROM job_source_allocations a JOIN jobs j ON j.id=a.job_id WHERE a.source_order_id=o.id AND j.workspace_id=1 AND j.status<>'cancelled' ORDER BY j.ordinal DESC LIMIT 1) j ON true
+       LEFT JOIN source_allocation_progress sp ON sp.source_order_id=o.id
+       LEFT JOIN inventory_progress ip ON ip.source_order_id = o.id
+       WHERE ${where.join(" AND ")}
+     )`;
 }
 
 export async function getSourceOrder(pool: pg.Pool, id: string): Promise<SourceOrderDetail | null> {

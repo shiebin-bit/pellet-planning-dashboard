@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from 'react';
+import { useListState } from '../lib/listNavigation';
 import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, RefreshCw, X } from 'lucide-react';
 import type { SourceImportReview, SourceImportReviewStatus, SourceOrderFieldName, SourceOrderFields } from '../domain/sourceTypes';
@@ -22,8 +23,8 @@ const LABELS: Record<SourceOrderFieldName, string> = {
 
 export function ImportReviewQueue() {
   const { savedAt, commit, mutationLocked, hasConflict } = useWorkspace();
-  const [status,setStatus]=useState<SourceImportReviewStatus>('pending');
-  const [page,setPage]=useState(1);
+  const [status,setStatus]=useListState<SourceImportReviewStatus>('reviews.status','pending');
+  const [page,setPage]=useListState('reviews.page',1);
   const [reload,setReload]=useState(0);
   const [result,setResult]=useState<Awaited<ReturnType<typeof readSourceImportReviews>>|null>(null);
   const [selected,setSelected]=useState<SourceImportReview|null>(null);
