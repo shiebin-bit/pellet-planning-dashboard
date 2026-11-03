@@ -30,11 +30,15 @@ const wait=async(fn)=>{
   const empty={...baseline.state,jobs:[],events:[],settings:{...baseline.state.settings,downtime:[]}};
   await command({type:'workspace.restore',backup:empty});
   const browser=await chromium.launch({headless:true,...(process.env.PLAYWRIGHT_CHANNEL?{channel:process.env.PLAYWRIGHT_CHANNEL}:!existsSync(chromium.executablePath())?{channel:'chrome'}:{})});
-  let page;
+  let page,context,traceActive=false;const commandTraffic=[];
   try{
-    const context=await browser.newContext({viewport:{width:1366,height:768},acceptDownloads:true,timezoneId:'UTC'});
+    context=await browser.newContext({viewport:{width:1366,height:768},acceptDownloads:true,timezoneId:'UTC'});
+    if(process.env.GITHUB_ACTIONS==='true'){await context.tracing.start({screenshots:true,snapshots:true,sources:true});traceActive=true;}
     page=await context.newPage();page.setDefaultTimeout(10_000);
     const errors=[];page.on('pageerror',error=>errors.push(error.message));
+    const commandType=request=>{try{return request.postDataJSON()?.command?.type??null;}catch{return null;}};
+    page.on('request',request=>{if(new URL(request.url()).pathname==='/api/commands')commandTraffic.push({at:new Date().toISOString(),phase:'request',type:commandType(request)});});
+    page.on('response',response=>{if(new URL(response.url()).pathname==='/api/commands')commandTraffic.push({at:new Date().toISOString(),phase:'response',type:commandType(response.request()),status:response.status()});});
     const job=async order=>(await get()).state.jobs.find(item=>item.orderNo===order);
     const open=id=>page.locator(`[data-job-id="${id}"] .hplan-card-open`);
     const readyToDrag=async(id,line)=>{
@@ -82,7 +86,12 @@ const wait=async(fn)=>{
       assert.ok(source&&target,'Expected visible source card and PM4 target before dragging');
       await page.mouse.move(source.x+source.width*.3,source.y+source.height*.35);await page.mouse.down();
       await page.mouse.move(source.x+source.width*.3+12,source.y+source.height*.35,{steps:3});
-      await page.mouse.move(target.x+target.width*.5,target.y+target.height*.5,{steps:15});await page.mouse.up();await page.getByRole('button',{name:'Confirm move',exact:true}).click();await page.getByRole('dialog',{name:'Review production move',exact:true}).waitFor({state:'hidden'});
+      await page.mouse.move(target.x+target.width*.5,target.y+target.height*.5,{steps:15});await page.mouse.up();
+      const review=page.getByRole('dialog',{name:'Review production move',exact:true});const confirm=review.getByRole('button',{name:'Confirm move',exact:true});
+      await confirm.waitFor({state:'visible'});await page.waitForFunction(button=>!button.disabled,await confirm.elementHandle());
+      await review.evaluate(node=>{window.__moveObserver?.disconnect();window.__moveDiagnostics=[];const record=()=>{const button=[...node.querySelectorAll('button')].find(item=>item.textContent?.trim()==='Confirm move');const value={at:new Date().toISOString(),confirmDisabled:button?.disabled??null,alerts:[...node.querySelectorAll('[role="alert"]')].map(item=>item.textContent?.trim())};const previous=window.__moveDiagnostics.at(-1);if(!previous||JSON.stringify({...previous,at:''})!==JSON.stringify({...value,at:''}))window.__moveDiagnostics.push(value);};window.__moveObserver=new MutationObserver(record);window.__moveObserver.observe(node,{subtree:true,childList:true,attributes:true,characterData:true});record();});
+      const responsePromise=page.waitForResponse(response=>{if(new URL(response.url()).pathname!=='/api/commands')return false;try{const body=response.request().postDataJSON();return body?.command?.type==='job.move'&&body.command.jobId===a.id;}catch{return false;}});
+      await confirm.click();const response=await responsePromise;assert.equal(response.status(),200,`Move command failed: ${response.status()} ${await response.text()}`);await review.waitFor({state:'hidden'});
       await wait(async()=>(await job('QA-DB-A')).lineId==='PM4');await readyToDrag(a.id,'PM4');
     };
     await drag('PM1');assert.equal((await job('QA-DB-A')).binNeedsReview,true);
@@ -292,6 +301,7 @@ const wait=async(fn)=>{
     assert.deepEqual(errors,[]);
     pass('Initial API failure requires reconnection and never falls back to browser/demo data; no page errors');
     await fs.writeFile(path.join(output,'verification.json'),JSON.stringify({at:new Date().toISOString(),date:date(),checks,errors},null,2));
-  }catch(error){if(page)await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>{});throw error;}
+    if(traceActive){await context.tracing.stop();traceActive=false;}
+  }catch(error){const moveDiagnostics=page?await page.evaluate(()=>window.__moveDiagnostics??[]).catch(()=>[]):[];const workspace=await get().catch(()=>null);await fs.writeFile(path.join(output,'failure-diagnostics.json'),JSON.stringify({at:new Date().toISOString(),error:error instanceof Error?error.message:String(error),commandTraffic,moveDiagnostics,workspace:workspace?{revision:workspace.revision,canUndo:workspace.canUndo,job:workspace.state.jobs.find(item=>item.orderNo==='QA-DB-A')}:null},null,2)).catch(()=>{});if(page)await page.screenshot({path:path.join(output,'failure.png')}).catch(()=>{});if(traceActive){await context.tracing.stop({path:path.join(output,'failure-trace.zip')}).catch(()=>{});traceActive=false;}throw error;}
   finally{await browser.close();await command({type:'workspace.restore',backup:baselineBackup});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

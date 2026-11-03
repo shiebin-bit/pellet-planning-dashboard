@@ -30,7 +30,7 @@ The API tests exercise concurrent revisions, invalid-command rollback, duplicate
 
 ## Browser integration
 
-`npm run test:browser` runs eleven scripts covering the base workflow, efficiency, pause/audit, UI, Data, inventory, table UX, Settings preview, list navigation, combined production and editable calendars. Mutation suites replace the selected workspace and restore the starting state in `finally`. Use a **separate disposable database/server**, never the real planning service. Create `millplan_browser_test` using the same `createdb` command as above with that database name. Copy `.env` to ignored `.env.browser-test`; change only its DATABASE_URL database path to `/millplan_browser_test`, keep HOST=127.0.0.1 and set PORT=8091. Build `dist` first.
+`npm run test:browser` runs twelve scripts covering the base workflow, efficiency, pause/audit, UI, Data, inventory, table UX, Settings preview, list navigation, combined production, editable calendars and planning safety. Mutation suites replace the selected workspace and restore the starting state in `finally`. Use a **separate disposable database/server**, never the real planning service. Create `millplan_browser_test` using the same `createdb` command as above with that database name. Copy `.env` to ignored `.env.browser-test`; change only its DATABASE_URL database path to `/millplan_browser_test`, keep HOST=127.0.0.1 and set PORT=8091. Build `dist` first.
 
 ```powershell
 npx playwright install chromium
