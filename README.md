@@ -1,184 +1,264 @@
-# Millplan · Pellet Planning Dashboard
+<p align="center">
+  <img src="src/assets/ffm-logo.jpg" alt="FFM logo" width="100">
+</p>
 
-A production planning dashboard for four pelleting lines, with a shared PostgreSQL workspace, movable production cards, inventory reservations and Excel/PDF reports. Planners import SAP order lists and daily stock workbooks from Excel, or enter production manually. The dashboard stores source orders separately, creates linked production cards on request, and calculates sequence, duration and planned utilisation.
+<h1 align="center">Millplan</h1>
 
-Built with React, TypeScript, Express and PostgreSQL 16. Docker Compose runs the application and database together.
+<p align="center">
+  A pellet production planning dashboard that connects SAP Excel orders, finished-goods stock, and daily schedules across four pelleting lines.
+</p>
 
-![Four-line planning board connected to PostgreSQL, showing optional sample records](docs/assets/planning-board.png)
+<p align="center">
+  <img src="https://img.shields.io/badge/React-19-149ECA?style=for-the-badge&logo=react&logoColor=white" alt="React 19">
+  <img src="https://img.shields.io/badge/TypeScript-5.9-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript 5.9">
+  <img src="https://img.shields.io/badge/Node.js-24-5FA04E?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node.js 24">
+  <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL 16">
+  <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
+  <a href="https://github.com/shiebin-bit/pellet-planning-dashboard/actions/workflows/ci.yml"><img src="https://github.com/shiebin-bit/pellet-planning-dashboard/actions/workflows/ci.yml/badge.svg?branch=main" alt="Verify dashboard CI"></a>
+</p>
 
-## Start on Windows
+<p align="center">
+  <a href="#dashboard-preview">Preview</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#architecture">Architecture</a> ·
+  <a href="#documentation">Documentation</a>
+</p>
 
-Install and open **Docker Desktop** with Linux containers enabled, then double-click **`OPEN-DASHBOARD.cmd`** (or the equivalent **`START-DASHBOARD.cmd`**). Both launch the Docker application backed by PostgreSQL. The first launch builds the image and creates a private `.env` with a random database password. It may take a few minutes.
+## Why This Project Exists
 
-Open **[http://127.0.0.1:8080](http://127.0.0.1:8080)**. A new database starts empty. Add your first production, or explicitly load sample records in Settings → Backup & recovery → Reset demo.
+Daily pellet planning starts with customer orders exported from SAP, stock balances in Excel, and a decision about what each line should produce. Keeping those records in separate spreadsheets makes it harder to see capacity, follow an order across several production days, or distinguish completed production from collected goods.
 
-To stop, double-click **`STOP-DASHBOARD.cmd`**. Stopping or rebuilding containers preserves the PostgreSQL volume. **Do not run `docker compose down -v` against data you need.**
+Millplan brings those steps into one shared PostgreSQL workspace. Planners can import orders, check available stock, arrange production cards, record actual output, and follow each order through collection. Manual production entry remains available alongside stock-aware planning suggestions.
 
-Equivalent PowerShell commands:
+## Dashboard Preview
+
+![Millplan planning board with four horizontal production lines and fictional sample records](docs/assets/planning-board.png)
+
+The desktop board shows PM1 to PM4 on one timeline. Card length follows planned duration, colours indicate status, and compatible orders can share one card with separate order quantities in its details. On phones, the board defaults to a per-line list; Timeline remains available.
+
+The screenshot uses fictional demonstration records. Company workbooks, customer details, reports, backups, and credentials are excluded from this repository.
+
+## What It Covers
+
+| Workspace | Main responsibility |
+| --- | --- |
+| **Overview** | Daily planned quantity, within-shift plan, received stock, utilisation, order/stock priorities, and weekly line capacity |
+| **Planning board** | Four-line Timeline/List, manual production, reviewed drag-and-drop movement, generated drafts, copy planning, and optional multi-order batches |
+| **Orders** | Excel import previews, search and filters, order progress, partial collection, and a review queue for changed SAP records |
+| **Stock** | Bags/bulk balances, reservations, available stock, safety-stock policies, daily movements, and physical-count adjustments |
+| **History** | Production records and activity, combined filters, totals across all matching results, and 50-row pagination |
+| **Settings** | Working calendar, line rates, changeover, unavailable periods, product catalog, stock policies, and backup/recovery |
+
+Supporting workflows include:
+
+- Due-date scheduling that respects stock reservations, unfinished production, line capacity, downtime, and existing cards.
+- Editable planning drafts with split production across dates and lines, utilisation previews, late-order warnings, and browser-local draft recovery.
+- Same-product order batches with per-order allocations; combining is optional and later-due batches can stay separate.
+- Server-time Start and Done, partial production receipts, pause/resume with reasons, and auditable output corrections.
+- Recorded-output progress and estimated finish when enough recent, reliable samples are available.
+- Daily or date-range Excel reports and landscape print/Save as PDF, independent of list pagination.
+- Revision-checked transactions, retry deduplication, retained drafts on conflicts, and before/after activity records.
+
+## Daily Workflow
+
+1. **Import orders.** Preview SAP Excel data and confirm new orders. Existing orders stay intact; differences enter a review queue for an explicit, reasoned correction.
+2. **Check stock.** Reserve compatible finished goods and identify the remaining order shortage or Make for stock replenishment need.
+3. **Plan production.** Generate a draft or add cards manually. Review quantities, dates, lines, order allocations, and capacity before saving.
+4. **Record output.** Start at the current server time, post partial quantities as work progresses, and enter the final cumulative output when marking Done.
+5. **Record collection.** Deduct only the quantity actually collected. Review order progress, stock movements, History, or export the required report.
+
+### Business Rules
+
+| Rule | Behaviour |
+| --- | --- |
+| Order identity | DO number + complete SAP material code; repeated imports add only unseen identities |
+| Product display | A description such as `FS 5220 BROILER...` displays as `5220`; the complete material code remains the stored identity |
+| Stock compatibility | Bags/bulk, bag weight, Medication, and FMR / OMED remain separate compatibility buckets |
+| Quantity precision | Whole Bags with saved 25 kg/50 kg weights; bulk stock and allocations to 0.001 MT |
+| Make for order | Produce the order shortage after compatible stock and unfinished production are considered |
+| Make for stock | Meet order demand and replenish the configured safety-stock target; extra output is applied once before splitting |
+| Production vs delivery | Done completes production; collection is recorded separately and may be partial |
+| Working calendar | Default 07:00–19:00 in Asia/Kuala_Lumpur; editable hours, overtime, closures, overnight shifts, and carry-over |
+| Historical records | Started/completed work retains its locked plan; imports do not invent production or collection movements |
+
+For example, **30 available Bags against a 100-Bag order leaves 70 Bags to produce**. With a Make for stock target of 20 Bags, the total suggestion becomes **90 Bags** before any configured extra. See the [inventory workflow](docs/inventory-workflow.md) for reservations, daily balances, and workbook rules.
+
+Planned utilisation describes scheduled capacity. Estimated finish uses recorded production samples; it is not a direct machine-sensor feed or measured OEE.
+
+## Stack
+
+| Layer | Technology |
+| --- | --- |
+| Frontend | React 19, TypeScript, Vite, Lucide icons, dnd-kit |
+| Backend | Node.js 24, Express 5, shared TypeScript business rules |
+| Database | PostgreSQL 16, SQL migrations, transactional commands |
+| Import and reports | ExcelJS, browser print/Save as PDF |
+| Testing | Vitest, Node test runner, Playwright, disposable PostgreSQL databases |
+| Infrastructure | Docker Compose, GitHub Actions; optional Cloudflare Tunnel for remote access |
+
+## Architecture
+
+```text
+Browser / React dashboard
+          |
+          | same-origin queries and revision-checked commands
+          v
+      Express API
+          |
+          +---- Shared TypeScript planning and inventory rules
+          |
+          v
+     PostgreSQL 16
+          |
+          +---- Automatic V5 workspace snapshots
+          +---- Full PostgreSQL dumps for database recovery
+```
+
+Docker serves the built dashboard and API together on port `8080`. PostgreSQL stays on the internal Compose network unless the optional loopback development port is enabled. Writes validate and save atomically; uncertain network retries reuse the original command ID.
+
+Repository layout:
+
+```text
+pellet-planning-dashboard/
+├── .github/workflows/    # CI
+├── src/
+│   ├── components/      # Shared UI, dialogs, and production details
+│   ├── domain/          # Scheduling, commands, quantities, and reports
+│   ├── lib/             # API, persistence, imports, and exports
+│   └── pages/           # Dashboard workspaces
+├── server/              # Express API, persistence, and backup service
+├── migrations/          # PostgreSQL schema changes
+├── tests/               # API and browser integration suites
+├── scripts/             # Setup, startup, backups, and demo history
+├── docs/                # User, developer, and operations guides
+├── compose.yml
+└── compose.dev.yml      # Optional localhost:5434 database access
+```
+
+## Current State
+
+The application runs as a shared, persistent workspace with order imports, inventory tracking, reviewed scheduling, actual production, reporting, and recovery. A new database starts empty. Fictional demo records are loaded only through an explicit action.
+
+The deployment model is a local Docker application. A configured Cloudflare Tunnel can route HTTPS traffic to it, but the host computer, Docker, and tunnel must remain running. GitHub Actions verifies the source; it does not automatically deploy this installation.
+
+The application currently has no login, user roles, or named audit actors. Shared company access needs an authentication layer and an agreed backup owner. `ALLOWED_ORIGINS` controls accepted browser origins; it is not a login mechanism.
+
+## Quick Start
+
+### Windows with Docker Desktop
+
+Install and open Docker Desktop with Linux containers enabled. From PowerShell:
 
 ```powershell
+git clone https://github.com/shiebin-bit/pellet-planning-dashboard.git
+cd pellet-planning-dashboard
 .\scripts\setup.ps1
 docker compose up --build -d --wait
-docker compose stop
 ```
 
-The default setup serves only this PC. It has no login or user roles. Company-wide access needs authentication, TLS, restricted database credentials and an agreed backup owner before deployment. A public source repository does not publish the running dashboard or its database; GitHub Pages cannot run this backend. The real SAP source workbook is private operational data and must never be committed to public GitHub.
+Open **[http://127.0.0.1:8080](http://127.0.0.1:8080)**.
 
-## What it does
+After cloning, you can also double-click **`OPEN-DASHBOARD.cmd`** or **`START-DASHBOARD.cmd`**. The setup script creates a private `.env` with a random database password and preserves an existing configuration. Docker-only startup does not require Node.js on Windows.
 
-| Area | Features |
-| --- | --- |
-| Overview | Whole assigned-date MT, estimated MT within each line's shift, net production receipts by posting date, planned utilisation, daily timelines or a Monday–Sunday capacity view with day drill-through, recorded downtime and actionable order/stock priorities |
-| Planning board | Timeline/List on desktop and mobile, with independent session choices; desktop defaults to four horizontal lines and mobile to per-line lists; direct Generate planning and a More disclosure for order planning, copy, combine and Undo; Day/Full plan, carry-over, changeover, downtime and direct date selection |
-| Planning batches | Due-date priority; optional same-product/same-due-date order batches with per-order quantities; capacity splits across lines/days; later-due batches stay separate |
-| Card movement | Drag a pending card to another line or sequence; review before/after times, affected tasks, utilisation and order deadlines before confirming; destination-bin review; recalculated line rate; one-step Undo; keyboard and held-touch movement |
-| Production details | Same-product orders can share one card with separate allocations; Add/edit in a dialog; searchable product catalog with description/default delivery; manual products; bags or bulk, orders, bins, remarks and issues |
-| Copy planning | Select manual cards by source date/line (linked Excel orders are excluded), enter fresh order references and adjusted quantities, preview target utilisation/carry-over, then append the batch atomically |
-| Orders | Customer orders, Excel worksheet/header mapping, insert-only Excel imports, saved-versus-Excel comparisons, a persistent review queue with reasoned field corrections, retained raw order versions, quick views, searchable orders and expandable delivery/deadline filters; 50 rows per page |
-| Stock | Separate Stock and Daily stock tabs; on-hand/reserved/available balances, exact standard-MTS replenishment shortage, explicit snapshot/baseline/count dates, loading/retry feedback, stock policies, physical-count dialogs and movement history |
-| Inventory | Separate Bags/bulk stock, exact Medication/FMR compatibility buckets, MTO/MTS policy, reservations, auditable stock movements, daily balances and reviewable planning drafts |
-| Actual production | Start records the current server time; running cards accept daily production receipts; Done asks for the final cumulative output and records the server's end time; later output corrections retain the original timestamps; pause/resume with reasons and recorded stop durations |
-| History | Combined date/line/status/search filters; totals across all matches, actual-output coverage; records and activity in pages of 50; before/after changes for edits, moves, execution, settings and catalog |
-| Table navigation | Stock, daily stock and production history use bounded scrolling, sticky headers/actions, horizontal controls and synchronized top/bottom pagination; date labels distinguish list filters from planning-day exports |
-| Interface | Bright surfaces, navy actions and restrained FFM gold accents; compact Orders/Stock rows with keyboard-expandable full product details; exact quantities and status colors retained |
-| Reports | Daily or up to 31 days; optional line selection; numeric Excel output with production-stop intervals; A4 landscape print/Save as PDF |
-| Settings and backup | Product catalog, calendar, rates, bag weight and downtime; automatic server-side V5 JSON snapshots every24 hours with14-file retention and visible status; manual JSON recovery and separate full PostgreSQL dumps |
+- Add your own production or import orders into the empty workspace.
+- For fictional sample data, use **Settings → Backup & recovery → Reset demo**.
+- Stop with **`STOP-DASHBOARD.cmd`** or `docker compose stop`.
 
-The bright workbench shows the planning date and Add production only on Overview and Planning board. Production exports are available on Overview, Planning board and History; History also has a direct Date range report button. Backups are in Settings → Backup & recovery. Overview shows daily totals, actionable order/stock priorities, source dates and the four-line timeline, followed by production checks and output reconciliation. Line-capacity details and the next-task queue expand on demand; recorded downtime remains visible. The horizontal board fits all four mills on a 1366 × 768 display; forms and production details open over the current page. Navigation collapses to icons on tablets and a drawer on phones. Status colours always have text or accessible descriptions. Narrow planning cards show a full-code, quantity, order and dated-time preview on hover or keyboard focus; Escape dismisses the preview, Enter opens details, and Space retains keyboard dragging.
+Container replacement and normal stopping preserve the database volume. **`docker compose down -v` deletes that volume.**
 
-Overview priorities use the current MYT date, independently of the selected planning day: overdue quantities still to plan, uncollected orders due today through three days ahead, standard MTS stock below its target, and pending Excel review items. Each opens the matching list with old search, filters, page and scroll reset. Counts cover every matching result. Low-stock filtering shows the matching standard buckets only. Refreshing or unavailable summaries disable these shortcuts and never imply zero demand. Source dates distinguish the newest Excel as-of date from the latest upload and that file's own date; inventory baseline and verified count dates remain separate. Orders and Stock use compact headers while retaining data text sizes and mobile touch targets. Generated drafts validate edited quantities, dates and lines against each line's actual working window, including overtime, closures and overnight shifts.
+On other operating systems, copy `.env.example` to `.env`, set a long random hex password, use the same password in `DATABASE_URL`, and run the Compose command above.
 
-Production details keep Start, Record quantity and Done in a fixed bottom action bar. Record quantity focuses the partial-receipt form; Done opens the cumulative final-output form and keeps its confirmation visible while scrolling.
+### Native Development
 
-The main Orders table groups delivery/deadline and status/collection into seven columns. Expand Breakdown for reserved stock, produced, collected and scheduled quantities. Bags display as whole numbers; bulk MT keeps three decimals so a 0.001 MT shortage remains visible. The planning order picker retains its full nine-column view.
-
-Orders, Stock and Daily stock use a shared product title such as **5220 · 25kg Bags** or **5220 · Bulk**, with the description and complete SAP material code below it. The FS code comes from the description; it is never sliced out of the material ID. Order packaging uses the saved description before the current stock policy. Unknown bag weights display Bags without guessing a size. Standard-MTS stock shows **Short X Bags/MT** against available stock; Medication/FMR variants are kept separate. Initial loads and errors never imply zero balances or a missing baseline. Refreshes keep the last successful balances with feedback; changing the Daily stock date hides the previous date until the new response arrives. Missing product descriptions do not prevent daily balances from loading.
-
-Planning offers **Timeline** and **List** on every screen. Desktop defaults to the horizontal board; up to600px, the PM1–PM4 list is the default. List rows show the description, packaging, status, native quantity, time, order count and changeover. Open a row for complete order details and Move, or use Timeline for dragging. Desktop/mobile choices are remembered independently for the current app session. Both views honor Day/Full plan and unavailable periods.
-
-In Overview, switch **Daily / Week capacity** to inspect Monday–Sunday without changing saved jobs. Each line/day shows production-plus-changeover load, booked/available hours, the portion of batch MT inside that line's shift, carry-in/continuation and missing quantities. Date-specific overtime, closures, overnight work and downtime are included. Click a cell to open that day's board; use the arrows to inspect adjacent weeks. This is planned capacity, not measured OEE or a new scheduling run.
-
-Orders, Stock, Daily stock and History remember their own search, filters, page and scroll positions while navigating in the current app session. Stock also remembers its selected tab and Daily stock date. Changing a filter resets its list to page one; Clear filters restores all Orders. A browser refresh starts fresh. The board's order picker has independent filters. Orders offers All orders, Needs production (remaining shortage after stock reservations and unfinished cards), Ready for pickup (remaining order covered by reserved stock), and Needs review. These views combine with search and the collapsed Advanced filters; summary totals cover every matching page. Legacy orders without an inventory baseline use their linked-card/production status.
-
-Settings has Workspace, Production rules, Unavailable periods, Products, Stock policies (database only), and Backup & recovery tabs. Drafts survive tab switches. The sticky Save settings bar applies only to workspace/rate/calendar drafts; catalog and stock changes save separately. Invalid planning settings reveal and focus their section before submitting. Leaving Settings with unsaved planning settings asks whether to stay or discard. Browser refresh/close also uses the browser’s unsaved-change warning.
-
-Card colours: **gray** not started, **blue** running, **yellow** paused, **green** completed, **red** issue. Yellow stripes indicate changeover. Started/completed plans stay locked, and each line can have only one running production.
-
-Database saves are confirmed before cards/forms show success. Concurrent stale changes keep the draft and require an explicit Reload latest before resubmitting. Uncertain saves keep the originating form open and offer Retry connection; retrying an acknowledged command cannot create a duplicate. Other changes refresh approximately every 15 seconds when no editor/details/settings draft is open.
-
-Generate planning supports **Save draft to this browser** and **Resume saved draft**. Edited quantities, lines and dates survive a reload. This is one draft per browser/origin, not a shared database draft or backup. Unsaved generated drafts warn on close; a changed workspace or passed planning date requires regeneration. Confirm persists its exact request ID before sending, so Check previous save after a reload can resolve a lost response without adding duplicate cards. Another tab changing the saved draft pauses editing until it is explicitly loaded.
-
-Overview separates whole quantities assigned to the selected date from the share of production time inside that shift (including carry-in). **Received into stock** is net stock-production posting quantity for the selected calendar date, including partial/running receipts and corrections; it is not measured physical shift output. Historical bag entries without a saved weight are excluded and counted explicitly. Metric explanations are available from the information buttons beside their labels (keyboard Enter / Escape supported). Plan vs actual remains a completed-task reconciliation.
-
-## Excel orders → production → delivery
-
-Open **Orders → Import Excel**, choose an `.xlsx` file (up to 5 MB / 2,000 rows), then verify the worksheet, header row, column mapping, text-date format and **Excel as-of date**. The preview distinguishes new orders from existing orders that will be skipped. Differences show **Saved · retained** versus **Excel · queued for review**. Existing orders keep their quantity, delivery date, description, raw status, manual fields, source version and original import date, even when the file differs. Zero, empty text and missing values remain distinct. Every error must be corrected before confirming the entire import. Import does not create production cards. The inventory feed variant is documented in [Inventory and stock workflow](docs/inventory-workflow.md).
-
-The 13 columns are DO no, Delivery date, Sold to Party, Ship to Party, Material code, Description, Qty, Unit, Delivery lead days, Remark, Days of outstanding, Medication and FMR / OMED. Identifiers retain text/leading zeros. Units are MT or whole Bags. Formula cells require cached saved results; the app never evaluates formulas or external links. Date formats are selected explicitly. Use fictional workbooks in tests and examples; do not place the real source workbook, company/customer names or raw DO codes in this repository.
-
-**DO no + full Material code** identifies an order. Import only adds unseen identities; existing orders and orders absent from a later file are retained. Choose **Plan production** on Orders or **Plan from Orders** on the board, then **Add same-product order** to put several compatible orders on one production card. Each order has its own planned quantity; details list its DO, customer, delivery date and saved allocation. **Combine cards** combines compatible, not-started source cards on the same date and line; original cards stay in History as cancelled records. Grouping requires the same full material, unit/bag weight and Medication/FMR bucket. Card totals, duration and utilisation count once. Production receipts are allocated to orders in saved order, with surplus entering stock. Source-linked cards cannot be copied.
-
-Production titles read the short code from the description (for example `FS 5220 BROILER…` → `5220`), while the full SAP material code remains in details and is still the identity used for inventory and imports. Manual products without an FS code keep their entered code. Existing source-linked card allocations are read-only; cancel and replan pending work to change them. Started/completed cards retain their production data.
-
-Order allocations appear at the top of production details: batch total and order count, then each DO, planned quantity, customer, delivery date and recorded production. **Combine with other cards** opens compatible pending cards beside the current selection; review each delivery date and choose which orders belong in the batch. Combining remains optional. Missing customer/delivery fields on older cards are displayed from the saved source order without rewriting the card's quantities or snapshots.
-
-Production **Done** completes production only; it does not prove that the customer collected the order. Collection is recorded separately and can be partial, with only the collected quantity deducted from the matching stock bucket. In a dated inventory feed, raw `DONE` means production-ready/complete and raw `OUT` means historically fully collected; neither replays a historical production or delivery movement against the opening Closing baseline. A conflicting historical status is flagged for review and never creates fictitious actual timestamps. For inventory-tracked orders, record quantities collected and reverse mistaken collections with a reason. Legacy workspaces without a stock baseline retain their delivery confirmation controls. Recorded delivery time is the confirmation time, not necessarily the physical pickup time.
-
-Delivery lead days is the number of calendar days until the delivery due date. Days of outstanding is 1 on the due date, 2 on the following date, and increases daily in MYT until full collection. Production readiness and delivery completion are independent.
-
-The default production window is **07:00–19:00** on all four lines. Change **Planning day starts** and **Daily available hours** in Settings → Workspace, then save. The new window takes effect from the server's current Malaysia date. Pending work for today/future dates recalculates, with overflow continuing in the next working window; past-assigned plans and started/completed segments retain their prior calendar. A shift can cross midnight. Generate planning uses the saved window and downtime to split available capacity; regenerate the draft after changing hours. Saving settings preserves card quantities and does not add or delete cards. MT/hour determines each batch's production duration; daily hours determine how much fits in each shift. Actual Start, pauses and Done record action times independently of shift hours.
-
-## Inventory quick examples
-
-Inventory keeps Bags and bulk MT separate. Bag quantities are whole numbers with a 25 kg or 50 kg weight; bulk quantities use MT to 0.001. For an exact Medication/FMR bucket, **30 stock against a 100-unit MTO order leaves 70 to plan**. If the product is MTS with a numeric safety-stock target of 20, the order shortage plus replenishment is **70 + 20 = 90 to plan**. The default extra is 0; a fixed or percentage extra is applied once to the unsplit demand, not once per generated split card.
-
-See [Inventory and stock workflow](docs/inventory-workflow.md) for the daily `bag order` / `bulk order` / dated-sheet contract, reservations, ledger movements, planning draft review, and schema version 4 recovery rules. Existing manual cards remain intact; importing inventory does not auto-backfill their ledger receipts.
-
-## Historical demo records
-
-For presentations, the administrator script can append explicitly fictional history to an existing **demo workspace**. Load the initial sample in Settings first if the workspace is empty. The script accepts up to 31 calendar days before today in Malaysia time, skips every date/line that already has records, preserves existing records and settings, and does nothing on a repeat import. It creates no automatic startup seed.
-
-Preview from the project directory with Docker running:
-
-```powershell
-docker compose run --rm --no-deps `
-  --volume "${PWD}/scripts:/app/scripts:ro" `
-  --volume "${PWD}/src/domain:/app/src/domain:ro" `
-  app node --import tsx scripts/seed-demo-history.ts `
-  --dry-run --from 2026-09-20 --to 2026-10-19 --seed 20261020
-```
-
-After reviewing the counts and running `scripts/backup.ps1`, repeat with `--apply` in place of `--dry-run`. Import appends records in one revision-checked transaction and retains the preceding workspace as a recovery copy. It refuses non-demo workspaces. All generated products, orders, descriptions and activity are marked as fictional; they are not company or SAP records. A native development setup can use `npm run seed:demo-history --` with the same arguments and its private `DATABASE_URL`.
-
-## Existing browser records
-
-`OPEN-OFFLINE-DASHBOARD.cmd` opens the optional standalone **offline** `dist/index.html` after a build. It uses browser localStorage and the device clock. `OPEN-DASHBOARD.cmd` and `START-DASHBOARD.cmd` always start the HTTP application, which uses PostgreSQL and the server clock; these are separate workspaces.
-
-To migrate: open the old offline dashboard in its original browser/path → Settings → Download backup. Open the database dashboard → Settings → Restore JSON backup → review → Replace workspace. This replaces rather than merges records, settings and activity. A copy of the preceding database workspace remains available for download after reload. Nothing is silently imported or seeded.
-
-Database JSON version 4 includes planning, the complete source graph, imported orders, immutable source versions, job links, inventory policies, baseline reports, reservations and the full stock ledger. Offline backups remain planning-only. Version 4 backups containing inventory must be restored in the PostgreSQL workspace. Legacy versions 1–3 do not contain inventory; restoring one warns that current stock and reservations will be cleared, while the complete workspace immediately before the replacement remains available as a previous recovery copy. Catalog changes affect future input only: saved production records retain their details. JSON does not contain command receipts or database migrations. Use PostgreSQL dumps for full database recovery.
-
-## Planning assumptions
-
-- Default rates in MT/hour: PM1 8.5, PM2 7.5, PM3 6.5, PM4 7.0; PM2 uses 6.5 for prefixes 6811 and 6542.
-- Default bags are 50 kg. Production hours = MT ÷ applicable rate.
-- Different full material codes add changeover when either adjacent card comes from Orders; two manual cards compare their first four product-code characters. The default changeover is 30 minutes.
-- The default shift is 07:00–19:00 (12 hours). Saved working hours apply from today onward; overnight shifts and carry-over are supported. Historical assignments retain their recorded calendar.
-- Downtime interrupts production/changeover and reduces availability. Work may carry into following days.
-- Planned utilisation measures production inside the selected planning-day window divided by available time. It includes carry-over. Planned MT and report records are grouped by assigned planning date.
-- Pausing records the server time and a required reason; Resume closes that interval. Done also closes an ongoing pause. Paused tasks retain their locked plan and occupy their line. Reporting an issue and recording a pause are separate actions.
-- Recorded downtime sums only explicit pause intervals. Overview clips these to the selected working-day window across all records, including jobs assigned to earlier dates. Across mills the total is line-minutes, so two mills paused for 30 minutes contribute 60 minutes.
-- Actual elapsed time includes stops; elapsed minus recorded stops is **not productive time or OEE**. Older tasks without pause intervals show zero recorded downtime, which does not prove there were no stops. Unknown actual MT remains blank, while known zero remains zero.
-- Scheduling and display use Asia/Kuala_Lumpur, independently of the browser's time zone.
-- Inventory quantities use whole bags for 25 kg/50 kg bag items and 0.001 MT for bulk items. Medication and FMR / OMED are exact compatibility buckets, including a separate blank bucket.
-- Inventory MTO plans order shortages per advice; MTS replenishes a numeric safety-stock target after order demand. A product's fixed or percentage extra defaults to zero and is applied once before any card split.
-- Daily stock follows `Opening + Production + Received + Sales return - Rework - Issue + Adjustment = Closing`. Later imports add only new orders by default. An explicitly confirmed physical-count import records previewed differences as adjustments and never replaces the ledger; production receipts add stock and partial collections deduct it.
-
-The optional sample reflects the original prototype's product families/quantities and configurable planning assumptions. Its order references, site, bins, statuses and actual results are illustrative, not an SAP import. The private source-file scale is 443 order rows and 87 finished-goods stock items; no company/customer names, raw DO codes, source workbook, exported reports, credentials or local backups are committed.
-
-## Development
-
-Requires **Node.js 24.x**, npm and Docker. The Docker-only startup does not require Node on Windows.
+Requires Node.js **24.x**, npm, and Docker for PostgreSQL. Run from the repository root:
 
 ```powershell
 npm ci
 .\scripts\setup.ps1
+docker compose stop app
 docker compose -f compose.yml -f compose.dev.yml up -d db --wait
 npm run build
-npm start
+npm run server:dev
 ```
 
-This runs the native API on port 8080, using PostgreSQL on loopback port 5434. In another terminal run `npm run dev` for Vite at [http://127.0.0.1:5178](http://127.0.0.1:5178). Its `/api` proxy targets port 8080. Keep the example `ALLOWED_ORIGINS` in `.env` for Vite. Stop the Docker **app** before running a native API on the same port. `npm run preview` previews assets only; use `npm start` for the complete built application.
-
-On other operating systems, copy `.env.example` to `.env`, set a long random hex password and use that same password in `DATABASE_URL`, then run `docker compose up --build -d --wait`. Never commit `.env`.
-
-## Verification
+In another terminal:
 
 ```powershell
-npm test                  # domain, command, catalog, copy, backup, report and storage tests
-npm run build             # frontend + server TypeScript and production HTML
-npm audit --omit=dev      # deployed npm dependency audit
+npm run dev
 ```
 
-Real PostgreSQL API and browser suites require **disposable databases**. See [testing instructions](docs/TESTING.md). They cover persistence, concurrent revisions, rollback, retries, actual timestamps, reports, recovery and inventory workflows. Use the existing commands as verification steps; this README does not assert a passing test, deployment or CI result.
+| Service | Local address |
+| --- | --- |
+| Built dashboard and API | `http://127.0.0.1:8080` |
+| Vite development UI | `http://127.0.0.1:5178`, with `/api` proxied to port `8080` |
+| PostgreSQL for DataGrip/native development | `127.0.0.1:5434`, enabled by `compose.dev.yml` |
 
-## Handoff documentation
+Keep the example Vite origins in `.env`. `npm run preview` previews assets only; `npm start` serves the complete built application. Avoid running the Docker app and native API on the same port.
+
+### Configuration
+
+| Variable | Purpose |
+| --- | --- |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Database identity and private credentials |
+| `APP_PORT` | Docker application host port; defaults to `8080` |
+| `DATABASE_URL` | Native API database connection; Compose supplies its own internal connection |
+| `HOST`, `PORT` | Native API binding; setup uses `127.0.0.1:8080` |
+| `ALLOWED_ORIGINS` | Exact permitted origins for development or a configured HTTPS reverse proxy |
+| `AUTOMATIC_BACKUP_INTERVAL_HOURS` | Automatic snapshot interval; defaults to `24` |
+| `AUTOMATIC_BACKUP_RETENTION_COUNT` | Managed successful snapshots retained; defaults to `14` |
+
+Use [.env.example](.env.example) as the configuration reference. Keep `.env`, tunnel tokens, database dumps, and company data private.
+
+## Testing
+
+```powershell
+npm test
+npm run build
+npm audit --omit=dev
+```
+
+For database and browser verification, **configure separate disposable databases and a test server first**. API tests truncate configured test tables, and browser mutation suites replace their selected workspace. Follow [Testing and verification](docs/TESTING.md); never point these suites at the active planning service.
+
+```powershell
+npm run test:api
+npm run test:browser
+```
+
+Coverage includes scheduling, precise quantities, order batching, import reviews, reservations, partial production/collection, calendar changes, conflict handling, network retries, backup recovery, reports, and desktop/mobile interactions.
+
+## CI
+
+[Verify dashboard](.github/workflows/ci.yml) runs on pushes and pull requests with Node.js 24 and PostgreSQL 16. It installs the lockfile, runs unit and backup tests, builds the application, audits runtime dependencies, tests the API, and runs all 19 browser scripts using Playwright Chromium against a disposable database.
+
+The badge above links to the current workflow status. Deployment is managed separately from CI.
+
+## Backups and Data
+
+- **Automatic recovery copies:** Docker saves portable V5 JSON snapshots to `backups/automatic/` every 24 hours by default, retaining 14 managed successful files. Settings shows last success, next attempt, and failures.
+- **Manual workspace recovery:** Download or restore JSON in **Settings → Backup & recovery**. V5 includes orders, inventory movements, import reviews, and production progress. Older versions remain readable with warnings about omitted data.
+- **Full database recovery:** Run `.\scripts\backup.ps1` for a PostgreSQL custom-format dump. Portable JSON does not include all database metadata or command receipts.
+- **Restore behaviour:** Workspace restoration replaces the active workspace after preview and retains the preceding recovery copy. It does not merge records.
+- **Browser drafts:** Saved generated drafts belong to that browser/origin and are outside database backups.
+
+Keep protected copies outside the host disk and verify restores in a separate database. See the [operations guide](docs/OPERATIONS.md) for backup, recovery, update, and troubleshooting procedures.
+
+The optional **`OPEN-OFFLINE-DASHBOARD.cmd`** opens the built, planning-only file workspace using localStorage and the device clock. It is separate from PostgreSQL and has no stock ledger. Export its JSON and explicitly restore it in the database dashboard to migrate records; nothing imports silently.
+
+For presentation history, [seed-demo-history.ts](scripts/seed-demo-history.ts) accepts a bounded date range within the previous 31 Malaysia calendar days. It defaults to a dry run, requires a demo workspace, skips occupied date/line pairs, and uses `--apply` for an explicit import after backup.
+
+## Documentation
 
 - [Architecture and database](docs/ARCHITECTURE.md)
 - [Command API](docs/API.md)
-- [Startup, backup, recovery and troubleshooting](docs/OPERATIONS.md)
+- [Startup, backup, recovery, and troubleshooting](docs/OPERATIONS.md)
 - [Testing and verification](docs/TESTING.md)
 - [Inventory and stock workflow](docs/inventory-workflow.md)
 - [中文操作说明](docs/USER_GUIDE.zh-CN.md)
 
-The present scope is one shared workspace for a local pilot. Login/roles, named audit actors, scheduled backup service, external SAP reconciliation, and company-server deployment remain future work. The local Docker/PostgreSQL connection stays on loopback port 5434 for DataGrip. No open-source licence is granted by this repository.
+## Notes
 
-## Live progress, date hours and import reviews
-
-The board marks the current Malaysia time within its visible range. Inventory-linked running/completed cards show net received output in Bags or MT. Estimated finish appears only after at least three increasing live output samples spanning 15 active minutes, with the latest no older than 20 minutes. It is an estimate from recorded output, not a machine sensor. Pauses and stale/corrected samples suppress unreliable estimates; failed refreshes mark retained quantities as last known.
-
-For one-off overtime or line closures, use **Settings → Unavailable periods → Date-specific working hours**. Choose today or a future date, set each line to normal, custom hours or closed, enter a reason and apply. Other dates retain their normal calendar. Started/completed segments stay locked; regenerate any open planning draft after changing hours.
-
-**Orders → Import review queue** retains differences from later Excel files while ordinary imports continue to add only new orders. Compare saved and candidate values, select verified fields and provide a reason to apply or dismiss. DO/material/unit identity and protected manual/execution fields cannot be replaced. Quantity corrections are blocked once stock is reserved or production/delivery exists. Applying a correction creates a source version; existing card snapshots and inventory movements remain unchanged.
-
-Database backups now use version 5, including import reviews and production-progress samples/resets. Versions 1–4 still load, with a warning about omitted data. Offline planning backups remain version 2. Real workbooks, backups and customer data must stay outside the public repository.
+- SAP integration currently uses Excel exports; there is no direct SAP API connection.
+- Excel imports read data and cached formula results. They do not execute macros, formulas, or external links.
+- Repeated imports retain existing orders and manual fields. Orders absent from a later workbook are not deleted or marked collected.
+- The public repository contains source and fictional fixtures, not the running database or company files.
+- No open-source licence is granted by this repository.
