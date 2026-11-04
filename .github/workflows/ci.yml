@@ -72,4 +72,5 @@ jobs:
             output/playwright/business-priorities/
             output/playwright/weekly-list/
             output/playwright/automatic-backup/
+            output/playwright/workbench-ux/
           if-no-files-found: ignore

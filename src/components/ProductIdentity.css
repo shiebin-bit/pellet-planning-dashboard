@@ -3,3 +3,15 @@
 .product-identity-title span { font-weight: 500; }
 .product-identity .product-identity-description { margin-top: 5px; font-size: 12px; line-height: 1.5; }
 .product-identity .product-identity-material { margin-top: 5px; font-size: 11px; line-height: 1.5; color: var(--muted); font-variant-numeric: tabular-nums; }
+.compact-product .product-identity-title { line-height: 1.45; }
+.product-identity-details { margin: 2px 0 0; font-weight: 400; }
+.product-identity-details > summary { display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 2px 0; list-style: none; cursor: pointer; font-size: var(--font-support,12px); font-weight: 400; line-height: 1.5; color: var(--muted); }
+.product-identity-details > summary::-webkit-details-marker { display: none; }
+.product-identity-details > summary > span { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.product-identity-details > summary > svg { color: var(--action); }
+.product-identity-details > summary:hover { color: var(--action); text-decoration: underline; text-underline-offset: 3px; }
+.product-identity-details[open] > summary > svg { transform: rotate(180deg); }
+.product-identity-details > div { margin-top: 4px; padding: 8px 10px; background: var(--surface-raised); border-left: 2px solid var(--border); white-space: normal; overflow-wrap: anywhere; }
+.compact-product .product-identity-details .product-identity-description { margin: 0; color: var(--text); font-size: 12px; }
+.compact-product .product-identity-details .product-identity-material { display: block; font-size: 12px; }
+@media(max-width:600px) { .product-identity-details > summary { min-height: var(--control-touch-height,44px); } }

@@ -6,7 +6,7 @@ import {
   rectIntersection, useDndContext, useDraggable, useDroppable, useSensor, useSensors,
 } from '@dnd-kit/core';
 import type { Active, CollisionDetection, DragEndEvent, Over } from '@dnd-kit/core';
-import { AlertTriangle, ArrowUpRight, ChevronDown, Copy, GripVertical, LockKeyhole, Plus, Undo2 } from 'lucide-react';
+import { AlertTriangle, ArrowUpRight, ChevronDown, Combine, Copy, GripVertical, LockKeyhole, MoreHorizontal, Plus, Undo2 } from 'lucide-react';
 import { StatusLegend } from '../components/Shared';
 import { getWorkingHoursForDate } from '../domain/engine';
 import { nonWorkingWindows } from '../domain/planningWindows';
@@ -15,7 +15,7 @@ import type { Settings, LineId, LineSchedule, ScheduledJob, ScheduleSegment } fr
 import { downtimeRange, durationLabel, fullDateTime, numberLabel, timeLabel } from '../lib/format';
 import { useWorkspace } from '../lib/workspace';
 import { productLabel } from '../lib/productLabel';
-import { CombinePlanningButton } from '../components/CombinePlanningDialog';
+import { CombinePlanningDialog } from '../components/CombinePlanningDialog';
 import './Planning.css';
 import { AutoPlanningButton } from '../components/InventoryDraftDialog';
 import { usePlanningCardPreview } from '../components/PlanningCardPreview';
@@ -42,6 +42,9 @@ export function Planning() {
   const { board, state, openJob, openInput, openCopy, openSource, storageMode, selectedId, canUndo, undo, mutationLocked, hasConflict } = useWorkspace();
   const [activeId, setActiveId] = useState<string | null>(null);
   const [movePreview, setMovePreview] = useState<MoveImpactInput | null>(null);
+  const [combineOpen, setCombineOpen] = useState(false);
+  const moreRef = useRef<HTMLDetailsElement>(null);
+  const moreTrigger = useRef<HTMLElement>(null);
   const [range, setRange] = useState<PlanRange>('day');
   const [smallScreen,setSmallScreen]=useState(()=>window.matchMedia('(max-width:600px)').matches);
   const [mobileView,setMobileView]=useListState<'list'|'timeline'>('planning.mobileView','list');
@@ -50,6 +53,19 @@ export function Planning() {
   const listView=view==='list';
   const setView=smallScreen?setMobileView:setDesktopView;
   const viewSwitch=<div className="hplan-range" role="group" aria-label="Planning view"><button type="button" aria-pressed={view==='timeline'} className={view==='timeline'?'active':''} onClick={()=>setView('timeline')}>Timeline</button><button type="button" aria-pressed={view==='list'} className={view==='list'?'active':''} onClick={()=>setView('list')}>List</button></div>;
+  function closeMore(returnFocus = false) {
+    if (moreRef.current) moreRef.current.open = false;
+    if (returnFocus) moreTrigger.current?.focus();
+  }
+  function moreAction(action: () => void) { closeMore(true); action(); }
+  useEffect(() => {
+    const outside = (event: PointerEvent) => { if (event.target instanceof Node && !moreRef.current?.contains(event.target)) closeMore(); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape' && moreRef.current?.open) { event.preventDefault(); closeMore(true); } };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+  }, []);
+  useEffect(() => closeMore(), [smallScreen, board.date]);
   useEffect(()=>{setActiveId(null);},[listView]);
   useEffect(()=>{const media=window.matchMedia('(max-width:600px)');const changed=()=>setSmallScreen(media.matches);media.addEventListener('change',changed);return()=>media.removeEventListener('change',changed);},[]);
   const sensors = useSensors(
@@ -63,6 +79,7 @@ export function Planning() {
   const latestEnd = Math.max(board.end, ...jobs.map(job => job.plannedEnd ?? board.end));
   const dayHours = (board.end - board.start) / 3_600_000;
   const fullHours = Math.min(168, Math.max(dayHours, Math.ceil((latestEnd - board.start) / 3_600_000)));
+  const planningRange = fullHours > dayHours && <div className="hplan-range" role="group" aria-label="Planning range"><button type="button" className={range === 'day' ? 'active' : ''} aria-pressed={range === 'day'} onClick={() => setRange('day')}>Day</button><button type="button" className={range === 'full' ? 'active' : ''} aria-pressed={range === 'full'} onClick={() => setRange('full')}>Full plan</button></div>;
   const hours = range === 'full' ? fullHours : dayHours;
   const windowEnd = board.start + hours * 3_600_000;
   const ticks = getTicks(hours);
@@ -109,23 +126,26 @@ export function Planning() {
   return <div className={`page planning-page hplan-page ${activeId?'is-dragging':''}`}>
     <span className="sr-only">Current time {fullDateTime(now)} MYT.{now < board.start || now >= windowEnd ? ' Outside the displayed planning range.' : ''}</span>
     {movePreview && <MoveImpactDialog input={movePreview} onClose={() => setMovePreview(null)} onSaved={() => setMovePreview(null)}/>}
+    {combineOpen && <CombinePlanningDialog onClose={() => setCombineOpen(false)}/>}
     <div className="page-heading hplan-heading">
       <div><h1>Planning board</h1><p>{listView?'Production sequence and orders, grouped by line.':'Drag a not-started card to another line. Click for details.'}</p></div>
       <div className="hplan-actions">
         {!smallScreen&&viewSwitch}
         <AutoPlanningButton/>
-        <CombinePlanningButton/>
-        {storageMode === 'database' && <button type="button" className="button secondary" disabled={mutationLocked || hasConflict} onClick={() => openSource()}><Plus size={15}/>Plan from Data</button>}
-        <button type="button" className="button secondary" disabled={mutationLocked || hasConflict} onClick={openCopy}><Copy size={15}/>Copy planning</button>
-        <button type="button" className="button secondary" disabled={!canUndo} onClick={undo}><Undo2 size={15}/>Undo</button>
-        {fullHours > dayHours && <div className="hplan-range" aria-label="Planning range">
-          <button type="button" className={range === 'day' ? 'active' : ''} aria-pressed={range === 'day'} onClick={() => setRange('day')}>Day</button>
-          <button type="button" className={range === 'full' ? 'active' : ''} aria-pressed={range === 'full'} onClick={() => setRange('full')}>Full plan</button>
-        </div>}
+        <details className="planning-more" ref={moreRef} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) closeMore(); }}>
+          <summary ref={moreTrigger} className="button secondary" aria-label="More planning actions"><MoreHorizontal size={17}/><span>More</span><ChevronDown size={14}/></summary>
+          <div className="planning-more-panel" role="group" aria-label="Additional planning actions">
+            {storageMode === 'database' && <button type="button" disabled={mutationLocked || hasConflict} onClick={() => moreAction(() => openSource())}><Plus size={16}/>Plan from Data</button>}
+            <button type="button" disabled={mutationLocked || hasConflict} onClick={() => moreAction(openCopy)}><Copy size={16}/>Copy planning</button>
+            <button type="button" disabled={storageMode !== 'database' || mutationLocked || hasConflict} onClick={() => moreAction(() => setCombineOpen(true))}><Combine size={16}/>Combine cards</button>
+            <button type="button" className="planning-more-undo" disabled={!canUndo} onClick={() => moreAction(undo)}><Undo2 size={16}/>Undo</button>
+          </div>
+        </details>
+        {!smallScreen&&planningRange}
       </div>
     </div>
 
-    {smallScreen&&<div className="planning-mobile-view">{viewSwitch}<p>{listView?'Tap a card for details and moves. Switch to Timeline to drag.':'Hold a not-started card, then drag to move it.'}</p></div>}
+    {smallScreen&&<div className="planning-mobile-view">{viewSwitch}{planningRange}<p className={listView ? 'sr-only' : undefined}>{listView?'Tap a card for details and moves.':'Hold a not-started card, then drag to move it.'}</p></div>}
     {listView?<ProductionList lines={board.lines} start={board.start} end={windowEnd} date={board.date} settings={state.settings} bagWeightKg={state.settings.bagWeightKg} selectedId={selectedId} disabled={mutationLocked||hasConflict} onOpen={openJob} onAdd={openInput}/>:<DndContext sensors={sensors} collisionDetection={collision} accessibility={{
       screenReaderInstructions: { draggable: 'Press Enter to open production details. Press Space to pick up a card, arrow keys to move, Space to drop, or Escape to cancel. On a touch screen, hold the card briefly before dragging.' },
       announcements: {

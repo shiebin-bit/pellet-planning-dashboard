@@ -29,7 +29,7 @@ The default setup serves only this PC. It has no login or user roles. Company-wi
 | Area | Features |
 | --- | --- |
 | Overview | Whole assigned-date MT, estimated MT within each line's shift, net production receipts by posting date, planned utilisation, daily timelines or a Monday–Sunday capacity view with day drill-through, recorded downtime and actionable order/stock priorities |
-| Planning board | Timeline/List on desktop and mobile, with independent session choices; desktop defaults to four horizontal lines and mobile to per-line lists; Day/Full plan, carry-over, changeover, downtime and direct date selection |
+| Planning board | Timeline/List on desktop and mobile, with independent session choices; desktop defaults to four horizontal lines and mobile to per-line lists; direct Generate planning and a More disclosure for order planning, copy, combine and Undo; Day/Full plan, carry-over, changeover, downtime and direct date selection |
 | Planning batches | Due-date priority; optional same-product/same-due-date order batches with per-order quantities; capacity splits across lines/days; later-due batches stay separate |
 | Card movement | Drag a pending card to another line or sequence; review before/after times, affected tasks, utilisation and order deadlines before confirming; destination-bin review; recalculated line rate; one-step Undo; keyboard and held-touch movement |
 | Production details | Same-product orders can share one card with separate allocations; Add/edit in a dialog; searchable product catalog with description/default delivery; manual products; bags or bulk, orders, bins, remarks and issues |
@@ -40,6 +40,7 @@ The default setup serves only this PC. It has no login or user roles. Company-wi
 | Actual production | Start records the current server time; running cards accept daily production receipts; Done asks for the final cumulative output and records the server's end time; later output corrections retain the original timestamps; pause/resume with reasons and recorded stop durations |
 | History | Combined date/line/status/search filters; totals across all matches, actual-output coverage; records and activity in pages of 50; before/after changes for edits, moves, execution, settings and catalog |
 | Table navigation | Stock, daily stock and production history use bounded scrolling, sticky headers/actions, horizontal controls and synchronized top/bottom pagination; date labels distinguish list filters from planning-day exports |
+| Interface | Bright surfaces, navy actions and restrained FFM gold accents; compact Orders/Stock rows with keyboard-expandable full product details; exact quantities and status colors retained |
 | Reports | Daily or up to 31 days; optional line selection; numeric Excel output with production-stop intervals; A4 landscape print/Save as PDF |
 | Settings and backup | Product catalog, calendar, rates, bag weight and downtime; automatic server-side V5 JSON snapshots every24 hours with14-file retention and visible status; manual JSON recovery and separate full PostgreSQL dumps |
 

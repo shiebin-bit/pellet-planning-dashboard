@@ -85,21 +85,30 @@
 .orders-table .data-order-link,.orders-table .data-material { font-size: 14px; }
 .orders-table .source-tag { font-size: 11px; }
 .orders-table .order-quantity { font-weight: 600; }
+.orders-table th { font-size: 11px; font-weight: 600; letter-spacing: .15px; padding-block: 10px; }
+.orders-table td { padding-block: 9px; }
+.orders-table tbody tr:hover { background: #f8fafb; }
+.orders-table td:last-child { vertical-align: middle; }
+.orders-table .data-order-link { color: var(--action); text-decoration-thickness: 1px; }
+.orders-table .order-progress-breakdown > summary { min-height: 26px; padding-block: 2px; }
 .orders-table .order-production-progress > strong { display: block; font-size: 14px; }
 .order-progress-breakdown { margin-top: 4px; font-size: 12px; }
 .order-progress-breakdown summary { min-height: 30px; padding-block: 5px; color: var(--action); cursor: pointer; }
 .order-progress-breakdown dl { display: grid; gap: 9px; padding-block: 5px; font-size: 12px; }
 .order-progress-breakdown dt { color: var(--muted); }
 .order-progress-breakdown dd { margin: 1px 0 0; font-weight: 600; font-variant-numeric: tabular-nums; }
-.orders-table .order-deadline,.orders-table .order-collection { margin-top: 7px; }
+.orders-table .order-deadline,.orders-table .order-collection { margin-top: 4px; }
 .orders-table .source-tag { max-width: 100%; white-space: normal; }
-.orders-table td:last-child .button { width: 100%; min-width: 0; white-space: normal; padding-inline: 8px; }
+.orders-table td:last-child .button { width: 100%; min-width: 0; white-space: nowrap; padding-inline: 8px; }
 .orders-table th:last-child,.orders-table td:last-child { position: sticky; right: 0; background: #fff; box-shadow: -5px 0 8px -6px #17354b70; z-index: 1; }
 .orders-table th:last-child { background: #f6f7f8; }
 .order-scroll-tools { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: #f6f7f8; border-bottom: 1px solid var(--border); }
 .order-scroll-tools>span { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); }
 .order-scroll-tools .button { padding-inline: 10px; }
 .data-section-tabs{margin-bottom:1rem}
+.data-page .data-section-tabs { gap: 20px; border-bottom: 1px solid var(--border); }
+.data-page .data-section-tabs > button { min-height: 40px; padding: 8px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted); font-size: 14px; }
+.data-page .data-section-tabs > button[aria-pressed=true] { border-bottom-color: var(--brand); color: var(--action); font-weight: 650; }
 /* Keep the daily work tables near the top without reducing reading size. */
 .data-page .page-heading { margin-bottom: 14px; gap: 12px; }
 .data-page .page-heading .inventory-toolbar { margin: 0; gap: 8px; }
@@ -123,11 +132,17 @@
   .data-page .inventory-tabs button { min-height: 40px; padding: 8px 14px; }
   .data-page .stock-date-context > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
   .data-page .stock-date-context dt { margin: 0; }
+  .stock-page .stock-date-context { padding-block: 5px; }
   .data-page .data-filters { padding: 10px 12px; gap: 8px; }
   .data-page .date-scope { padding: 7px 12px; line-height: 1.45; }
   .data-page .record-pagination { padding: 7px 12px; gap: 8px; }
   .data-page .order-scroll-tools,.data-page .record-table-tools { padding: 5px 10px; }
   .data-page .order-scroll-tools .button,.data-page .record-table-tools .button { min-height: 32px; padding: 5px 9px; }
+}
+@media(max-width:600px) {
+  .data-page .data-section-tabs { display: flex; }
+  .data-page .order-views > button,.data-page .inventory-tabs > button { min-height: var(--control-touch-height,44px); }
+  .orders-table .order-progress-breakdown > summary { min-height: 44px; display: flex; align-items: center; }
 }
 .import-review-queue{padding:1rem}.import-review-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem}.import-review-heading h2{margin:0}.import-review-heading p{margin:.35rem 0 0;color:var(--muted)}
 .import-review-list{display:grid;border:1px solid var(--border);border-radius:12px;overflow:hidden}.import-review-row{display:grid;grid-template-columns:minmax(140px,.8fr) minmax(220px,1.5fr) minmax(140px,.65fr);gap:1rem;align-items:center;padding:.85rem 1rem;text-align:left;background:var(--surface);border:0;border-bottom:1px solid var(--border);color:inherit}.import-review-row:last-child{border-bottom:0}.import-review-row:hover{background:var(--surface-raised)}.import-review-row span{display:grid;gap:.2rem}.import-review-row small{color:var(--muted)}

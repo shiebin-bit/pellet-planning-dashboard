@@ -22,9 +22,18 @@
   flex-wrap: wrap;
 }
 .hplan-actions .button {
-  min-height: 36px;
+  min-height: var(--control-height,40px);
   padding: 8px 12px;
 }
+.planning-more { position: relative; flex-shrink: 0; z-index: 12; }
+.planning-more > summary { list-style: none; cursor: pointer; }
+.planning-more > summary::-webkit-details-marker { display: none; }
+.planning-more[open] > summary { background: var(--action-soft); border-color: var(--action); color: var(--action); }
+.planning-more-panel { position: absolute; right: 0; top: calc(100% + 6px); width: 224px; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: 0 8px 24px #20282f1a; }
+.planning-more-panel > button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 42px; padding: 9px 10px; border-radius: 4px; color: var(--text); font-size: 14px; text-align: left; }
+.planning-more-panel > button:hover:not(:disabled) { background: var(--action-soft); }
+.planning-more-panel > button:focus-visible { outline-offset: -2px; }
+.planning-more-panel > .planning-more-undo { margin-top: 4px; border-top: 1px solid var(--border); border-radius: 0; }
 .hplan-range {
   display: inline-flex;
   padding: 3px;
@@ -33,11 +42,11 @@
   background: #f1f3f5;
 }
 .hplan-range button {
-  min-height: 28px;
+  min-height: 32px;
   padding: 4px 10px;
   border-radius: 5px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
 }
 .hplan-range button.active {
@@ -677,6 +686,10 @@
   .hplan-actions .button.primary {
     flex: 1;
   }
+  .hplan-actions .button,.planning-more-panel > button { min-height: var(--control-touch-height,44px); }
+  .hplan-heading p { display: none; }
+  .hplan-actions { flex-wrap: nowrap; }
+  .hplan-actions > .button { flex: 1; }
   .hplan-board {
     grid-template-columns: 72px minmax(0,1fr);
   }
@@ -740,4 +753,8 @@
 }
 .page-is-planning .page-footer {
   display: none;
+}
+@media(max-width:600px) {
+  .hplan-page .planning-mobile-view { flex-direction: row; flex-wrap: wrap; gap: 6px 10px; margin-bottom: 12px; }
+  .planning-mobile-view p { flex-basis: 100%; max-width: none; font-size: 12px; line-height: 1.5; }
 }

@@ -8,6 +8,9 @@
 
 ## 界面布局
 
+界面使用白底、深蓝操作色和少量 FFM 金色导航标记。绿色完成、灰色未开始、蓝色运行、黄色暂停、红色异常的规则保持不变。Planning board 常用的 Generate planning 保持可见；Plan from Data、Copy planning、Combine cards 和 Undo 在 More 内。按 Escape、点击其他区域或移出键盘焦点可收起 More；关闭弹窗后焦点回到可见的 More 按钮。
+
+
 Overview 和 Planning board 的顶部工具栏显示排产日期、Today、Export 和 Add production。History 提供 Export 及可直接打开的 Date range report；Orders、Stock 和 Settings 不再显示排产日期或新增生产入口。左侧保留 Overview、Planning board、Data、Stock、History 和 Settings；平板会缩成图标，手机从左上角菜单展开。
 
 Overview 先显示四项总数和当日时间轴，点产品段可查看卡片；四项总数是 Assigned plan total、Planned within shift、Production receipts 和 Planned utilisation。Assigned plan total 是分配给该排程日期的整张卡片总量；Planned within shift 按生产时段估算落在当前班次内的份额，包含前日延续的生产。Production receipts 按入账日期计算分次生产入库及更正／冲销，包括尚未 Done 的卡片；不代表精确的班次实际产量。旧袋装记录若缺少当时袋重，会列出未计入的笔数。时间轴之后先看 Needs attention 和 Plan vs actual；Line capacity details 与 Next production tasks 可按需展开，停机记录继续保留。Planning board 四条产线横向排列，电脑 1366 × 768 可完整查看；新增、复制、报表和卡片详情在当前页面弹出。
@@ -42,7 +45,7 @@ Report a problem 是问题标记；它不会自动暂停。解决问题也不会
 
 ## 复制 planning
 
-在 Planning board 按 **Copy planning**。默认从前一天复制到当前日期，也可直接修改来源和目标日期。选择产线、勾选卡片，调整数量，并为每张选中卡片填写新的订单编号。取消任务不会列入；订单编号不会沿用旧值。
+在 Planning board 按 **More → Copy planning**。默认从前一天复制到当前日期，也可直接修改来源和目标日期。选择产线、勾选卡片，调整数量，并为每张选中卡片填写新的订单编号。取消任务不会列入；订单编号不会沿用旧值。
 
 上方预览显示目标日各线的 MT、计划利用率、结束时间及 Carry-over。确认后整批保存，新卡片排在目标日期同产线最后，状态为未开始；产品、包装、bin 和备注保留，实际时间、实际产量、问题及完成备注清空。原卡片保留。保存失败会保留弹窗草稿；断线时使用 Retry connection，不要重新建立另一批。
 
@@ -98,7 +101,7 @@ DO no + Material code 是订单唯一组合。已有订单无论 Excel 是否修
 
 ## 从订单排产
 
-Data 的 Plan production 或 Planning board 的 Plan from Data 使用同一个排产弹窗。选择第一张订单后，可按 Add same-product order 添加相同完整 Material code、包装、袋重、Medication 及 FMR／OMED 的其他订单，逐张填写生产数量，再一起保存为一张卡片。卡片详情列出每张订单的 DO、客户、交期及分配数量。MT 直接作为重量；Bags 按保存的袋重换算。Combine cards 可把同日、同线、未开始的兼容订单卡片合并，最前方卡片保留，其余原卡片以取消状态留在 History。已有卡片的来源和分配数量不能手动覆盖；需取消未开始卡片再重新排产。Add production 保留手动新增。
+Data 表格右侧的 Plan（完整操作名称为 Plan production）或 Planning board 的 More → Plan from Data 使用同一个排产弹窗。选择第一张订单后，可按 Add same-product order 添加相同完整 Material code、包装、袋重、Medication 及 FMR／OMED 的其他订单，逐张填写生产数量，再一起保存为一张卡片。卡片详情列出每张订单的 DO、客户、交期及分配数量。MT 直接作为重量；Bags 按保存的袋重换算。More → Combine cards 可把同日、同线、未开始的兼容订单卡片合并，最前方卡片保留，其余原卡片以取消状态留在 History。已有卡片的来源和分配数量不能手动覆盖；需取消未开始卡片再重新排产。Add production 保留手动新增。
 
 已关联的 Excel 订单不参加 Copy planning，防止同一订单重复生产。不同完整 Material code 会计算换料时间；两张手动卡片沿用原来的前四位产品系列规则。
 
@@ -130,7 +133,7 @@ Orders 分开显示订单量、现货预留、累计生产、已取货、仍需�
 
 Stock 的 Manage stock 会弹出管理窗口，关闭后保留列表位置；可以在窗口内修改政策或记录库存变动。Stock 可按产品、策略和 Medication／FMR 筛选，修改 25／50kg 袋重、安全库存及固定／百分比超产设置。袋装、散装独立核算。数字安全库存为 Make for stock；PER ADVICE 为 Make for order；空白政策须确认后才自动补库存。安全库存适用于标准版本，药物／FMR 版本按其独立订单排产。
 
-Orders、Stock 和 Daily stock 的产品主标题统一为 **5220 · 25kg Bags** 或 **5220 · Bulk**，完整说明和 SAP material code 放在下方。短编号从 FS 产品说明读取，不截取长 material code。订单说明内已有袋重时优先保留；无法确认袋重则只显示 Bags。
+Orders、Stock 和 Daily stock 的产品主标题统一为 **5220 · 25kg Bags** 或 **5220 · Bulk**，Orders 和 Stock 主表用紧凑行显示，点击产品说明旁的箭头可展开完整说明和 SAP material code；键盘 Tab 后按 Enter 也可展开。Daily stock 和订单选择弹窗保留直接显示完整资料。短编号从 FS 产品说明读取，不截取长 material code。订单说明内已有袋重时优先保留；无法确认袋重则只显示 Bags。
 
 Stock 的标准 Make for stock 库存低于目标时，在 Available 下显示 **Short X Bags／MT**，缺口按「安全库存 − 可用库存」计算。药物／FMR 版本不会混入标准补库存缺口。首次载入显示 Loading，失败时可按 Retry loading stock；刷新期间显示上次成功读取的余额及更新提示，不会把尚未载入的资料当成零或未建立基准。
 

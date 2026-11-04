@@ -7,7 +7,7 @@
   text-rendering: optimizeLegibility;
   color-scheme: light;
   --bg: #fff;
-  --sidebar: #f3f4f5;
+  --sidebar: #f4f6f7;
   --surface: #fff;
   --surface-raised: #f6f7f8;
   --border: #dce0e3;
@@ -15,13 +15,19 @@
   --text: #20282f;
   --muted: #5d6871;
   --subtle: #66717b;
-  --action: #a44915;
-  --action-hover: #84380d;
-  --action-soft: #fbede3;
-  --lime: #a44915;
+  --action: #29485e;
+  --action-hover: #1d3547;
+  --action-soft: #eaf1f5;
+  --brand: #9b8552;
+  --brand-soft: #f7f3e9;
+  --lime: var(--action);
   --amber: #805a13;
   --red: #a33329;
-  --radius: 5px;
+  --radius: 6px;
+  --font-ui: 14px;
+  --font-support: 12px;
+  --control-height: 40px;
+  --control-touch-height: 44px;
   --mono: "Cascadia Code",Consolas,monospace;
   --pending-bg: #eef0f2;
   --pending-border: #aab4bc;
@@ -91,8 +97,8 @@ a {
   color: var(--action);
 }
 ::selection {
-  background: #f7d9c3;
-  color: #432711;
+  background: #d9e7ef;
+  color: #1d3547;
 }
 /* Navigation and daily tools */
 .app-shell {
@@ -183,10 +189,10 @@ a {
   color: var(--text);
 }
 .nav-item.active {
-  color: #81370e;
-  background: #f8e8db;
+  color: var(--action);
+  background: var(--action-soft);
   font-weight: 650;
-  box-shadow: inset 3px 0 var(--action);
+  box-shadow: inset 3px 0 var(--brand);
 }
 .sidebar-bottom {
   margin-top: auto;
@@ -314,10 +320,10 @@ h1 {
   justify-content: center;
   gap: 8px;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--radius);
   padding: 9px 13px;
-  min-height: 40px;
-  font-size: 13px;
+  min-height: var(--control-height);
+  font-size: var(--font-ui);
   font-weight: 550;
   white-space: nowrap;
   line-height: 1.4;
@@ -327,7 +333,7 @@ h1 {
   color: #fff;
   border-color: var(--action);
 }
-.button.primary:hover {
+.button.primary:hover:not(:disabled) {
   background: var(--action-hover);
   border-color: var(--action-hover);
 }
@@ -336,7 +342,7 @@ h1 {
   border-color: #c6cdd2;
   color: #3d4952;
 }
-.button.secondary:hover {
+.button.secondary:hover:not(:disabled) {
   background: #f3f5f6;
   border-color: #929da6;
 }
@@ -482,7 +488,7 @@ h1 {
 }
 .panel {
   border: 1px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--radius);
   background: var(--surface);
   min-width: 0;
 }
@@ -2556,8 +2562,8 @@ body:has(.editor-layer) .toast { display: none; }
   }
   .add-production-button {
     flex: 1;
-    min-height: 38px;
-    font-size: 12px;
+    min-height: var(--control-touch-height);
+    font-size: var(--font-ui);
   }
   .topbar>.mobile-menu {
     align-self: flex-start;

@@ -30,3 +30,20 @@
 .draft-edit-table details .field { margin-top: 10px; }
 
 .draft-fields{border:0;padding:0;margin:0;min-width:0}.draft-saved-notice{display:flex;align-items:center;flex-wrap:wrap;gap:12px}.draft-saved-notice>span{flex:1;min-width:200px}
+.stock-records-table { table-layout: fixed; white-space: normal; }
+.inventory-workspace .stock-records-table td:first-child,.inventory-workspace .stock-records-table td:nth-child(2) { min-width: 0; max-width: none; }
+.stock-records-table th { font-size: 11px; font-weight: 600; letter-spacing: .15px; padding: 10px 12px; overflow-wrap: anywhere; }
+.stock-records-table td { padding: 9px 12px; font-size: 14px; vertical-align: top; overflow-wrap: anywhere; }
+.stock-records-table td small { font-size: 12px; }
+.stock-records-table tbody tr:hover { background: #f8fafb; }
+.inventory-workspace .product-identity-details { margin: 2px 0 0; }
+.inventory-workspace .product-identity-details > summary { min-height: 26px; padding: 2px 0; font-size: 12px; font-weight: 400; }
+.stock-records-table:not(.stock-policies-table) :is(th,td):is(:nth-child(3),:nth-child(4),:nth-child(5),:nth-child(7)) { text-align: right; font-variant-numeric: tabular-nums; }
+.stock-records-table td:last-child { vertical-align: middle; }
+.stock-records-table .button { width: 100%; padding-inline: 8px; white-space: normal; font-size: 13px; }
+.inventory-tabs button[aria-selected=true] { color: var(--action); border-bottom-color: var(--brand); }
+.inventory-tabs button { color: var(--muted); font-size: 14px; }
+@media(max-width:600px) {
+  .inventory-workspace .product-identity-details > summary { min-height: var(--control-touch-height,44px); }
+  .stock-records-table .button { min-height: var(--control-touch-height,44px); }
+}

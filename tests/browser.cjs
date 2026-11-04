@@ -1,3 +1,4 @@
+const {planningAction}=require('./planning-actions.cjs');
 // Run only against a disposable test workspace. This suite replaces its records.
 const {chromium}=require('playwright');
 const {existsSync}=require('node:fs');
@@ -95,7 +96,7 @@ const wait=async(fn)=>{
       await wait(async()=>(await job('QA-DB-A')).lineId==='PM4');await readyToDrag(a.id,'PM4');
     };
     await drag('PM1');assert.equal((await job('QA-DB-A')).binNeedsReview,true);
-    await page.locator('.hplan-actions').getByRole('button',{name:'Undo',exact:true}).click();
+    await planningAction(page, 'Undo');
     await wait(async()=>(await job('QA-DB-A')).lineId==='PM1');
     await drag('PM1');await open(a.id).click();
     await page.getByRole('button',{name:'Confirm bin assignment',exact:true}).click();

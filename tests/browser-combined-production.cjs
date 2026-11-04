@@ -1,3 +1,4 @@
+const {planningAction}=require('./planning-actions.cjs');
 // Fictional data only. This suite refuses production and restores its isolated workspace.
 const { chromium } = require('playwright');
 const { existsSync } = require('node:fs');
@@ -29,7 +30,7 @@ const sources = job => job.sourceAllocations || (job.sourceOrderId?[{sourceOrder
   browser=await chromium.launch({headless:true,...(!existsSync(chromium.executablePath())?{channel:'chrome'}:{})});
   page=await browser.newPage({viewport:{width:1366,height:900},acceptDownloads:true,timezoneId:'Asia/Kuala_Lumpur',reducedMotion:'reduce'});page.setDefaultTimeout(15000);page.on('dialog',dialog=>dialog.accept());
   const errors=[];page.on('pageerror',e=>errors.push(e.message));
-  await page.goto(base+'/#/planning');await page.getByRole('button',{name:'Plan from Data',exact:true}).click();
+  await page.goto(base+'/#/planning');await planningAction(page, 'Plan from Data');
   await page.getByRole('button',{name:'QA-COMB-1',exact:true}).click();let dialog=page.getByRole('dialog',{name:/^Plan production from orders?$/});await dialog.waitFor();
   await dialog.getByLabel('Planning date',{exact:true}).fill(tomorrow);
   await dialog.getByRole('button',{name:'Add same-product order',exact:true}).click();

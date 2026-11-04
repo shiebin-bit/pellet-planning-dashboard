@@ -1,3 +1,4 @@
+const {planningAction}=require('./planning-actions.cjs');
 // Fictional fixtures only. Never run mutation checks against production 8080.
 const { chromium } = require('playwright');
 const ExcelJS = require('exceljs');
@@ -50,7 +51,7 @@ async function fixture(file) {
   await page.getByRole('button',{name:'Stock',exact:true}).click();await page.getByRole('status').filter({hasText:'Loading stock'}).waitFor();
   assert.doesNotMatch(await page.getByLabel('Stock dates').innerText(),/Not established/);assert.equal(await page.getByText('No stock products yet.',{exact:false}).count(),0);
   releaseStock();await page.getByRole('button',{name:'Manage stock',exact:true}).first().waitFor();await page.unroute('**/api/inventory');
-  const bagStock=page.locator('.inventory-workspace .source-table tbody tr').filter({hasText:'7.0000000000025'});await bagStock.getByText('Short 20 Bags',{exact:true}).waitFor();assert.match(await bagStock.locator('.product-identity-title').innerText(),/5220.*25kg Bags/);assert.match(await bagStock.locator('.product-identity-material').innerText(),/7\.0000000000025/);
+  const bagStock=page.locator('.inventory-workspace .source-table tbody tr').filter({hasText:'7.0000000000025'});await bagStock.getByText('Short 20 Bags',{exact:true}).waitFor();assert.match(await bagStock.locator('.product-identity-title').innerText(),/5220.*25kg Bags/);await bagStock.locator('.product-identity-details summary').click();assert.match(await bagStock.locator('.product-identity-material').innerText(),/7\.0000000000025/);await bagStock.locator('.product-identity-details summary').click();
   await page.getByRole('button',{name:'Data',exact:true}).click();
   await page.route('**/api/inventory',route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'Fictional stock service unavailable'})}));
   await page.getByRole('button',{name:'Stock',exact:true}).click();await page.getByRole('button',{name:'Retry loading stock',exact:true}).waitFor();assert.doesNotMatch(await page.getByLabel('Stock dates').innerText(),/Not established/);assert.equal(await page.getByRole('button',{name:'Manage stock',exact:true}).count(),0);
@@ -130,7 +131,7 @@ async function fixture(file) {
   await bulkProgress.locator('summary').click();assert.match(await bulkProgress.innerText(),/19\.999 MT/);assert.match(await page.locator('.orders-table tbody tr').innerText(),/20\.000 MT/);
   await page.screenshot({path:path.join(output,'orders-precision.png')});
   await page.getByLabel('Search order data').fill('QA-BAG-100');const bagProgress=page.getByLabel('Production progress QA-BAG-100',{exact:true});await bagProgress.locator('summary').waitFor();await bagProgress.locator('summary').click();assert.doesNotMatch(await bagProgress.innerText(),/\d\.\d+ Bags/);
-  await page.getByRole('button',{name:'Planning board',exact:true}).click();await page.getByRole('button',{name:'Plan from Data',exact:true}).click();const picker=page.getByRole('dialog',{name:'Choose an order to plan',exact:true});await picker.getByLabel('Search order data').fill('QA-BULK-20');await picker.getByText('0.001 MT to plan',{exact:true}).waitFor();assert.equal(await picker.locator('thead th').count(),9);assert.match(await picker.getByLabel('Production progress QA-BULK-20').innerText(),/19\.999 MT reserved/);await page.keyboard.press('Escape');
+  await page.getByRole('button',{name:'Planning board',exact:true}).click();await planningAction(page, 'Plan from Data');const picker=page.getByRole('dialog',{name:'Choose an order to plan',exact:true});await picker.getByLabel('Search order data').fill('QA-BULK-20');await picker.getByText('0.001 MT to plan',{exact:true}).waitFor();assert.equal(await picker.locator('thead th').count(),9);assert.match(await picker.getByLabel('Production progress QA-BULK-20').innerText(),/19\.999 MT reserved/);await page.keyboard.press('Escape');
   console.log('PASS Readable seven-column orders and full picker preserve 0.001 MT shortages, exact reserved quantities and integer Bags');
   assert.deepEqual(errors,[]);console.log('PASS stock ledger, daily stock, backup v5, desktop/mobile rendering and browser console');
  } catch(e) {if(page)await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw e;}
