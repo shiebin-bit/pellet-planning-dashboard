@@ -288,11 +288,19 @@
   }
   .working-hours-actions {
     display: grid;
-    grid-template-columns: repeat(3,1fr);
+    grid-template-columns: repeat(3,minmax(0,1fr));
   }
   .working-hours-submit {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2,minmax(0,1fr));
+  }
+  .working-hours-actions>.button,
+  .working-hours-submit>.button {
+    min-width: 0;
+    min-height: var(--control-touch-height,44px);
+    padding: 8px;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .working-hours-row {
     grid-template-columns: 1fr 1fr;
@@ -303,4 +311,7 @@
   .working-hours-row>.field:last-child {
     grid-column: 1 / -1;
   }
+}
+@media(max-width:360px) {
+  .working-hours-row { grid-template-columns: minmax(0,1fr); }
 }
