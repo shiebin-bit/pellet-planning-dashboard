@@ -25,6 +25,15 @@ export function usePlanningCardPreview(job: ScheduledJob, dragging: boolean) {
   const dismissed=useRef(false);
   const [open,setOpen]=useState(false);
   const [position,setPosition]=useState<{left:number;top:number}|null>(null);
+  const place=()=>{
+    if(!anchor.current||!tooltip.current)return;
+    const rect=anchor.current.getBoundingClientRect(),box=tooltip.current.getBoundingClientRect();
+    const left=Math.max(12,Math.min(rect.left,window.innerWidth-box.width-12));
+    const below=rect.bottom+8;
+    const preferredTop=below+box.height<=window.innerHeight-12?below:rect.top-box.height-8;
+    const top=Math.max(12,Math.min(preferredTop,window.innerHeight-box.height-12));
+    setPosition(previous=>previous?.left===left&&previous.top===top?previous:{left,top});
+  };
   const clearTimer=()=>{clearTimeout(timer.current);};
   const close=()=>{clearTimer();if(activePreview?.id===id)activePreview=null;setOpen(false);setPosition(null);};
   const show=()=>{
@@ -40,19 +49,20 @@ export function usePlanningCardPreview(job: ScheduledJob, dragging: boolean) {
   useEffect(()=>{if(dragging)close();},[dragging]);
   useEffect(()=>{
     if(!open)return;
+    let frame:number|undefined;
+    const moved=()=>{
+      if(!focused.current){close();return;}
+      if(frame!==undefined)cancelAnimationFrame(frame);
+      frame=requestAnimationFrame(()=>{frame=undefined;place();});
+    };
     const escape=(event:KeyboardEvent)=>{if(event.key==='Escape'){pointerPreviewDismissed=true;dismissed.current=true;close();}};
-    const scroll=(event:Event)=>{if(!(event.target instanceof Node)||!tooltip.current?.contains(event.target))close();};
-    window.addEventListener('keydown',escape);window.addEventListener('resize',close);
+    const scroll=(event:Event)=>{if(!(event.target instanceof Node)||!tooltip.current?.contains(event.target))moved();};
+    window.addEventListener('keydown',escape);window.addEventListener('resize',moved);
     window.addEventListener('scroll',scroll,true);
-    return()=>{window.removeEventListener('keydown',escape);window.removeEventListener('resize',close);window.removeEventListener('scroll',scroll,true);};
+    return()=>{if(frame!==undefined)cancelAnimationFrame(frame);window.removeEventListener('keydown',escape);window.removeEventListener('resize',moved);window.removeEventListener('scroll',scroll,true);};
   },[open]);
   useLayoutEffect(()=>{
-    if(!open||!anchor.current||!tooltip.current)return;
-    const rect=anchor.current.getBoundingClientRect(),box=tooltip.current.getBoundingClientRect();
-    const left=Math.max(12,Math.min(rect.left,window.innerWidth-box.width-12));
-    const below=rect.bottom+8;
-    const top=below+box.height<=window.innerHeight-12?below:Math.max(12,rect.top-box.height-8);
-    setPosition({left,top});
+    if(open)place();
   },[open,job]);
   const preview=open&&!dragging?createPortal(<div id={id} ref={tooltip} role="tooltip" className="planning-card-preview" style={{left:position?.left??0,top:position?.top??0,visibility:position?'visible':'hidden'}} onPointerEnter={clearTimer} onPointerLeave={leave}>
     <div className="planning-preview-heading"><strong>{productLabel(job)}</strong><span>{job.lineId}</span></div>
