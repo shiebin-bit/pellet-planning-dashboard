@@ -3,6 +3,8 @@ param()
 $ErrorActionPreference = 'Stop'
 $projectDir = Split-Path -Parent $PSScriptRoot
 $envPath = Join-Path $projectDir '.env'
+$automaticBackupDir = Join-Path $projectDir 'backups\automatic'
+[System.IO.Directory]::CreateDirectory($automaticBackupDir) | Out-Null
 if (Test-Path -LiteralPath $envPath) {
     Write-Host '.env already exists. Existing configuration was preserved.'
     exit 0
@@ -20,6 +22,8 @@ DATABASE_URL=postgresql://millplan:${dbPassword}@127.0.0.1:5434/millplan
 HOST=127.0.0.1
 PORT=8080
 ALLOWED_ORIGINS=http://127.0.0.1:5178,http://localhost:5178
+AUTOMATIC_BACKUP_INTERVAL_HOURS=24
+AUTOMATIC_BACKUP_RETENTION_COUNT=14
 "@
 [System.IO.File]::WriteAllText($envPath, $config, (New-Object System.Text.UTF8Encoding($false)))
 Write-Host 'Created .env with a random database password. Keep this file private.'

@@ -10,6 +10,8 @@ import { SectionHeading, StatusBadge, EmptyState, TextLink } from '../components
 import { NeedsAttention,ProductionResults } from '../components/OperationsSummary';
 import { RecordedDowntime } from '../components/RecordedDowntime';
 import { BusinessPriorities } from '../components/BusinessPriorities';
+import { WeeklyCapacity } from '../components/WeeklyCapacity';
+import { useListState } from '../lib/listNavigation';
 import { getWorkingHoursForDate } from '../domain/engine';
 import { nonWorkingWindows } from '../domain/planningWindows';
 import { getOverviewMetrics } from '../domain/overviewMetrics';
@@ -18,7 +20,8 @@ import { readProductionSummary } from '../lib/inventoryApi';
 import type { InventoryProductionSummary } from '../domain/inventoryTypes';
 
 export function Overview() {
-  const { board, state, navigate, openJob, storageMode, savedAt, revision, refresh } = useWorkspace();
+  const { board, state, navigate, openJob, storageMode, savedAt, revision, refresh, setDate, mutationLocked, hasConflict } = useWorkspace();
+  const [scheduleView, setScheduleView] = useListState<'day' | 'week'>('overview.scheduleView', 'day');
   const metrics = useMemo(() => getOverviewMetrics(state, board.date), [state, board.date]);
   const [receipts, setReceipts] = useState<InventoryProductionSummary | null>(null);
   const [receiptError, setReceiptError] = useState(false);
@@ -42,13 +45,13 @@ export function Overview() {
     <div className="page-heading"><div><h1>Production overview</h1><p>Daily volume, capacity and production status.</p></div><span className="context-label">Daily production · 4 lines</span></div>
     <div className="metrics-grid">
       <Metric label="Assigned plan total" value={numberLabel(metrics.assignedDateMt, 2)} unit="MT" caption={<>{assignedJobs.length} tasks · {completed} completed<br/>Whole batches; includes carry-out</>} />
-      <Metric label="Planned within shift" value={numberLabel(metrics.inShiftPlannedMt, 2)} unit="MT" caption={<>Within {timeLabel(board.start)}–{timeLabel(board.end)}<br/>Carry-in included; shift time only</>} />
+      <Metric label="Planned within shift" value={numberLabel(metrics.inShiftPlannedMt, 2)} unit="MT" caption={<>Each line's working shift<br/>Carry-in included; shift time only</>} />
       <Metric label="Production receipts" value={receipts?.date === board.date && receipts.revision === revision ? numberLabel(receipts.netQuantityMt, 3) : '—'} unit="MT" caption={storageMode !== 'database' ? 'Available in the PostgreSQL workspace' : receiptError ? <>Could not load receipts. <button className="text-link" onClick={() => setReceiptReload(n => n + 1)}>Retry</button></> : receipts?.date === board.date && receipts.revision === revision ? <>Net receipts + corrections<br/>{receipts.jobCount} production tasks · posting date{receipts.unconvertedCount > 0 && <><br/><strong>{receipts.unconvertedCount} historical entries excluded: saved bag weight unavailable</strong></>}</> : receipts ? <>Workspace changed. <button className="text-link" onClick={() => {void refresh(); setReceiptReload(n => n + 1);}}>Refresh receipts</button></> : 'Loading production receipts…'} />
       <Metric label="Planned utilisation" value={available ? numberLabel(production / available * 100, 0) : '—'} unit="%" caption={numberLabel(production / 60) + ' production hrs / ' + numberLabel(available / 60) + ' available hrs'} />
     </div>
     <section className="panel schedule-panel">
-      <SectionHeading title="Daily line schedule" description="Select a product to view its production details." action={<TextLink onClick={() => navigate('planning')}>Open planning board</TextLink>} />
-      <div className="timeline-scroll"><div className="overview-timeline">
+      <SectionHeading title={scheduleView === 'day' ? 'Daily line schedule' : 'Weekly capacity'} description={scheduleView === 'day' ? 'Select a product to view its production details.' : 'Review the week before assigning more production.'} action={<div className="overview-schedule-actions"><div className="overview-view-switch" role="group" aria-label="Overview schedule view"><button type="button" aria-pressed={scheduleView === 'day'} onClick={() => setScheduleView('day')}>Daily</button><button type="button" aria-pressed={scheduleView === 'week'} onClick={() => setScheduleView('week')}>Week capacity</button></div><TextLink onClick={() => navigate('planning')}>Open planning board</TextLink></div>} />
+      {scheduleView === 'week' ? <WeeklyCapacity state={state} date={board.date} disabled={mutationLocked || hasConflict} onDate={setDate} onOpen={next => { if (navigate('planning')) setDate(next); }}/> : <><div className="timeline-scroll"><div className="overview-timeline">
         <div className="timeline-axis"><span className="axis-label">LINE / PRODUCT</span><div className="axis-ticks">{ticks.map((tick,index) => <span key={tick} style={{left: index / 8 * 100 + '%'}}>{timeLabel(tick)}{index === 8 && span >= 86400000 && <small>+1 day</small>}</span>)}</div><span className="axis-total">PLANNED</span></div>
         {board.lines.map(line => <div className="timeline-row" key={line.lineId}>
           <button className="timeline-line-label" onClick={() => navigate('planning')}><span className="line-id">{line.lineId}</span><small>{numberLabel(line.plannedMt)} MT</small></button>
@@ -74,7 +77,7 @@ export function Overview() {
         </div>)}
         <div className="timeline-date-label"><span>{dateLabel(board.date, true)}</span><span>{timeLabel(board.start)} — {timeLabel(board.end)}{span >= 86400000 ? ' next day' : ''} · MYT</span></div>
       </div></div>
-      <div className="schedule-legend"><span><i className="legend-pending" />Not started</span><span><i className="legend-running" />Running</span><span><i className="legend-paused" />Paused</span><span><i className="legend-completed" />Completed</span><span><i className="legend-issue" />Issue</span><span><i className="legend-changeover" />Changeover / line clean-up</span><span><i className="legend-downtime" />Unavailable</span><span className="legend-note">Time scale · {numberLabel(span / 3600000, 0)} hours</span></div>
+      <div className="schedule-legend"><span><i className="legend-pending" />Not started</span><span><i className="legend-running" />Running</span><span><i className="legend-paused" />Paused</span><span><i className="legend-completed" />Completed</span><span><i className="legend-issue" />Issue</span><span><i className="legend-changeover" />Changeover / line clean-up</span><span><i className="legend-downtime" />Unavailable</span><span className="legend-note">Time scale · {numberLabel(span / 3600000, 0)} hours</span></div></>}
     </section>
     <BusinessPriorities/>
     <LegacyCarryoverNotice/>

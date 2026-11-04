@@ -1,0 +1,49 @@
+.overview-schedule-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; justify-content: flex-end; }
+.weekly-capacity { padding: 0 20px 16px; }
+.overview-view-switch { display: inline-flex; padding: 3px; gap: 2px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-raised); }
+.overview-view-switch button { min-height: 30px; padding: 5px 9px; font-size: 12px; color: var(--muted); }
+.overview-view-switch button[aria-pressed=true] { color: var(--action); background: #fff; font-weight: 600; }
+.weekly-capacity-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+.weekly-capacity-toolbar > div { display: flex; align-items: center; gap: 10px; }
+.weekly-capacity-toolbar strong { font-size: 13px; }
+.weekly-capacity-toolbar span { color: var(--muted); font-size: 11px; }
+.weekly-capacity-grid { display: grid; grid-template-columns: 46px repeat(7,minmax(0,1fr)); border: 1px solid var(--border); }
+.weekly-capacity-axis { display: grid; grid-template-rows: 48px repeat(4,118px); font-size: 12px; }
+.weekly-capacity-axis > * { display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--border); }
+.weekly-capacity-axis > span { color: var(--muted); font-size: 10px; }
+.weekly-capacity-axis > :last-child { border: 0; }
+.weekly-capacity-day { min-width: 0; border-left: 1px solid var(--border); }
+.weekly-capacity-day h3 { height: 48px; padding: 6px 4px; display: flex; flex-direction: column; justify-content: center; gap: 3px; text-align: center; font-size: 10px; font-weight: 400; background: var(--surface-raised); }
+.weekly-capacity-day h3 span { font-size: 12px; font-weight: 600; }
+.weekly-capacity-day.selected h3 { background: var(--action-soft); color: var(--action); }
+.weekly-capacity-cell { width: 100%; height: 118px; display: flex; flex-direction: column; gap: 4px; align-items: stretch; padding: 8px; border-top: 1px solid var(--border); text-align: left; color: var(--text); }
+.weekly-capacity-cell:hover:not(:disabled) { background: var(--surface-raised); }
+.weekly-capacity-cell strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.weekly-capacity-cell > span { font-size: 11px; color: var(--muted); }
+.weekly-capacity-cell small { font-size: 10px; line-height: 1.3; color: var(--muted); }
+.weekly-capacity-cell .weekly-cell-line { display: none; }
+.weekly-load-track { display: block; height: 3px; background: #edf0f2; margin-top: auto; }
+.weekly-load-track > i { display: block; height: 100%; background: #64866e; }
+.weekly-capacity-cell.closed { background: var(--surface-raised); color: var(--muted); }
+.weekly-capacity-cell.review strong,.weekly-capacity-cell.review small { color: var(--red); }
+.weekly-capacity-cell.review .weekly-load-track > i { background: var(--red); }
+.weekly-capacity-note { font-size: 12px; color: var(--muted); line-height: 1.6; margin-top: 12px; }
+@media(max-width:1000px) {
+  .weekly-capacity-grid { display: block; border: 0; }
+  .weekly-capacity-axis { display: none; }
+  .weekly-capacity-day { margin-top: 10px; border: 1px solid var(--border); }
+  .weekly-capacity-day h3 { height: auto; min-height: 40px; display: flex; flex-direction: row; align-items: center; gap: 10px; }
+  .weekly-capacity-day-lines { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); }
+  .weekly-capacity-cell { height: 138px; border-right: 1px solid var(--border); }
+  .weekly-capacity-cell:last-child { border-right: 0; }
+  .weekly-capacity-cell .weekly-cell-line { display: block; font-weight: 650; color: var(--text); }
+}
+@media(max-width:600px) {
+  .overview-schedule-actions { justify-content: flex-start; }
+  .overview-view-switch button { min-height: 40px; }
+  .weekly-capacity-toolbar > div:first-child { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .weekly-capacity-toolbar > div:last-child { gap: 2px; }
+  .weekly-capacity-toolbar .icon-button { min-width: 44px; min-height: 44px; }
+  .weekly-capacity-day-lines { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .weekly-capacity-cell:nth-child(even) { border-right: 0; }
+}

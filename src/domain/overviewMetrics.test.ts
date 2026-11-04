@@ -19,6 +19,17 @@ function state(jobs: Job[]): AppState {
 }
 
 describe("overview metrics", () => {
+  it("uses each line's own overtime/overnight window rather than clipping to global hours", () => {
+    const app = state([job('overtime', '2026-11-04', 140), job('normal', '2026-11-04', 140, { lineId: 'PM2' }), job('night', '2026-11-04', 60, { lineId: 'PM3' })]);
+    app.settings.dayStart = '07:00'; app.settings.availableHours = 12;
+    app.settings.rates = { PM1: 10, PM2: 10, PM3: 10, PM4: 10 };
+    app.settings.workingHoursOverrides = [
+      { date: '2026-11-04', lineId: 'PM1', dayStart: '07:00', availableHours: 14, reason: 'Overtime', activatedAt: '2026-11-03T00:00:00Z' },
+      { date: '2026-11-04', lineId: 'PM3', dayStart: '20:00', availableHours: 8, reason: 'Night shift', activatedAt: '2026-11-03T00:00:00Z' },
+    ];
+    expect(getOverviewMetrics(app, '2026-11-04')).toEqual({ assignedDateMt: 340, inShiftPlannedMt: 320 });
+    expect(getOverviewMetrics(app, '2026-11-05').inShiftPlannedMt).toBe(20);
+  });
   it("separates whole assigned cards from production inside the shift, including carry-in and carry-out", () => {
     const app = state([job("long", "2026-10-15", 25.5)]);
     expect(getOverviewMetrics(app, "2026-10-15")).toEqual({ assignedDateMt: 25.5, inShiftPlannedMt: 17 });

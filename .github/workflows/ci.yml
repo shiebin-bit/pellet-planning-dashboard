@@ -70,4 +70,6 @@ jobs:
             output/playwright/list-navigation/
             output/playwright/combined-production/
             output/playwright/business-priorities/
+            output/playwright/weekly-list/
+            output/playwright/automatic-backup/
           if-no-files-found: ignore

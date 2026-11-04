@@ -1,5 +1,5 @@
-import { getCalendarForDate, getScheduledJobs, getShiftWindow } from "./engine";
-import type { AppState } from "./types";
+import { getWorkingHoursForDate, getScheduledJobs, getShiftWindow } from "./engine";
+import { LINE_IDS, type AppState } from "./types";
 
 const MINUTE_MS = 60_000;
 
@@ -12,12 +12,13 @@ export interface OverviewMetrics {
 
 export function getOverviewMetrics(state: AppState, date: string): OverviewMetrics {
   const scheduled = getScheduledJobs(state);
-  const shift = getShiftWindow(getCalendarForDate(state.settings, date), date);
+  const shifts = new Map(LINE_IDS.map(line => [line, getShiftWindow(getWorkingHoursForDate(state.settings, date, line), date)]));
   const assignedDateMt = state.jobs.reduce(
     (total, job) => total + (job.date === date && job.status !== "cancelled" ? job.quantityMt : 0),
     0,
   );
   const inShiftPlannedMt = scheduled.reduce((total, job) => {
+    const shift = shifts.get(job.lineId)!;
     const production = job.segments.filter(segment => segment.kind === "production");
     const totalProductionMinutes = production.reduce(
       (minutes, segment) => minutes + (segment.end - segment.start) / MINUTE_MS,

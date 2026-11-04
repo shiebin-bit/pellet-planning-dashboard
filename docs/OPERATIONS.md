@@ -13,6 +13,9 @@
 | `PUBLIC_PORT` | Optional external port recognized in Host/Origin checks; Compose sets this from APP_PORT |
 | `ALLOWED_ORIGINS` | Additional exact origins, comma-separated; forwarded to the Docker app too. Required for Vite development and any HTTPS reverse-proxy hostname |
 | `DIST_DIR` | Optional native static build path |
+| `AUTOMATIC_BACKUP_ENABLED`, `AUTOMATIC_BACKUP_DIR` | Native automatic V5 snapshots default disabled; enable explicitly with an absolute non-root private directory. Compose enables snapshots and binds `./backups/automatic` |
+| `AUTOMATIC_BACKUP_INTERVAL_HOURS` | Snapshot interval, default24, allowed1–168 hours |
+| `AUTOMATIC_BACKUP_RETENTION_COUNT` | Keep the newest successful managed snapshots, default14, allowed1–365 |
 | `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR` | Optional persistent Compose file selection; on Windows use `compose.yml;compose.dev.yml` and `;` to retain DataGrip port 5434 through normal startup |
 
 Changing `.env`'s PostgreSQL password does **not** change the role password inside an existing volume. Coordinate password rotation through PostgreSQL and update all connection settings. Do not delete a data volume to fix a password mismatch. Arbitrary passwords need URL encoding in a connection URL; the generated hex passwords avoid that problem.
@@ -48,6 +51,12 @@ The named volume is `millplan_postgres_data` with the default project name. It s
 
 ## Backups
 
+Docker automatically saves portable V5 recovery copies in `backups/automatic/` on the host, independently of the browser. The first enabled start queues a copy immediately. Later starts inspect existing valid copies; within the interval they reuse the last success, and after a missed interval they queue one catch-up rather than every missed run. The default is24 hours and14 successful files. Settings → Backup & recovery shows last success, next attempt and any failure; Refresh updates status. Native development/tests default to disabled unless explicitly enabled.
+
+Files use `millplan-auto-v5-YYYYMMDDTHHmmssSSSZ.json` (UTC). A same-directory temporary file is written exclusively and synced before atomic rename. Only after success are older regular files with that exact managed filename removed. Manual JSON, database dumps, directories and symlinks are excluded. A failed export/write keeps existing copies and retries after15 minutes; pruning failure retains the valid new copy and shows a warning. The host directory must be writable by the container's unprivileged `node` user and private under host ACLs; a permissions failure is shown as degraded status without stopping planning. It is outside the static web root and excluded from Git/Docker build context.
+
+For routine recovery, select a saved automatic JSON through the existing Restore JSON backup preview. V5 contains the current business graph, including orders, inventory, review history and production progress. It does not include schema/migration history, command receipts, workspace revision, old recovery snapshots or browser-local drafts. Continue full database dumps for releases and database-level recovery, and retain protected copies outside this disk.
+
 Portable workspace: Settings → Download backup. The database application exports version 5, including planning, catalog, activity, source orders/versions, import reviews, inventory ledger and production-progress samples/resets. Offline exports remain planning-only version 2. Import requires a preview and replaces the active workspace. Legacy versions 1/2 omit Data and trigger a warning; version 1 also restores an empty catalog. The preceding complete workspace is retained once. Download that recovery copy if it must be kept permanently.
 
 Full database:
@@ -56,7 +65,7 @@ Full database:
 .\scripts\backup.ps1
 ```
 
-This uses `pg_dump -Fc` inside PostgreSQL and copies the binary dump to ignored `backups/millplan-<UTC time>.dump`. Do not redirect binary dump bytes through Windows PowerShell. The dump includes receipts, revision, recovery snapshots and migrations. Keep independent protected copies outside this PC and agree retention, frequency and restore responsibility with the company. No automated schedule is configured.
+This uses `pg_dump -Fc` inside PostgreSQL and copies the binary dump to ignored `backups/millplan-<UTC time>.dump`. Do not redirect binary dump bytes through Windows PowerShell. The dump includes receipts, revision, recovery snapshots and migrations. Automatic portable JSON snapshots do not replace this database-level recovery path. Keep independent protected copies outside this PC and agree retention and restore responsibility with the company.
 
 ## Restore drill into a separate database
 

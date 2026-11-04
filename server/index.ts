@@ -7,21 +7,26 @@ import { createPool } from "./db";
 import { runMigrations } from "./migrate";
 import { createDefaultSettings } from "../src/domain/defaults";
 import { WorkspaceStore } from "./store";
+import { AutomaticBackupService } from "./automaticBackup";
 
 export async function startServer(): Promise<{ close(): Promise<void> }> {
   const config = loadConfig();
   const pool = createPool(config.databaseUrl);
   pool.on("error", () => process.stderr.write("PostgreSQL pool reported an idle connection error.\n"));
   let server;
+  let automaticBackup: AutomaticBackupService | undefined;
   try {
     await runMigrations(pool);
     const store = new WorkspaceStore(pool);
     await store.initialize(createDefaultSettings());
+    automaticBackup = new AutomaticBackupService(config.automaticBackup, { exportBackup: () => store.getPortableBackup() });
+    await automaticBackup.start();
     server = createServer(createApp({
       store,
       hostPorts: config.hostPorts,
       distDir: config.distDir,
       allowedOrigins: config.allowedOrigins,
+      automaticBackupStatus: () => automaticBackup!.getStatus(),
     }));
     await new Promise<void>((resolve, reject) => {
       server!.once("error", reject);
@@ -32,6 +37,7 @@ export async function startServer(): Promise<{ close(): Promise<void> }> {
     });
   } catch (error) {
     if (server?.listening) await new Promise<void>(resolve => server!.close(() => resolve()));
+    await automaticBackup?.close();
     await pool.end();
     throw error;
   }
@@ -40,8 +46,14 @@ export async function startServer(): Promise<{ close(): Promise<void> }> {
     async close() {
       if (closed) return;
       closed = true;
-      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-      await pool.end();
+      let failure: unknown;
+      try { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+      catch (error) { failure = error; }
+      try { await automaticBackup!.close(); }
+      catch (error) { failure ??= error; }
+      try { await pool.end(); }
+      catch (error) { failure ??= error; }
+      if (failure) throw failure;
     },
   };
 }

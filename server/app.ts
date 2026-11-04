@@ -8,12 +8,14 @@ import type { WorkspaceStore } from "./store";
 import type { InventoryDraftRequest } from "../src/domain/inventoryTypes";
 import type { SourceImportInput, SourceImportPreviewContext } from "../src/domain/sourceTypes";
 import { parseProductionProgressJobIds } from "./productionProgress";
+import type { AutomaticBackupStatus } from "../src/domain/automaticBackup";
 
 export interface AppOptions {
   store: WorkspaceStore;
   hostPorts: ReadonlySet<number>;
   distDir: string;
   allowedOrigins: ReadonlySet<string>;
+  automaticBackupStatus?: () => AutomaticBackupStatus;
 }
 
 export function createApp(options: AppOptions): express.Express {
@@ -110,6 +112,12 @@ export function createApp(options: AppOptions): express.Express {
     response.json(await options.store.getPortableBackup());
   }));
 
+  app.get("/api/backup/status", asyncRoute(async (request, response) => {
+    const query = new URL(request.originalUrl, "http://localhost").searchParams;
+    for (const [name] of query) throw badRequest(`Automatic backup status query ${name} is not supported.`);
+    response.json(options.automaticBackupStatus?.() ?? disabledAutomaticBackupStatus());
+  }));
+
   app.get("/api/backup/previous", asyncRoute(async (_request, response) => {
     const backup = await options.store.getPreviousPortableBackup();
     if (!backup) throw new ApiError(404, "PREVIOUS_BACKUP_NOT_FOUND", "No recovery backup is available.");
@@ -182,6 +190,19 @@ export function createApp(options: AppOptions): express.Express {
 
   app.use(errorHandler);
   return app;
+}
+
+function disabledAutomaticBackupStatus(): AutomaticBackupStatus {
+  return {
+    enabled: false,
+    format: "portable-v5",
+    intervalHours: 24,
+    retentionCount: 14,
+    state: "disabled",
+    lastAttempt: null,
+    lastSuccess: null,
+    nextAttemptAt: null,
+  };
 }
 
 function mutationBoundary(allowedOrigins: ReadonlySet<string>) {

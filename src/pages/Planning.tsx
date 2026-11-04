@@ -45,7 +45,11 @@ export function Planning() {
   const [range, setRange] = useState<PlanRange>('day');
   const [smallScreen,setSmallScreen]=useState(()=>window.matchMedia('(max-width:600px)').matches);
   const [mobileView,setMobileView]=useListState<'list'|'timeline'>('planning.mobileView','list');
-  const listView=smallScreen&&mobileView==='list';
+  const [desktopView,setDesktopView]=useListState<'list'|'timeline'>('planning.desktopView','timeline');
+  const view=smallScreen?mobileView:desktopView;
+  const listView=view==='list';
+  const setView=smallScreen?setMobileView:setDesktopView;
+  const viewSwitch=<div className="hplan-range" role="group" aria-label="Planning view"><button type="button" aria-pressed={view==='timeline'} className={view==='timeline'?'active':''} onClick={()=>setView('timeline')}>Timeline</button><button type="button" aria-pressed={view==='list'} className={view==='list'?'active':''} onClick={()=>setView('list')}>List</button></div>;
   useEffect(()=>{setActiveId(null);},[listView]);
   useEffect(()=>{const media=window.matchMedia('(max-width:600px)');const changed=()=>setSmallScreen(media.matches);media.addEventListener('change',changed);return()=>media.removeEventListener('change',changed);},[]);
   const sensors = useSensors(
@@ -108,6 +112,7 @@ export function Planning() {
     <div className="page-heading hplan-heading">
       <div><h1>Planning board</h1><p>{listView?'Production sequence and orders, grouped by line.':'Drag a not-started card to another line. Click for details.'}</p></div>
       <div className="hplan-actions">
+        {!smallScreen&&viewSwitch}
         <AutoPlanningButton/>
         <CombinePlanningButton/>
         {storageMode === 'database' && <button type="button" className="button secondary" disabled={mutationLocked || hasConflict} onClick={() => openSource()}><Plus size={15}/>Plan from Data</button>}
@@ -120,7 +125,7 @@ export function Planning() {
       </div>
     </div>
 
-    {smallScreen&&<div className="planning-mobile-view"><div className="hplan-range" role="group" aria-label="Planning view"><button type="button" aria-pressed={mobileView==='list'} className={mobileView==='list'?'active':''} onClick={()=>setMobileView('list')}>List</button><button type="button" aria-pressed={mobileView==='timeline'} className={mobileView==='timeline'?'active':''} onClick={()=>setMobileView('timeline')}>Timeline</button></div><p>{listView?'Tap a card for details and moves. Switch to Timeline to drag.':'Hold a not-started card, then drag to move it.'}</p></div>}
+    {smallScreen&&<div className="planning-mobile-view">{viewSwitch}<p>{listView?'Tap a card for details and moves. Switch to Timeline to drag.':'Hold a not-started card, then drag to move it.'}</p></div>}
     {listView?<ProductionList lines={board.lines} start={board.start} end={windowEnd} date={board.date} settings={state.settings} bagWeightKg={state.settings.bagWeightKg} selectedId={selectedId} disabled={mutationLocked||hasConflict} onOpen={openJob} onAdd={openInput}/>:<DndContext sensors={sensors} collisionDetection={collision} accessibility={{
       screenReaderInstructions: { draggable: 'Press Enter to open production details. Press Space to pick up a card, arrow keys to move, Space to drop, or Escape to cancel. On a touch screen, hold the card briefly before dragging.' },
       announcements: {

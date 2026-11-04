@@ -1,4 +1,6 @@
 import { fileURLToPath } from "node:url";
+import path from "node:path";
+import type { AutomaticBackupConfig } from "./automaticBackup";
 
 export interface ServerConfig {
   host: string;
@@ -7,6 +9,7 @@ export interface ServerConfig {
   databaseUrl: string;
   distDir: string;
   allowedOrigins: ReadonlySet<string>;
+  automaticBackup: AutomaticBackupConfig;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
@@ -26,6 +29,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     .map(value => value.trim())
     .filter(Boolean);
   const allowedOrigins = new Set([...defaults, ...configured].map(normalizeOrigin));
+  const automaticBackupDirectory = env.AUTOMATIC_BACKUP_DIR?.trim()
+    || fileURLToPath(new URL("../backups/automatic", import.meta.url));
+  if (!path.isAbsolute(automaticBackupDirectory) || path.parse(automaticBackupDirectory).root === path.resolve(automaticBackupDirectory)) {
+    throw new Error("AUTOMATIC_BACKUP_DIR must be an absolute non-root directory.");
+  }
   return {
     host,
     port,
@@ -33,6 +41,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ServerConfig {
     databaseUrl,
     distDir: env.DIST_DIR?.trim() || fileURLToPath(new URL("../dist", import.meta.url)),
     allowedOrigins,
+    automaticBackup: {
+      enabled: boolean(env.AUTOMATIC_BACKUP_ENABLED, "AUTOMATIC_BACKUP_ENABLED", false),
+      directory: automaticBackupDirectory,
+      intervalHours: integer(env.AUTOMATIC_BACKUP_INTERVAL_HOURS ?? "24", "AUTOMATIC_BACKUP_INTERVAL_HOURS", 1, 168),
+      retentionCount: integer(env.AUTOMATIC_BACKUP_RETENTION_COUNT ?? "14", "AUTOMATIC_BACKUP_RETENTION_COUNT", 1, 365),
+    },
   };
 }
 
@@ -52,4 +66,11 @@ function integer(value: string, name: string, min: number, max: number): number 
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < min || parsed > max) throw new Error(`${name} must be an integer from ${min} to ${max}.`);
   return parsed;
+}
+
+function boolean(value: string | undefined, name: string, fallback: boolean): boolean {
+  if (value === undefined || value.trim() === "") return fallback;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new Error(`${name} must be true or false.`);
 }

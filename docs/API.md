@@ -10,11 +10,14 @@ Default base URL: `http://127.0.0.1:8080` (configurable through APP_PORT). Respo
 | `GET /api/inventory/production-summary?date=YYYY-MM-DD` | Repeatable-read `{revision,date,netQuantityMt,jobCount,unconvertedCount}`; exactly one valid date, no other filters |
 | `GET /api/workspace` | Consistent workspace envelope; `Cache-Control: no-store` |
 | `GET /api/operations-summary` | Read-only repeatable-read `{revision,serverNow,asOfDate,dueSoonThrough,counts,freshness}`; rejects all query parameters |
+| `GET /api/backup/status` | Read-only automatic portable-backup status; rejects all query parameters; no filesystem paths or backup payloads |
 | `POST /api/commands` | Applies one validated command and returns the confirmed envelope |
 
 Envelope:
 
 The operations summary captures one MYT date and counts all matching rows, independently of pagination. `counts.overdueToPlan` matches `/api/data?view=needs-production&deliveryTo=<yesterday>`; `dueSoon` matches pending delivery orders between `asOfDate` and `dueSoonThrough` (today + 3, inclusive). `stockShortages` counts standard blank-Medication/FMR MTS products whose available stock is below a non-null safety target; missing standard buckets count as zero stock and other variants cannot offset them. `pendingImportReviews` counts pending review rows. Freshness includes `latestOrderImport: {asOfDate,importedAt} | null`, `newestExcelAsOfDate`, `inventoryBaselineDate` and `lastVerifiedStockCountDate`. A late upload of an older file can therefore have a newer upload time and an older file date. This endpoint writes no records and changes no revision.
+
+Automatic-backup status returns `enabled`, `format: "portable-v5"`, `intervalHours`, `retentionCount`, `state` (`disabled`, `idle`, `running` or `degraded`), `lastAttempt: {at,result,code?,sanitizedMessage?} | null`, `lastSuccess: {at,fileName,bytes} | null` and `nextAttemptAt: string | null`. Attempt results are `success`, `failed` or `success_with_warning`. UTC timestamps are formatted as MYT in Settings. Failure is operational status, not a business-data mutation or a failed database health check. No HTTP trigger, deletion or stored-file listing endpoint is provided; manual export and previewed restore continue through the existing backup flow.
 
 ```typescript
 interface WorkspaceEnvelope {
