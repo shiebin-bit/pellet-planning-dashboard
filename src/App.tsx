@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Database, Warehouse, LayoutDashboard, CalendarRange, Plus, History, Settings2, Download, Menu, X, ChevronDown, FileSpreadsheet, Printer, Check, HardDrive, PanelLeftClose, Undo2 } from 'lucide-react';
+import { ClipboardList, Warehouse, LayoutDashboard, CalendarRange, Plus, History, Settings2, Download, Menu, X, ChevronDown, FileSpreadsheet, Printer, Check, HardDrive, PanelLeftClose, Undo2 } from 'lucide-react';
 import { ListNavigationProvider } from './lib/listNavigation';
 import { WorkspaceProvider, useWorkspace } from './lib/workspace';
 import type { Page } from './lib/workspace';
@@ -26,7 +26,7 @@ import { LiveProductionProvider } from './lib/liveProduction';
 const navigation = [
   { id: 'overview' as Page, label: 'Overview', icon: LayoutDashboard },
   { id: 'planning' as Page, label: 'Planning board', icon: CalendarRange },
-  { id: 'data' as Page, label: 'Data', icon: Database },
+  { id: 'data' as Page, label: 'Orders', icon: ClipboardList },
   { id: 'stock' as Page, label: 'Stock', icon: Warehouse },
   { id: 'history' as Page, label: 'History', icon: History },
   { id: 'settings' as Page, label: 'Settings', icon: Settings2 },

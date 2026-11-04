@@ -50,7 +50,7 @@ async function bounds(locator,width,height){const b=await locator.boundingBox();
   console.log('PASS Settings/catalog drafts survive tab switches; hidden invalid field opens and focuses; shared save works from Products; tabs support arrows/Home/End');
 
   await page.getByRole('button',{name:'Overview',exact:true}).click();
-  await page.locator('.metric').filter({hasText:'Production receipts'}).waitFor();assert.equal(await page.getByText('Production load',{exact:true}).count(),0);
+  await page.locator('.metric').filter({hasText:'Received into stock'}).waitFor();assert.equal(await page.getByText('Production load',{exact:true}).count(),0);
   assert.equal(await page.locator('.capacity-panel').getAttribute('open'),null);await page.locator('.capacity-panel summary').click();assert.equal(await page.locator('.line-summary').count(),4);
   await page.screenshot({path:path.join(output,'overview-hierarchy-desktop.png'),animations:'disabled',fullPage:true});
 

@@ -349,21 +349,28 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.hplan-order-count,.hplan-packaging {
+.hplan-packaging {
   display: none;
   margin-left: 6px;
   font-size: 10px;
   font-weight: 500;
 }
 .hplan-order-count {
-  padding: 1px 5px;
-  border: 1px solid var(--hplan-border);
+  position: absolute;
+  top: 6px;
+  right: 5px;
+  display: none;
+  padding: 3px 5px;
+  border: 1px solid var(--action);
   border-radius: 3px;
-  background: color-mix(in srgb,var(--hplan-bg) 45%,#fff);
+  background: var(--surface);
+  color: var(--action);
   font-size: 11px;
-  line-height: 1.1;
+  line-height: 1;
   font-weight: 750;
+  pointer-events: none;
 }
+.hplan-order-count > span { display: none; }
 .hplan-time {
   overflow: hidden;
   font-family: var(--mono);
@@ -419,18 +426,26 @@
   }
 }
 @container hplan-card (min-width:180px) {
-  .hplan-order-count,.hplan-packaging {
+  .hplan-packaging {
     display: inline;
   }
 }
 @container hplan-card (min-width:72px) {
-  .hplan-card[data-draggable=true] .hplan-code-full {
+  .hplan-state {
     max-width: calc(100% - 23px);
   }
 }
+@container hplan-card (min-width:94px) {
+  .hplan-order-count { display: block; }
+  .hplan-card.has-order-count .hplan-code-full { max-width: calc(100% - 30px); }
+}
+@container hplan-card (min-width:140px) {
+  .hplan-order-count > span { display: inline; }
+  .hplan-card.has-order-count .hplan-code-full { max-width: calc(100% - 64px); }
+}
 .hplan-drag-handle {
   position: absolute;
-  top: 5px;
+  bottom: 5px;
   right: 4px;
   z-index: 3;
   display: none;

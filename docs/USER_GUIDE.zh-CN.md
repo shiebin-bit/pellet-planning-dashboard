@@ -8,12 +8,12 @@
 
 ## 界面布局
 
-界面使用白底、深蓝操作色和少量 FFM 金色导航标记。绿色完成、灰色未开始、蓝色运行、黄色暂停、红色异常的规则保持不变。Planning board 常用的 Generate planning 保持可见；Plan from Data、Copy planning、Combine cards 和 Undo 在 More 内。按 Escape、点击其他区域或移出键盘焦点可收起 More；关闭弹窗后焦点回到可见的 More 按钮。
+界面使用白底、深蓝操作色和少量 FFM 金色导航标记。绿色完成、灰色未开始、蓝色运行、黄色暂停、红色异常的规则保持不变。Planning board 常用的 Generate planning 保持可见；Plan from Orders、Copy planning、Combine cards 和 Undo 在 More 内。按 Escape、点击其他区域或移出键盘焦点可收起 More；关闭弹窗后焦点回到可见的 More 按钮。
 
 
-Overview 和 Planning board 的顶部工具栏显示排产日期、Today、Export 和 Add production。History 提供 Export 及可直接打开的 Date range report；Orders、Stock 和 Settings 不再显示排产日期或新增生产入口。左侧保留 Overview、Planning board、Data、Stock、History 和 Settings；平板会缩成图标，手机从左上角菜单展开。
+Overview 和 Planning board 的顶部工具栏显示排产日期、Today、Export 和 Add production。History 提供 Export 及可直接打开的 Date range report；Orders、Stock 和 Settings 不再显示排产日期或新增生产入口。左侧保留 Overview、Planning board、Orders、Stock、History 和 Settings；平板会缩成图标，手机从左上角菜单展开。
 
-Overview 先显示四项总数和当日时间轴，点产品段可查看卡片；四项总数是 Assigned plan total、Planned within shift、Production receipts 和 Planned utilisation。Assigned plan total 是分配给该排程日期的整张卡片总量；Planned within shift 按生产时段估算落在当前班次内的份额，包含前日延续的生产。Production receipts 按入账日期计算分次生产入库及更正／冲销，包括尚未 Done 的卡片；不代表精确的班次实际产量。旧袋装记录若缺少当时袋重，会列出未计入的笔数。时间轴之后先看 Needs attention 和 Plan vs actual；Line capacity details 与 Next production tasks 可按需展开，停机记录继续保留。Planning board 四条产线横向排列，电脑 1366 × 768 可完整查看；新增、复制、报表和卡片详情在当前页面弹出。
+Overview 先显示四项总数和当日时间轴，点产品段可查看卡片；指标旁的资讯按钮可查看完整计算说明，支持键盘 Enter、Escape；四项总数是 Daily planned quantity、Within-shift plan、Received into stock 和 Planned utilisation。Daily planned quantity 是分配给该排程日期的整张卡片总量；Within-shift plan 按生产时段估算落在当前班次内的份额，包含前日延续的生产。Received into stock 按入账日期计算分次生产入库及更正／冲销，包括尚未 Done 的卡片；不代表精确的班次实际产量。旧袋装记录若缺少当时袋重，会列出未计入的笔数。时间轴之后先看 Needs attention 和 Plan vs actual；Line capacity details 与 Next production tasks 可按需展开，停机记录继续保留。Planning board 四条产线横向排列，电脑 1366 × 768 可完整查看；新增、复制、报表和卡片详情在当前页面弹出。
 
 ## 日常 planning
 
@@ -65,7 +65,7 @@ History 顶部显示全部匹配记录的记录数、完成数、计划 MT（排
 
 History、Stock 和 Daily stock 在列表上方及下方都能翻页。长表格在列表区域内上下滚动，表头保持可见；窄屏可用 Left／Right 查看其他栏位，右侧操作栏保持可见。换页或筛选会回到表格开头。Orders、Stock、Daily stock 和 History 各自保留当前搜索、筛选、页码及滚动位置；切换导航再回来可以接着查看。Stock 标签及 Daily stock 日期也会保留。这些记忆仅在当前应用会话内有效，刷新浏览器后重置。
 
-Overview 和 Planning board 顶部的 **Planning date** 用于排程及快捷生产报表，切换到其他页面后不会套用到列表。History 的日期输入筛选生产日期（Activity log 则筛选操作日期）；Data 的日期筛选交货日期，交期天数按今天的马来西亚日期计算。Stock 的 Snapshot date 是当前台账快照生成日期，台账包含所有已入账变动；Inventory baseline 和 Last verified stock count 分别显示基准和最近盘点日期。Daily stock 使用自己的 **Stock date**。这些范围独立，页面会显示当前日期用途。
+Overview 和 Planning board 顶部的 **Planning date** 用于排程及快捷生产报表，切换到其他页面后不会套用到列表。History 的日期输入筛选生产日期（Activity log 则筛选操作日期）；Orders 的日期筛选交货日期，交期天数按今天的马来西亚日期计算。Stock 的 Snapshot date 是当前台账快照生成日期，台账包含所有已入账变动；Inventory baseline 和 Last verified stock count 分别显示基准和最近盘点日期。Daily stock 使用自己的 **Stock date**。这些范围独立，页面会显示当前日期用途。
 
 Export 的 **Excel report** 和 **Print / save as PDF** 使用顶部 Planning date 及全部四条产线，页面搜索、状态、日期筛选和分页不会套用。菜单会列出该日期；**Date range report** 使用弹窗内选定的日期及产线，也不套用页面搜索／状态。完整备份移至 Settings → Backup & recovery → Download backup，包含所有日期的资料，数据库版包括订单及库存台账，离线版包含排程、产品清单和 Settings。
 
@@ -81,34 +81,34 @@ Daily stock 的 **Enter physical count** 会立即打开盘点弹窗，载入所
 
 Settings → **Backup & recovery** → Download backup 下载整个 workspace JSON。Restore JSON backup 会先预览，再由 Replace workspace 确认替换；它不会合并资料。替换或数据库版 Reset demo 前的一份 workspace 可以下载恢复，但只保留最近一次。
 
-数据库新版备份为 version 5，包含排产、Data、库存和完整流水；离线版为 version 2，包含排产及产品清单。旧版 version 1 仍能读取，但没有产品清单，恢复后清单为空；预览会明确提醒。恢复前应下载当前备份。
+数据库新版备份为 version 5，包含排产、Orders、库存和完整流水；离线版为 version 2，包含排产及产品清单。旧版 version 1 仍能读取，但没有产品清单，恢复后清单为空；预览会明确提醒。恢复前应下载当前备份。
 
 旧离线资料：在原本浏览器、原本 HTML 路径打开 → 下载 JSON → 在数据库版导入。不会自动迁移。
 
 Docker 数据库版会在服务端每24小时自动保存一份 version5 JSON，保留最近14份，存于本机私有 `backups/automatic/`。首次启用立即备份，重启后错过的备份会补做一份；浏览器关闭也会继续，电脑／Docker 停止期间暂停。Settings → Backup & recovery 可查看最近成功时间、下次备份和失败提示；按 Refresh 更新状态。自动 JSON 可用原有 Restore JSON backup 预览恢复。数据库完整备份仍由 `scripts/backup.ps1` 产生，用于包含数据库结构、请求去重及恢复副本的完整恢复；交接负责人应保留独立副本并验证恢复。
 
 
-## 从 Excel 导入订单（Data）
+## 从 Excel 导入订单（Orders）
 
-1. 打开 Data → Import Excel，选择 `.xlsx` 文件（最多 5 MB、2,000 行）。
+1. 打开 Orders → Import Excel，选择 `.xlsx` 文件（最多 5 MB、2,000 行）。
 2. 确认工作表、表头行和 13 个栏位的对应关系。文本日期可选 MM/DD/YYYY、DD/MM/YYYY 或 YYYY/MM/DD；请核对 Excel 实际格式。
 3. 填写 Excel as-of date（这些剩余天数是哪一天的数据），默认今天。
 4. 预览新订单和会跳过的已有订单。差异列出 Saved · retained（保留）与 Excel · skipped（跳过），只供核对，不会覆盖旧值。0、空白（Empty）和未提供（Not provided）分开显示。错误须全部修正才可保存；确认后只添加新订单，不自动排产。
-5. 在 Data 搜寻 DO、客户、物料或描述。快捷视图为 All orders（全部）、Needs production（扣除预留库存及已有未完成排程后仍有缺口）、Ready for pickup（预留现货已覆盖剩余未取数量）及 Needs review（待核对）。没有库存基准的旧订单按关联卡片及生产状态判断。Advanced filters 可展开交期、单位、生产状态、交货状态、逾期及导入批次；快捷视图、搜索和高级筛选同时生效，Clear filters 全部清除。每页 50 条，顶部统计包含所有匹配订单。点击 DO 编号会弹出订单详情，关闭后回到原来的列表位置。主列表分为七栏，将交货日和生产期限放在一起，生产缺口单独突出，取货天数放在状态下。按 Breakdown 展开现货预留、累计生产、已取货及已排未入库数量。Bags 显示整数，MT 保留三位小数，避免小缺口被四舍五入隐藏。主列表会按栏宽换行；窄屏可用表格上方的 Left／Right 按钮左右查看，操作栏固定在右侧。
+5. 在 Orders 搜寻 DO、客户、物料或描述。快捷视图为 All orders（全部）、Needs production（扣除预留库存及已有未完成排程后仍有缺口）、Ready for pickup（预留现货已覆盖剩余未取数量）及 Needs review（待核对）。没有库存基准的旧订单按关联卡片及生产状态判断。Advanced filters 可展开交期、单位、生产状态、交货状态、逾期及导入批次；快捷视图、搜索和高级筛选同时生效，Clear filters 全部清除。每页 50 条，顶部统计包含所有匹配订单。点击 DO 编号会弹出订单详情，关闭后回到原来的列表位置。主列表分为七栏，将交货日和生产期限放在一起，生产缺口单独突出，取货天数放在状态下。按 Breakdown 展开现货预留、累计生产、已取货及已排未入库数量。Bags 显示整数，MT 保留三位小数，避免小缺口被四舍五入隐藏。主列表会按栏宽换行；窄屏可用表格上方的 Left／Right 按钮左右查看，操作栏固定在右侧。
 6. 点 DO 查看完整字段、原始天数、来源版本、Medication、FMR / OMED 和导入历史。
 
 DO no + Material code 是订单唯一组合。已有订单无论 Excel 是否修改都跳过，原记录和版本保留。后续文件缺少某订单时，原记录仍会保留。编码中的前导零会保留；Excel 数字精度已经丢失的长编码无法恢复，应在 Excel 中用文本保存。公式需先在 Excel 计算并保存结果。
 
 ## 从订单排产
 
-Data 表格右侧的 Plan（完整操作名称为 Plan production）或 Planning board 的 More → Plan from Data 使用同一个排产弹窗。选择第一张订单后，可按 Add same-product order 添加相同完整 Material code、包装、袋重、Medication 及 FMR／OMED 的其他订单，逐张填写生产数量，再一起保存为一张卡片。卡片详情列出每张订单的 DO、客户、交期及分配数量。MT 直接作为重量；Bags 按保存的袋重换算。More → Combine cards 可把同日、同线、未开始的兼容订单卡片合并，最前方卡片保留，其余原卡片以取消状态留在 History。已有卡片的来源和分配数量不能手动覆盖；需取消未开始卡片再重新排产。Add production 保留手动新增。
+Orders 表格右侧的 Plan（完整操作名称为 Plan production）或 Planning board 的 More → Plan from Orders 使用同一个排产弹窗。选择第一张订单后，可按 Add same-product order 添加相同完整 Material code、包装、袋重、Medication 及 FMR／OMED 的其他订单，逐张填写生产数量，再一起保存为一张卡片。卡片详情以对齐的表格列出每张订单的 DO、客户、交期、分配数量及这张卡片已生产的数量；手机上自动改为逐项排列。多订单卡片在时间轴和列表中有独立的订单数标记。MT 直接作为重量；Bags 按保存的袋重换算。More → Combine cards 可把同日、同线、未开始的兼容订单卡片合并，最前方卡片保留，其余原卡片以取消状态留在 History。已有卡片的来源和分配数量不能手动覆盖；需取消未开始卡片再重新排产。Add production 保留手动新增。
 
 已关联的 Excel 订单不参加 Copy planning，防止同一订单重复生产。不同完整 Material code 会计算换料时间；两张手动卡片沿用原来的前四位产品系列规则。
 
 ## 生产、取货和剩余天数
 
 - Start production 直接按服务器当前时间记录。Done 记录生产结束及实际产量；它不会自动确认客户取货。
-- Data → Mark delivered 确认取货。有关联卡片时必须先完成生产。没有卡片的外部已生产订单可以确认交货，系统不会虚构生产时间。
+- Orders → Mark delivered 确认取货。有关联卡片时必须先完成生产。没有卡片的外部已生产订单可以确认交货，系统不会虚构生产时间。
 - Excel Remark 为 DONE 表示已备齐，OUT 表示已取货；大小写和前后空格不影响识别。其他文字原样保存。矛盾状态显示 Needs review，保留卡片及实际记录。
 - Delivery lead days 是距离交货期限的天数。Days of outstanding 在到期当天为 1，次日为 2；全数取货后停止计数。
 - 日期按马来西亚自然日计算，周末也算。生产备齐与客户取货分开显示，交货后停止取货逾期警示。
@@ -118,14 +118,14 @@ Data 表格右侧的 Plan（完整操作名称为 Plan production）或 Planning
 
 四条线默认每天 07:00–19:00。Settings → Workspace 可修改 Planning day starts 和 Daily available hours，画面会预览结束时间，跨午夜时显示 +1 day。按 Save settings 后，从服务器当前马来西亚日期开始采用新工时，重算今天及之后未开始的排程；当天排不下的生产延到下一个工作时段。较早排产日期的计划沿用旧班次，已开始、暂停、完成的计划及实际时间保留。保存工时不会增删卡片或改变数量。Day 显示当班，Full plan 显示跨日分段。排产日期不会因队列延后而被改写，请同时查看计算后的开始日期。
 
-数据库 Download backup 生成版本 5，包含排产、Data 订单、导入批次、原始版本、库存及完整流水。旧版仍可读取；恢复前会提示缺少的订单、产品清单或库存资料，并保留上一份工作区供下载。含订单或库存的备份须在数据库版恢复。
+数据库 Download backup 生成版本 5，包含排产、Orders 订单、导入批次、原始版本、库存及完整流水。旧版仍可读取；恢复前会提示缺少的订单、产品清单或库存资料，并保留上一份工作区供下载。含订单或库存的备份须在数据库版恢复。
 
 每次导入都应核对文件日期、数量／单位及变更预览，确认后才保存。公开仓库和自动测试只使用虚构工作簿。
 
 
 ## 库存与订单进度
 
-Data 页面专门查看 Orders；左侧独立的 Stock 页面包含 Stock 和 Daily stock 两个标签。两个页面都可按 Import Excel 导入 daily stock 工作簿：订单取自 bag order、bulk order；首次以日期页 Closing 建立库存基准。系统只读数据，不执行宏；Packing bin 汇总不作为可分配库存。
+Orders 页面专门查看 Orders；左侧独立的 Stock 页面包含 Stock 和 Daily stock 两个标签。两个页面都可按 Import Excel 导入 daily stock 工作簿：订单取自 bag order、bulk order；首次以日期页 Closing 建立库存基准。系统只读数据，不执行宏；Packing bin 汇总不作为可分配库存。
 
 Orders 分开显示订单量、现货预留、累计生产、已取货、仍需生产和已排未入库数量。历史 DONE 表示已备齐，OUT 表示已取走；它们不会再次增加或扣减基准库存。Medication、FMR／OMED 后续由人工维护，SAP 再导入不会覆盖。
 
@@ -147,7 +147,7 @@ Daily stock 可选日期查看 Opening、Production、Received、Return、Rework
 
 打开生产卡片后，顶部 **Orders in this batch** 显示订单数、批次总量，以及每张订单的 DO、计划数量、客户、交期和已生产数量。未开始的卡片若有可合并对象，会显示 **Combine with other cards**；当前卡片已勾选，再选择其他卡片，核对交期和总量后确认。一次最多 500 张订单，原卡片保留在 History。旧卡片未保存客户或交期时，从已保存订单补充显示，卡片原数量与来源快照保持不变。
 
-在 Data 或 Planning board 按 Generate planning，选择日期范围并生成草稿。系统先用兼容现货、扣除已有未完成排程，再按交货日期安排订单缺口，最后补安全库存。四条产线均可用，沿用 Settings 保存的开工时间、每日工时、产能、换料和停机设置。修改工时后重新生成草稿，系统会按新容量调整分批数量与日期；已保存的卡片不会被自动增删。大订单可拆到不同日期／产线，袋数为整数；未排数量会保留。负责人可修改草稿数量、日期和产线，确认后才整批保存，原有卡片不移动。
+在 Orders 或 Planning board 按 Generate planning，选择日期范围并生成草稿。系统先用兼容现货、扣除已有未完成排程，再按交货日期安排订单缺口，最后补安全库存。四条产线均可用，沿用 Settings 保存的开工时间、每日工时、产能、换料和停机设置。修改工时后重新生成草稿，系统会按新容量调整分批数量与日期；已保存的卡片不会被自动增删。大订单可拆到不同日期／产线，袋数为整数；未排数量会保留。负责人可修改草稿数量、日期和产线，确认后才整批保存，原有卡片不移动。
 
 开始后，在卡片内 Record production quantity 填本次新增产量及日期，可分次入库。Done 填最终累计产量，包括已入账部分，系统只补差额。订单内 Record collection 填本次取货数量；全部取完才 OUT。Stock 的流水可 Correct output 或 Reverse collection，必须填写原因，原记录保留。
 
@@ -181,6 +181,6 @@ Planning 的 Now 线表示当前马来西亚时间，只在所查看的时间范
 
 临时加班／停线：Settings → Unavailable periods → **Date-specific working hours**。选今天或未来日期，逐线选择 Use normal calendar、Custom hours 或 Closed，填写原因后 Apply date hours。比如只让 PM1／PM2 加班至 21:00，其余线 Closed；第二天仍用正常班次。先保存普通 Settings 草稿，再应用日期工时。已有实际开始／完成的时段保持锁定；修改后重新生成未确认的排程草稿。
 
-Excel 重复订单仍不会自动覆盖。差异保存于 Data → **Import review queue**：打开记录，对照 Current 与 Imported candidate，勾选已核对字段，填写原因，再 Apply selected fields；不采用的差异可填写原因后 Dismiss review。DO、完整 Material code、单位和受保护字段不可覆盖。已有预留／排程／实际生产／取货时，不允许直接改订单数量。审核更正新增来源版本，历史卡片及库存流水保留原记录。
+Excel 重复订单仍不会自动覆盖。差异保存于 Orders → **Import review queue**：打开记录，对照 Current 与 Imported candidate，勾选已核对字段，填写原因，再 Apply selected fields；不采用的差异可填写原因后 Dismiss review。DO、完整 Material code、单位和受保护字段不可覆盖。已有预留／排程／实际生产／取货时，不允许直接改订单数量。审核更正新增来源版本，历史卡片及库存流水保留原记录。
 
 数据库完整备份现在为 version 5，包含审核记录与实时进度样本；旧版本仍可恢复，但缺少的审核／进度记录会清空，恢复前会提醒并保留上一份完整工作区。离线备份仍为 version 2。

@@ -1,8 +1,8 @@
 import { productLabel } from '../lib/productLabel';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { LegacyCarryoverNotice } from '../components/LegacyCarryoverNotice';
-import { ArrowUpRight, ChevronRight, ChevronDown, AlertTriangle } from 'lucide-react';
+import { ArrowUpRight, ChevronRight, ChevronDown, AlertTriangle, Info } from 'lucide-react';
 import { useWorkspace } from '../lib/workspace';
 import { dateLabel, downtimeRange, durationLabel, fullDateTime, numberLabel, productColor, timeLabel, STATUS_LABELS } from '../lib/format';
 import type { LineSchedule } from '../domain/types';
@@ -44,10 +44,10 @@ export function Overview() {
   return <div className="page overview-page">
     <div className="page-heading"><div><h1>Production overview</h1><p>Daily volume, capacity and production status.</p></div><span className="context-label">Daily production · 4 lines</span></div>
     <div className="metrics-grid">
-      <Metric label="Assigned plan total" value={numberLabel(metrics.assignedDateMt, 2)} unit="MT" caption={<>{assignedJobs.length} tasks · {completed} completed<br/>Whole batches; includes carry-out</>} />
-      <Metric label="Planned within shift" value={numberLabel(metrics.inShiftPlannedMt, 2)} unit="MT" caption={<>Each line's working shift<br/>Carry-in included; shift time only</>} />
-      <Metric label="Production receipts" value={receipts?.date === board.date && receipts.revision === revision ? numberLabel(receipts.netQuantityMt, 3) : '—'} unit="MT" caption={storageMode !== 'database' ? 'Available in the PostgreSQL workspace' : receiptError ? <>Could not load receipts. <button className="text-link" onClick={() => setReceiptReload(n => n + 1)}>Retry</button></> : receipts?.date === board.date && receipts.revision === revision ? <>Net receipts + corrections<br/>{receipts.jobCount} production tasks · posting date{receipts.unconvertedCount > 0 && <><br/><strong>{receipts.unconvertedCount} historical entries excluded: saved bag weight unavailable</strong></>}</> : receipts ? <>Workspace changed. <button className="text-link" onClick={() => {void refresh(); setReceiptReload(n => n + 1);}}>Refresh receipts</button></> : 'Loading production receipts…'} />
-      <Metric label="Planned utilisation" value={available ? numberLabel(production / available * 100, 0) : '—'} unit="%" caption={numberLabel(production / 60) + ' production hrs / ' + numberLabel(available / 60) + ' available hrs'} />
+      <Metric label="Daily planned quantity" value={numberLabel(metrics.assignedDateMt, 2)} unit="MT" caption={<>{assignedJobs.length} tasks · {completed} completed</>} explanation="Whole batch quantities assigned to the selected planning date, including work that continues into later shifts. Cancelled tasks are excluded." />
+      <Metric label="Within-shift plan" value={numberLabel(metrics.inShiftPlannedMt, 2)} unit="MT" caption="Estimated quantity in working hours" explanation="The planned share of production inside each line's working hours, estimated from scheduled production time. Includes work carried from earlier dates and excludes time outside the shift. This is a plan, not measured output." />
+      <Metric label="Received into stock" value={receipts?.date === board.date && receipts.revision === revision ? numberLabel(receipts.netQuantityMt, 3) : '—'} unit="MT" caption={storageMode !== 'database' ? 'Available in the PostgreSQL workspace' : receiptError ? <>Could not load receipts. <button className="text-link" onClick={() => setReceiptReload(n => n + 1)}>Retry</button></> : receipts?.date === board.date && receipts.revision === revision ? <>{receipts.jobCount} production tasks · posting date{receipts.unconvertedCount > 0 && <><br/><strong>{receipts.unconvertedCount} historical entries excluded: saved bag weight unavailable</strong></>}</> : receipts ? <>Workspace changed. <button className="text-link" onClick={() => {void refresh(); setReceiptReload(n => n + 1);}}>Refresh receipts</button></> : 'Loading production receipts…'} explanation="Net production quantities posted into stock on the selected calendar date, including partial receipts from running tasks and corrections or reversals. This is not measured physical shift output. Historical bag entries without a saved bag weight cannot be converted to MT and are counted separately." />
+      <Metric label="Planned utilisation" value={available ? numberLabel(production / available * 100, 0) : '—'} unit="%" caption={numberLabel(production / 60) + ' production hrs / ' + numberLabel(available / 60) + ' available hrs'} explanation="Scheduled production time inside the planning window divided by available line time. Includes carry-in production. Working-hours exceptions and unavailable periods affect available time; changeovers are not production time." />
     </div>
     <section className="panel schedule-panel">
       <SectionHeading title={scheduleView === 'day' ? 'Daily line schedule' : 'Weekly capacity'} description={scheduleView === 'day' ? 'Select a product to view its production details.' : 'Review the week before assigning more production.'} action={<div className="overview-schedule-actions"><div className="overview-view-switch" role="group" aria-label="Overview schedule view"><button type="button" aria-pressed={scheduleView === 'day'} onClick={() => setScheduleView('day')}>Daily</button><button type="button" aria-pressed={scheduleView === 'week'} onClick={() => setScheduleView('week')}>Week capacity</button></div><TextLink onClick={() => navigate('planning')}>Open planning board</TextLink></div>} />
@@ -114,6 +114,13 @@ function LineSummary({line,backlog,onOpen}:{line:LineSchedule;backlog:number;onO
     <ArrowUpRight size={15}/>
   </button>;
 }
-function Metric({label,value,unit,caption}:{label:string;value:string;unit:string;caption:ReactNode}) {
-  return <div className="metric"><div className="metric-label">{label}</div><div className="metric-value">{value}<small>{unit}</small></div><p>{caption}</p></div>;
+function Metric({label,value,unit,caption,explanation}:{label:string;value:string;unit:string;caption:ReactNode;explanation:string}) {
+  const help = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const outside = (event:PointerEvent) => { if (event.target instanceof Node && !help.current?.contains(event.target) && help.current) help.current.open = false; };
+    const escape = (event:KeyboardEvent) => { if (event.key === 'Escape' && help.current?.open) { event.stopPropagation(); help.current.open = false; help.current.querySelector('summary')?.focus(); } };
+    document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+  }, []);
+  return <div className="metric"><div className="metric-heading"><div className="metric-label">{label}</div><details ref={help} className="metric-help" onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false; }}><summary aria-label={'About ' + label}><Info size={15}/></summary><div className="metric-help-content"><strong>{label}</strong><p>{explanation}</p></div></details></div><div className="metric-value">{value}<small>{unit}</small></div><p>{caption}</p></div>;
 }

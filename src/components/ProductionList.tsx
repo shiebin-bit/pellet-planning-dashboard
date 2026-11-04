@@ -33,10 +33,10 @@ export function ProductionList({lines,start,end,date,settings,bagWeightKg,select
             <button type="button" className="production-list-open" onClick={()=>onOpen(job.id)}>
               <span className="sr-only">Open production details on {line.lineId}. </span>
               <span className="production-list-product"><strong>{productLabel(job)}</strong><span>{packagingLabel({unit:job.mode==='bags'?'Bags':'MT',bagWeightKg:job.bagWeightKgSnapshot??(job.mode==='bags'?bagWeightKg:null),description:job.description})}</span><span className="production-list-description">{job.description}</span></span>
-              <StatusBadge status={job.status} issue={!!job.issue} paused={paused}/>
               <span className="production-list-quantity"><strong>{job.mode==='bags'?`${numberLabel(job.bagCount??0,0)} Bags`:`${numberLabel(job.quantityMt,3)} MT`}</strong>{job.mode==='bags'&&<span>{numberLabel(job.quantityMt,3)} MT</span>}</span>
               <span className="production-list-time">{labelTime(job.plannedStart)}–{labelTime(job.plannedEnd)}</span>
-              <span className="production-list-reference">{allocations.length?`${allocations.length} ${allocations.length===1?'order':'orders'}`:job.orderNo||(job.productionPurpose==='mts'?'Make for stock':'No order reference')}{job.changeoverMinutes>0&&<span> · Changeover {durationLabel(job.changeoverMinutes)}</span>}</span>
+              <StatusBadge status={job.status} issue={!!job.issue} paused={paused}/>
+              <span className="production-list-reference">{allocations.length?<strong className="production-list-order-count">{allocations.length} {allocations.length===1?'order':'orders'}</strong>:job.orderNo||(job.productionPurpose==='mts'?'Make for stock':'No order reference')}{job.changeoverMinutes>0&&<span>Changeover {durationLabel(job.changeoverMinutes)}</span>}</span>
               {job.inventoryItemId && (job.status === 'running' || job.status === 'completed') && <span className="production-list-live"><LiveProduction jobId={job.id} compact/></span>}
               <ArrowUpRight className="production-list-arrow" size={16}/>
             </button>

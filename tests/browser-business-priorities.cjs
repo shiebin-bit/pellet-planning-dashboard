@@ -49,7 +49,7 @@ const item = (materialCode,unit,strategy,targetQuantity,closing,medication='') =
     await page.screenshot({path:path.join(output,'overview-desktop.png'),fullPage:true});
 
     // Deliberately leave stale filters/page behind; a priority click must replace them.
-    await nav('Data').click();await page.getByLabel('Search order data').fill('NO-MATCH');
+    await nav('Orders').click();await page.getByLabel('Search order data').fill('NO-MATCH');
     await page.getByRole('heading',{name:'No matching orders',exact:true}).waitFor();
     await openOverview();await priority('overdueToPlan').click();
     await page.locator('.orders-table tbody tr').first().waitFor();

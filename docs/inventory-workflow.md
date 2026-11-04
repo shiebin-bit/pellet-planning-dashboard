@@ -4,11 +4,11 @@ This document is the operational handoff for the inventory upgrade. It describes
 
 ## Scope and operating boundary
 
-Orders and inventory are available in the database workspace on separate pages. Open **Data** for orders and **Stock** for inventory:
+Orders and inventory are available in the database workspace on separate pages. Open **Orders** for orders and **Stock** for inventory:
 
 | Page / tab | Use |
 | --- | --- |
-| **Data → Orders** | Review SAP orders, stock reserved for each order, produced quantity, collected quantity, and quantity still to plan. Open an order to record production/collection and to review its import history. |
+| **Orders → Orders** | Review SAP orders, stock reserved for each order, produced quantity, collected quantity, and quantity still to plan. Open an order to record production/collection and to review its import history. |
 | **Stock → Stock** | View on-hand, reserved, and available stock by product and exact compatibility bucket. Manage the product policy, physical-count adjustments, receipts, returns, and rework. |
 | **Stock → Daily stock** | Select a date and review the movement and closing balance for each product/bucket. |
 
@@ -38,7 +38,7 @@ Example: if an exact bucket has 30 units available against a 100-unit order, an 
 
 ## Daily workbook contract
 
-Use **Data → Import Excel** in the PostgreSQL workspace. The feed adapter accepts the saved cell values of `.xlsx` and `.xlsm` workbooks; it does not run VBA, evaluate formulas, follow external links, or use scratch calculations.
+Use **Orders → Import Excel** in the PostgreSQL workspace. The feed adapter accepts the saved cell values of `.xlsx` and `.xlsm` workbooks; it does not run VBA, evaluate formulas, follow external links, or use scratch calculations.
 
 The workbook must contain these exact worksheet names (case and surrounding spaces are normalized):
 
@@ -108,7 +108,7 @@ The imported baseline day retains the reported workbook totals after the baselin
 
 ## Generate planning draft
 
-Select **Generate planning** from **Data**. The draft generator is a preview and review workflow, not an automatic commit.
+Select **Generate planning** from **Orders**. The draft generator is a preview and review workflow, not an automatic commit.
 
 1. The default window starts at the current planning date (never before today) and ends three calendar days later. You may change the start/end dates, subject to the 31-day generation limit.
 2. Overdue orders are included. Earlier due dates are planned first, before MTS safety-stock replenishment. By default, MTO orders with the same due date and exact item/material/unit/bag weight/Medication/FMR compatibility are batched before assigning lines. Capacity may split a batch across lines or days, preserving each order quantity. A later-due order for the same product remains a separate batch. Clear **Combine same-product orders with the same due date** to keep separate order cards. Manual selection may combine compatible orders across delivery dates when the planner chooses to do so.
@@ -157,7 +157,7 @@ The local Docker/PostgreSQL development connection remains on loopback port **54
 
 ## Combined production cards
 
-A production card can hold multiple source-order allocations for one exact product/unit/bag-weight/Medication/FMR bucket. **Plan from Data** allows several orders and explicit per-order quantities. **Combine cards** merges pending source cards on the same date and line; the earliest card survives and the remaining originals are cancelled for history. Started or posted production cannot be combined.
+A production card can hold multiple source-order allocations for one exact product/unit/bag-weight/Medication/FMR bucket. **Plan from Orders** allows several orders and explicit per-order quantities. **Combine cards** merges pending source cards on the same date and line; the earliest card survives and the remaining originals are cancelled for history. Started or posted production cannot be combined.
 
 The card is scheduled and counted once. Details and the Excel **Order allocations** sheet enumerate DO, customer, delivery and planned quantity. Partial production is attributed in saved allocation order; surplus is unassigned stock. Production correction reverses attributed quantities without replacing the original ledger. Cancelling pending cards releases all their allocations. Source-linked combined cards are excluded from Copy planning.
 

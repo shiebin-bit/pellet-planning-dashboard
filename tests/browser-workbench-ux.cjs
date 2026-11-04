@@ -30,13 +30,13 @@ async function bounds(locator,viewport){const b=await locator.boundingBox();asse
   await trigger.focus();await page.keyboard.press('Enter');await page.getByRole('button',{name:'Copy planning',exact:true}).waitFor();await bounds(page.locator('.planning-more-panel'),{width:1366,height:768});
   await page.keyboard.press('Escape');assert.equal(await more.getAttribute('open'),null);assert.ok(await trigger.evaluate(el=>el===document.activeElement));
   await trigger.click();await page.getByRole('heading',{name:'Planning board',exact:true}).click();assert.equal(await more.getAttribute('open'),null);
-  for(const [action,title]of[['Copy planning','Copy planning'],['Plan from Data','Choose an order to plan'],['Combine cards','Combine production cards']]){
+  for(const [action,title]of[['Copy planning','Copy planning'],['Plan from Orders','Choose an order to plan'],['Combine cards','Combine production cards']]){
    await planningAction(page,action);const modal=page.getByRole('dialog');await modal.waitFor();assert.match(await modal.locator('h2').first().innerText(),new RegExp(title));assert.equal(await more.getAttribute('open'),null);await bounds(modal,{width:1366,height:768});await page.keyboard.press('Escape');await modal.waitFor({state:'hidden'});assert.ok(await trigger.evaluate(el=>el===document.activeElement),'Dialog restores visible More trigger');
   }
   await trigger.click();await trigger.press('Tab');assert.ok(await more.evaluate(el=>el.contains(document.activeElement)));await page.keyboard.press('Shift+Tab');await page.keyboard.press('Shift+Tab');assert.equal(await more.getAttribute('open'),null,'Tab out dismisses disclosure');
   await page.screenshot({path:path.join(output,'planning-desktop.png')});
   console.log('PASS Secondary planning actions are discoverable, Escape/outside/Tab dismissal works, and all three dialogs return focus to a visible trigger without saving');
-  await page.getByRole('button',{name:'Data',exact:true}).click();const orderRow=page.locator('.orders-table tbody tr').first();await orderRow.waitFor();
+  await page.getByRole('navigation',{name:'Main navigation',exact:true}).getByRole('button',{name:'Orders',exact:true}).click();const orderRow=page.locator('.orders-table tbody tr').first();await orderRow.waitFor();
   const details=orderRow.locator('.product-identity-details'),material=orderRow.locator('.product-identity-material');assert.equal(await material.isVisible(),false);
   await details.locator('summary').focus();await page.keyboard.press('Enter');await material.waitFor();assert.match(await material.innerText(),/7\.0800000000000/);assert.match(await details.locator('p').innerText(),/LONG COMPLETE DESCRIPTION 25KG/);
   await page.keyboard.press('Enter');assert.equal(await material.isVisible(),false);
@@ -58,7 +58,7 @@ async function bounds(locator,viewport){const b=await locator.boundingBox();asse
    assert.ok((await page.locator('.production-list-card').first().boundingBox()).y<420,'First mobile card is visible without a long toolbar scroll');
    await trigger.click();await bounds(page.locator('.planning-more-panel'),viewport);await page.keyboard.press('Escape');
    await page.screenshot({path:path.join(output,`planning-${width}.png`)});
-   for(const label of['Data','Stock']){await page.getByRole('button',{name:'Open navigation',exact:true}).click();await page.getByRole('button',{name:label,exact:true}).click();await page.locator(label==='Data'?'.orders-table':'.stock-records-table').waitFor();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(output,`${label.toLowerCase()}-${width}.png`)});}
+   for(const label of['Orders','Stock']){await page.getByRole('button',{name:'Open navigation',exact:true}).click();await page.getByRole('navigation',{name:'Main navigation',exact:true}).getByRole('button',{name:label,exact:true}).click();await page.locator(label==='Orders'?'.orders-table':'.stock-records-table').waitFor();assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(output,`${label.toLowerCase()}-${width}.png`)});}
   }
   assert.deepEqual(errors,[]);assert.deepEqual(writes,[]);const after=await json('/api/backup');assert.deepEqual(after.planning,initial.planning);assert.deepEqual(after.sourceData,initial.sourceData);assert.deepEqual(after.inventory,initial.inventory);
   console.log('PASS Compact controls and tables fit390/320px; first mobile card appears sooner; views create no commands or business changes');

@@ -486,6 +486,21 @@ h1 {
   line-height: 1.5;
   color: var(--muted);
 }
+.metric-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; position: relative; }
+.metric-heading .metric-label { line-height: 1.4; }
+.metric-help { flex: 0 0 auto; }
+.metric-help > summary { display: grid; place-items: center; width: 28px; height: 28px; color: var(--muted); cursor: pointer; list-style: none; border-radius: 4px; }
+.metric-help > summary::-webkit-details-marker { display: none; }
+.metric-help > summary:hover,.metric-help[open] > summary { background: var(--action-soft); color: var(--action); }
+.metric-help-content { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: min(280px,calc(100vw - 32px)); padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); box-shadow: 0 6px 24px #20282f24; font-size: 13px; line-height: 1.5; }
+.metric:last-child .metric-help-content { left: auto; right: 0; }
+.metric .metric-help-content p { margin-top: 6px; min-height: 0; font-size: 12px; }
+.overview-page .metric > p { font-size: 12px; }
+@media(max-width:700px) {
+  .metric-help > summary { width: 44px; height: 44px; margin-right: -8px; }
+  .metric-heading { min-height: 44px; }
+  .metric:nth-child(even) .metric-help-content { left: auto; right: 0; }
+}
 .panel {
   border: 1px solid var(--border);
   border-radius: var(--radius);

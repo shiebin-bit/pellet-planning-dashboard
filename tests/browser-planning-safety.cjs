@@ -53,11 +53,11 @@ function manualInput(orderNo, date, lineId, quantityMt) {
     await page.goto(base + '/#/overview');
     await page.getByRole('heading', { name: 'Production overview', exact: true }).waitFor();
     const metric = label => page.locator('.metric').filter({ hasText: label }).locator('.metric-value');
-    await wait(async () => Number.parseFloat(await metric('Production receipts').innerText()) === 5);
-    assert.equal(Number.parseFloat(await metric('Assigned plan total').innerText()), 40);
-    assert.equal(Number.parseFloat(await metric('Planned within shift').innerText()), 30);
-    assert.equal(Number.parseFloat(await metric('Production receipts').innerText()), 5);
-    assert.match(await page.locator('.metric').filter({ hasText: 'Production receipts' }).innerText(), /1 production tasks/);
+    await wait(async () => Number.parseFloat(await metric('Received into stock').innerText()) === 5);
+    assert.equal(Number.parseFloat(await metric('Daily planned quantity').innerText()), 40);
+    assert.equal(Number.parseFloat(await metric('Within-shift plan').innerText()), 30);
+    assert.equal(Number.parseFloat(await metric('Received into stock').innerText()), 5);
+    assert.match(await page.locator('.metric').filter({ hasText: 'Received into stock' }).innerText(), /1 production tasks/);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     await page.screenshot({ path: path.join(output, 'overview-desktop.png'), fullPage: true });
     pass('Overview separates assigned and in-shift quantity and shows a partial running production receipt');

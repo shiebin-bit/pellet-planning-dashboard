@@ -50,6 +50,13 @@ async function bounds(locator,width,height){const b=await locator.boundingBox();
   }
   await page.setViewportSize({width:1366,height:768});
   await page.getByRole('button',{name:'Overview',exact:true}).click();
+  assert.deepEqual(await page.locator('.metric-label').allTextContents(),['Daily planned quantity','Within-shift plan','Received into stock','Planned utilisation']);
+  for(const help of await page.locator('.metric-help').all()){
+   const trigger=help.locator('summary');await trigger.focus();await page.keyboard.press('Enter');await help.locator('.metric-help-content').waitFor();await bounds(help.locator('.metric-help-content'),1366,768);
+   await page.keyboard.press('Escape');assert.equal(await help.getAttribute('open'),null);assert.ok(await trigger.evaluate(el=>el===document.activeElement));
+  }
+  const help=page.locator('.metric-help').first();await help.locator('summary').click();await page.getByRole('heading',{name:'Production overview',exact:true}).click();assert.equal(await help.getAttribute('open'),null);
+  await help.locator('summary').focus();await page.keyboard.press('Enter');await page.keyboard.press('Tab');assert.equal(await help.getAttribute('open'),null);
   await bounds(page.locator('.schedule-panel'),1366,768);
   assert.ok((await page.locator('.schedule-panel').boundingBox()).y<(await page.locator('.capacity-panel').boundingBox()).y);
   await page.screenshot({path:path.join(output,'overview-desktop.png'),animations:'disabled',fullPage:true});
@@ -61,10 +68,13 @@ async function bounds(locator,width,height){const b=await locator.boundingBox();
     for(let i=0;i<10;i++){assert.ok(await navigation.evaluate(el=>el.contains(document.activeElement)),'Mobile navigation contains keyboard focus');await page.keyboard.press('Tab');}
     await page.keyboard.press('Escape');await navigation.waitFor({state:'hidden'});assert.ok(await page.getByRole('button',{name:'Open navigation',exact:true}).evaluate(el=>el===document.activeElement),'Menu returns focus to its trigger');
    }
-   const navigate=async label=>{if(viewport.width<=600)await page.getByRole('button',{name:'Open navigation',exact:true}).click();await page.getByRole('button',{name:label,exact:true}).click();};
-   for(const label of ['Overview','Data','Stock','History','Settings','Planning board']){
+   const navigate=async label=>{if(viewport.width<=600)await page.getByRole('button',{name:'Open navigation',exact:true}).click();await page.getByRole('navigation',{name:'Main navigation',exact:true}).getByRole('button',{name:label,exact:true}).click();};
+   for(const label of ['Overview','Orders','Stock','History','Settings','Planning board']){
     await navigate(label);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`${label} has no page overflow at ${viewport.width}px`);
     const planning=['Overview','Planning board'].includes(label);
+    if(label==='Overview')for(const help of await page.locator('.metric-help').all()){
+     await help.locator('summary').click();await bounds(help.locator('.metric-help-content'),viewport.width,viewport.height);await page.keyboard.press('Escape');
+    }
     assert.equal(await page.locator('.date-picker-trigger').count(),planning?1:0,`${label} date scope`);
     assert.equal(await page.getByRole('button',{name:'Add production',exact:true}).count(),planning?1:0,`${label} production entry`);
     assert.equal(await page.getByRole('button',{name:'Export',exact:true}).count(),planning||label==='History'?1:0,`${label} report entry`);

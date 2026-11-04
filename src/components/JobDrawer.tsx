@@ -82,7 +82,7 @@ export function JobDrawer() {
   };
   if(showCombine)return <CombinePlanningDialog anchorJobId={job.id} onClose={()=>{restoreCombineFocus.current=true;setShowCombine(false);}} onSaved={id=>{setShowCombine(false);openJob(id);}}/>;
   if(reviewMove)return <MoveImpactDialog input={{jobId:job.id,toLineId:toLine,...(beforeId?{beforeJobId:beforeId}:{})}} onClose={()=>{setReviewMove(false);requestAnimationFrame(()=>drawerRef.current?.querySelector<HTMLButtonElement>('.drawer-move-form .button')?.focus());}} onSaved={()=>{setReviewMove(false);setShowMove(false);}}/>;
-  return <div className="drawer-layer"><button className="drawer-scrim" aria-label="Close production details" disabled={mutationLocked} onClick={closeJob}/><aside className="job-drawer" ref={drawerRef} role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+  return <div className="drawer-layer"><button className="drawer-scrim" aria-label="Close production details" disabled={mutationLocked} onClick={closeJob}/><aside className={'job-drawer'+(allocations.length ? ' has-order-allocations' : '')} ref={drawerRef} role="dialog" aria-modal="true" aria-labelledby="drawer-title">
     <div className="drawer-top"><span>PRODUCTION DETAILS</span><button ref={closeRef} className="icon-button" disabled={mutationLocked} onClick={closeJob} aria-label="Close production details"><X size={21}/></button></div>
     <div className="drawer-body">
       <div className="drawer-product"><span className="drawer-product-color" style={{background:productColor(productLabel(job))}}/><div><h2 id="drawer-title">{productLabel(job)}</h2><p className="drawer-material-code">{job.productCode}</p><p>{job.description||'Pellet production'}</p></div><span className="line-id">{job.lineId}</span></div>
