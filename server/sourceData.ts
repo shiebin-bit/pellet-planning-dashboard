@@ -215,6 +215,8 @@ export async function createJobFromSource(
   );
   if (!result.rowCount) throw new ApiError(400, "SOURCE_NOT_FOUND", "The source order no longer exists.");
   const source = result.rows[0];
+  const planning = await client.query<{ planning_control: string }>('SELECT planning_control FROM inventory_orders WHERE source_order_id=$1', [input.sourceOrderId]);
+  if (planning.rowCount && planning.rows[0].planning_control !== 'active') throw new ApiError(409, 'SOURCE_PLANNING_BLOCKED', 'This order is on hold, cancelled, or requires review before it can be planned.');
   if (source.delivery_status === "delivered") throw new ApiError(400, "SOURCE_DELIVERED", "A delivered order cannot be planned again.");
   if (source.latest_version !== input.sourceOrderVersion) throw new ApiError(409, "SOURCE_VERSION_CHANGED", "The source order changed. Review the latest values before planning it.");
   if (source.fields.quantity <= 0) throw new ApiError(400, "SOURCE_QUANTITY_INVALID", "The source order quantity must be greater than zero before it can be planned.");
@@ -272,12 +274,12 @@ export async function createJobFromSources(
   const result = await client.query<{
     id: string; latest_version: number; delivery_status: string; fields: SourceOrderFields;
     item_id: string | null; bag_weight_kg: number | null; medication: string | null; fmr_omed: string | null;
-    historical_status: "pending"|"done"|"out"|null; ordered_quantity_scaled:string|null;
+    historical_status: "pending"|"done"|"out"|null; ordered_quantity_scaled:string|null; planning_control:string|null;
   }>(
     `SELECT o.id,o.latest_version,o.delivery_status,v.fields,io.item_id,item.bag_weight_kg,
        COALESCE(io.medication,v.fields->>'medication','') AS medication,
        COALESCE(io.fmr_omed,v.fields->>'fmrOmed','') AS fmr_omed,
-       io.historical_status,io.ordered_quantity_scaled::text
+       io.historical_status,io.ordered_quantity_scaled::text,io.planning_control
        FROM source_orders o
        JOIN source_order_versions v ON v.source_order_id=o.id AND v.version=o.latest_version
        LEFT JOIN inventory_orders io ON io.source_order_id=o.id
@@ -291,6 +293,7 @@ export async function createJobFromSources(
   const ordered = input.orders.map(order => ({ request: order, source: byId.get(order.sourceOrderId)! }));
   const first = ordered[0].source;
   for (const { request, source } of ordered) {
+    if (source.planning_control && source.planning_control !== 'active') throw new ApiError(409, 'SOURCE_PLANNING_BLOCKED', `Order ${source.fields.doNo} is on hold, cancelled, or requires review.`);
     if (source.delivery_status === "delivered") throw new ApiError(400, "SOURCE_DELIVERED", `Order ${source.fields.doNo} is already delivered.`);
     if (source.latest_version !== request.sourceOrderVersion) throw new ApiError(409, "SOURCE_VERSION_CHANGED", `Order ${source.fields.doNo} changed. Review the latest values.`);
     if (request.plannedQuantity > source.fields.quantity + 1e-9) throw new ApiError(400, "SOURCE_QUANTITY_EXCEEDED", `Planned quantity exceeds order ${source.fields.doNo}.`);
@@ -500,7 +503,12 @@ function sourceListFilters(query: URLSearchParams): {
   const unit = query.get("unit");
   if (unit) { values.push(unit); where.push(`v.fields->>'unit' = $${values.length}`); }
   const deliveryStatus = query.get("deliveryStatus");
-  if (deliveryStatus) { values.push(deliveryStatus); where.push(`o.delivery_status = $${values.length}`); }
+  if (deliveryStatus) {
+    values.push(deliveryStatus);
+    where.push(deliveryStatus === 'delivered'
+      ? `(o.delivery_status=$${values.length} OR EXISTS(SELECT 1 FROM inventory_orders status_order WHERE status_order.source_order_id=o.id AND status_order.historical_status='out'))`
+      : `(o.delivery_status=$${values.length} AND NOT EXISTS(SELECT 1 FROM inventory_orders status_order WHERE status_order.source_order_id=o.id AND status_order.historical_status='out'))`);
+  }
   const importId = query.get("importId");
   if (importId) { values.push(importId); where.push(`o.latest_import_id = $${values.length}`); }
   const productionStatus = query.get("productionStatus");
@@ -532,7 +540,8 @@ function sourceListFilters(query: URLSearchParams): {
 function sourceListRowsCte(where: string[], today: string): string {
   return `${inventoryProgressCtes()}, base AS (
        SELECT o.id, o.latest_version, o.latest_import_id AS import_id, i.file_name, i.as_of_date::text AS as_of_date,
-         o.delivery_status, o.delivery_source, o.delivery_recorded_at, o.delivery_reason,
+         CASE WHEN ip.historical_status='out' THEN 'delivered' ELSE o.delivery_status END AS delivery_status,
+         o.delivery_source, o.delivery_recorded_at, o.delivery_reason,
          (o.needs_review OR EXISTS(SELECT 1 FROM source_order_discrepancies d WHERE d.source_order_id=o.id AND d.status='pending') OR ${sourcePlanningMismatchSql()} OR
            (COALESCE(ip.is_inventory_tracked, false) AND COALESCE(ip.inventory_needs_review, false))) AS needs_review,
          o.updated_at,
@@ -541,6 +550,7 @@ function sourceListRowsCte(where: string[], today: string): string {
          ${effectiveDeliveryDateSql()} AS delivery_date, o.do_no, o.material_code,
          COALESCE((v.fields->>'quantity')::numeric, 0) AS source_quantity,
          COALESCE(ip.is_inventory_tracked, false) AS is_inventory_tracked,
+         ip.planning_control,ip.planning_control_reason,
          COALESCE(ip.net_to_plan_scaled, 0) AS net_to_plan_scaled,
          ${sourceNetToPlanSql()} AS source_net_to_plan_scaled,
          COALESCE(ip.reserved_scaled, 0) AS reserved_scaled,
@@ -548,7 +558,7 @@ function sourceListRowsCte(where: string[], today: string): string {
          ip.inventory_unit,
          ${productionStatusSql()} AS production_status,
          (${effectiveDeliveryDateSql()} - '${today}'::date)::integer AS current_delivery_lead_days,
-         CASE WHEN o.delivery_status='delivered' THEN 0 ELSE GREATEST(0, ('${today}'::date - ${effectiveDeliveryDateSql()})::integer + 1) END AS current_days_outstanding
+         CASE WHEN o.delivery_status='delivered' OR ip.historical_status='out' THEN 0 ELSE GREATEST(0, ('${today}'::date - ${effectiveDeliveryDateSql()})::integer + 1) END AS current_days_outstanding
        FROM source_orders o
        JOIN source_order_versions v ON v.source_order_id = o.id AND v.version = o.latest_version
        JOIN source_imports i ON i.id = o.latest_import_id
@@ -611,6 +621,8 @@ interface SourceDbView {
   net_to_plan_scaled?: string | number;
   source_net_to_plan_scaled?: string | number;
   inventory_unit?: "MT" | "Bags" | null;
+  planning_control?: 'active'|'hold'|'cancel'|'review'|null;
+  planning_control_reason?: string|null;
 }
 
 interface SourceListResult {
@@ -621,13 +633,15 @@ interface SourceListResult {
 function sourceViewSql(where: string): string {
   return `WITH ${inventoryProgressCtes()}
     SELECT o.id, o.latest_version, o.latest_import_id AS import_id, i.file_name, i.as_of_date::text AS as_of_date,
-    o.delivery_status, o.delivery_source, o.delivery_recorded_at, o.delivery_reason,
+    CASE WHEN ip.historical_status='out' THEN 'delivered' ELSE o.delivery_status END AS delivery_status,
+    o.delivery_source, o.delivery_recorded_at, o.delivery_reason,
     (o.needs_review OR EXISTS(SELECT 1 FROM source_order_discrepancies d WHERE d.source_order_id=o.id AND d.status='pending') OR ${sourcePlanningMismatchSql()} OR
       (COALESCE(ip.is_inventory_tracked, false) AND COALESCE(ip.inventory_needs_review, false))) AS needs_review,
     o.updated_at,
     ${effectiveFieldsSql()} AS fields, ${productionStatusSql()} AS production_status, j.id AS job_id, j.status AS job_status, j.source_order_version AS job_source_version,
     j.source_snapshot AS job_source_snapshot,
     COALESCE(ip.is_inventory_tracked, false) AS is_inventory_tracked,
+    ip.planning_control,ip.planning_control_reason,
     COALESCE(ip.net_to_plan_scaled, 0) AS net_to_plan_scaled,
     ${sourceNetToPlanSql()} AS source_net_to_plan_scaled,
     ip.inventory_unit
@@ -747,7 +761,7 @@ function inventoryProgressCtes(): string {
       GROUP BY io.source_order_id
     ), inventory_progress_core AS (
       SELECT io.source_order_id, item.unit AS inventory_unit, enabled.enabled AS is_inventory_tracked,
-        io.historical_status, io.needs_review AS configured_needs_review,
+        io.historical_status, io.needs_review AS configured_needs_review,io.planning_control,io.planning_control_reason,
         io.due_date AS inventory_due_date, io.medication AS inventory_medication, io.fmr_omed AS inventory_fmr_omed,
         io.ordered_quantity_scaled::bigint AS ordered_scaled,
         COALESCE(reservation.quantity_scaled,0)::bigint AS reserved_scaled,
@@ -798,6 +812,8 @@ function toSummary(row: SourceDbView, today: string): SourceOrderSummary {
     currentDeliveryLeadDays: calendarDays(today, row.fields.deliveryDate),
     currentDaysOutstanding: row.delivery_status === 'delivered' ? 0 : Math.max(0, calendarDays(row.fields.deliveryDate, today) + 1),
     needsReview: row.needs_review || sourcePlanningMismatch(row.fields, row.job_source_snapshot),
+    planningControl: row.planning_control ?? 'active',
+    ...(row.planning_control_reason ? { planningControlReason: row.planning_control_reason } : {}),
     updatedAt: new Date(row.updated_at).toISOString(),
   };
 }

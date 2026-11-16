@@ -16,6 +16,23 @@ export function jobHasSourceOrder(job: Job, sourceOrderId: string): boolean {
   return getJobSourceAllocations(job).some(allocation => allocation.sourceOrderId === sourceOrderId);
 }
 
+/** Same-order portions can rejoin only when their saved source version and facts agree. */
+export function mergeSourceAllocations(rows: JobSourceAllocation[]): JobSourceAllocation[] {
+  const merged = new Map<string,JobSourceAllocation>();
+  for (const row of rows) {
+    const prior = merged.get(row.sourceOrderId);
+    if (prior && allocationSnapshotKey(prior) !== allocationSnapshotKey(row)) throw new Error('Order portions have different saved versions or details. Refresh and review them before combining.');
+    if (prior) prior.plannedQuantity = Math.round((prior.plannedQuantity + row.plannedQuantity) * 1000) / 1000;
+    else merged.set(row.sourceOrderId,{...row,sourceSnapshot:{...row.sourceSnapshot}});
+  }
+  if (merged.size > 500) throw new Error('A combined card can contain at most 500 source orders.');
+  return [...merged.values()];
+}
+function allocationSnapshotKey(row: JobSourceAllocation): string {
+  const s=row.sourceSnapshot;
+  return JSON.stringify([row.sourceOrderVersion,s.doNo,s.materialCode,s.description,s.quantity,s.unit,s.deliveryDate??null,s.soldToParty??null,s.shipToParty??null]);
+}
+
 /**
  * Stable identity for one physical production batch. The short FS display code is
  * deliberately excluded: cards may only combine when their full saved product and
@@ -51,7 +68,7 @@ export function getCompatiblePendingJobs(jobs: Job[], anchor: Job): Job[] {
       const allocations = getJobSourceAllocations(job);
       const sourceIds = sourceIdsIfDistinct(allocations);
       if (!sourceIds || allocations.length > 500) return false;
-      return job.id === anchor.id || allocations.length + anchorAllocations.length <= 500 && ![...sourceIds].some(sourceOrderId => anchorSourceIds.has(sourceOrderId));
+      try {mergeSourceAllocations([...anchorAllocations,...allocations]); return true;} catch {return false;}
     })
     .sort((left, right) =>
       left.lineId.localeCompare(right.lineId) ||

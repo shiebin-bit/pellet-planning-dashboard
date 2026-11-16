@@ -203,6 +203,8 @@ export interface InventoryOrderProgress extends InventoryBucketKey {
   netToPlan: number;
   historicalStatus: InventoryHistoricalStatus;
   needsReview: boolean;
+  planningControl?: 'active' | 'hold' | 'cancel' | 'review';
+  planningControlReason?: string;
 }
 
 export interface InventoryOrderProgressSnapshot {

@@ -9,6 +9,7 @@ import type { InventoryDraftRequest } from "../src/domain/inventoryTypes";
 import type { SourceImportInput, SourceImportPreviewContext } from "../src/domain/sourceTypes";
 import { parseProductionProgressJobIds } from "./productionProgress";
 import type { AutomaticBackupStatus } from "../src/domain/automaticBackup";
+import { parseDailyPreviewRequest } from "../src/domain/dailyImport";
 
 export interface AppOptions {
   store: WorkspaceStore;
@@ -55,6 +56,12 @@ export function createApp(options: AppOptions): express.Express {
 
   app.get("/api/data/imports", asyncRoute(async (_request, response) => {
     response.json(await options.store.listSourceImports());
+  }));
+
+  app.get("/api/data/:id/observations", asyncRoute(async (request, response) => {
+    const id=request.params.id;
+    if(typeof id!=="string"||!id||id.length>200)throw badRequest("Source order id is invalid.");
+    response.json(await options.store.getSourceOrderObservations(id));
   }));
 
   app.get("/api/inventory", asyncRoute(async (_request, response) => {
@@ -108,7 +115,7 @@ export function createApp(options: AppOptions): express.Express {
   }));
 
   app.get("/api/backup", asyncRoute(async (_request, response) => {
-    response.setHeader("Content-Disposition", `attachment; filename="millplan-backup-v5.json"`);
+    response.setHeader("Content-Disposition", `attachment; filename="millplan-backup-v6.json"`);
     response.json(await options.store.getPortableBackup());
   }));
 
@@ -121,7 +128,7 @@ export function createApp(options: AppOptions): express.Express {
   app.get("/api/backup/previous", asyncRoute(async (_request, response) => {
     const backup = await options.store.getPreviousPortableBackup();
     if (!backup) throw new ApiError(404, "PREVIOUS_BACKUP_NOT_FOUND", "No recovery backup is available.");
-    response.setHeader("Content-Disposition", `attachment; filename="millplan-previous-backup-v5.json"`);
+    response.setHeader("Content-Disposition", `attachment; filename="millplan-previous-backup-v${backup.schemaVersion}.json"`);
     response.json(backup);
   }));
 
@@ -155,6 +162,12 @@ export function createApp(options: AppOptions): express.Express {
       const parsed = sourcePreviewRequest(request.body);
       response.json(await options.store.previewSourceImport(parsed.input, parsed.context));
     }),
+  );
+
+  app.post(
+    "/api/inventory/daily-import/preview",
+    mutationBoundary(options.allowedOrigins), requireJson, express.json({ limit: "66mb", strict: true }),
+    asyncRoute(async (request,response)=>{const parsed=parseDailyPreviewRequest(request.body);response.json(await options.store.previewDailyReports(parsed.reports));}),
   );
 
   app.post(
@@ -195,7 +208,7 @@ export function createApp(options: AppOptions): express.Express {
 function disabledAutomaticBackupStatus(): AutomaticBackupStatus {
   return {
     enabled: false,
-    format: "portable-v5",
+    format: "portable-v6",
     intervalHours: 24,
     retentionCount: 14,
     state: "disabled",

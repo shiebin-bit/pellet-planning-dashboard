@@ -25,8 +25,10 @@ import type {
   CatalogCreateInput,
   CatalogUpdatePatch,
   CopyBatchItem,
+  SplitPendingGroup,
 } from "./commands";
-import { getJobSourceAllocations, getProductionBatchIdentity } from "./jobSources";
+import { getJobSourceAllocations, getProductionBatchIdentity, mergeSourceAllocations } from "./jobSources";
+import { quantityToScaled, scaledToQuantity } from './inventory';
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -998,17 +1000,14 @@ export function combinePendingJobs(
   if (members.some(job => getProductionBatchIdentity(job) !== getProductionBatchIdentity(survivor))) {
     throw new Error("Combined cards must share the same date, line, product, unit, bag weight and inventory variant.");
   }
-  const allocations = members.flatMap(getJobSourceAllocations);
-  if (allocations.length > 500) throw new Error("A combined card can contain at most 500 source orders.");
-  if (members.some(job => getJobSourceAllocations(job).length === 0) || new Set(allocations.map(row => row.sourceOrderId)).size !== allocations.length) {
-    throw new Error("Only distinct source-order cards can be combined.");
-  }
+  const allocations = mergeSourceAllocations(members.flatMap(getJobSourceAllocations));
+  if (members.some(job => getJobSourceAllocations(job).length === 0)) throw new Error("Only source-order cards can be combined.");
   if (typeof bin !== "string" || bin.length > 200) throw new Error("Destination bin must be text of 200 characters or fewer.");
   const normalizedBin = bin.trim();
   const normalizedRemarks = optionalNote(remarks, "Remarks") ?? "";
   const bagCount = survivor.mode === "bags" ? members.reduce((sum, job) => sum + (job.bagCount ?? 0), 0) : null;
-  const quantityMt = members.reduce((sum, job) => sum + job.quantityMt, 0);
-  const orderNo = `${allocations[0].sourceSnapshot.doNo} +${allocations.length - 1}`;
+  const quantityMt = Number(members.reduce((sum, job) => sum + job.quantityMt, 0).toFixed(9));
+  const orderNo = allocations.length === 1 ? allocations[0].sourceSnapshot.doNo : `${allocations[0].sourceSnapshot.doNo} +${allocations.length - 1}`;
   const memberIds = new Set(members.map(job => job.id));
   let jobs = state.jobs.map(job => {
     if (!memberIds.has(job.id)) return job;
@@ -1042,6 +1041,64 @@ export function combinePendingJobs(
     nowIso,
     getJobHistoryChanges(survivor, jobFrom(jobs, survivor.id)),
   ));
+}
+
+/** Pure conservation check and atomic pending-card replacement; ledger guard runs in the store. */
+export function splitPendingJob(state: AppState, jobId: string, groups: SplitPendingGroup[], nowIso = new Date().toISOString()): AppState {
+  assertIsoDateTime(nowIso,'Split time');
+  const source = requireJob(state,jobId);
+  requirePending(source,'split');
+  if (source.actualStart || source.actualEnd || source.actualQuantityMt != null || source.lockedSegments?.length || source.pauseIntervals?.length) throw new Error('Only an unstarted, unlocked card without actual output can be split.');
+  if (!Array.isArray(groups) || groups.length < 2 || groups.length > 500) throw new Error('Choose between 2 and 500 split cards.');
+  if (state.jobs.length + groups.length > 10_000) throw new Error('Splitting would exceed the workspace limit of 10000 production records.');
+  const allocations = getJobSourceAllocations(source), byId = new Map(allocations.map(a=>[a.sourceOrderId,a]));
+  const unit = source.mode === 'bags' ? 'Bags' : 'MT';
+  const scale = (q:number) => quantityToScaled(unit,q,'Split quantity');
+  const originalTotal = scale(source.mode === 'bags' ? source.bagCount! : source.quantityMt);
+  const assignedTotal = allocations.reduce((n,a)=>n+scale(a.plannedQuantity),0);
+  const extraTotal = originalTotal-assignedTotal;
+  if (extraTotal<0) throw new Error('Order allocations exceed the card total.');
+  const splitTotals = new Map<string,number>();
+  let extraUsed=0;
+  const normalized = groups.map(group=>{
+    assertDate(group.date,'Split date'); assertLineId(group.lineId);
+    if (typeof group.bin !== 'string' || group.bin.length>200) throw new Error('Split bin is too long.');
+    const remarks = optionalNote(group.remarks,'Split remarks') ?? '';
+    const seen=new Set<string>();
+    const rows = group.allocations.map(row=>{
+      const saved=byId.get(row.sourceOrderId);
+      if (!saved || seen.has(row.sourceOrderId)) throw new Error('A split card contains an unknown or repeated source order.');
+      seen.add(row.sourceOrderId);
+      const quantity=scale(row.plannedQuantity);
+      if(quantity<=0)throw new Error('Order portions must be greater than zero.');
+      splitTotals.set(row.sourceOrderId,(splitTotals.get(row.sourceOrderId)??0)+quantity);
+      return {...saved,sourceSnapshot:{...saved.sourceSnapshot},plannedQuantity:scaledToQuantity(unit,quantity)};
+    });
+    const extra=scale(group.unallocatedQuantity); extraUsed+=extra;
+    const total=extra+rows.reduce((n,a)=>n+scale(a.plannedQuantity),0);
+    if(total<=0)throw new Error('Each split card needs a positive quantity.');
+    return {group,rows,remarks,total};
+  });
+  for(const allocation of allocations)if(splitTotals.get(allocation.sourceOrderId)!==scale(allocation.plannedQuantity))throw new Error(`Split quantities must preserve order ${allocation.sourceSnapshot.doNo}.`);
+  if(extraUsed!==extraTotal)throw new Error('Split quantities must preserve the unallocated stock quantity.');
+  if(normalized.reduce((n,g)=>n+g.total,0)!==originalTotal)throw new Error('Split quantities must preserve the production total.');
+  const {sourceOrderId:_id,sourceOrderVersion:_version,sourceSnapshot:_snapshot,sourceAllocations:_allocations,issue:_issue,lockedSegments:_segments,pauseIntervals:_pauses,actualQuantityMt:_actual,completionNote:_note,...base}=source;
+  const bagWeight = source.bagWeightKgSnapshot ?? (source.bagCount ? source.quantityMt*1000/source.bagCount : state.settings.bagWeightKg);
+  let jobs=state.jobs.map(job=>job.id===source.id?{...job,status:'cancelled' as const,updatedAt:nowIso}:job);
+  for(const {group,rows,remarks,total} of normalized){
+    const quantity=scaledToQuantity(unit,total);
+    const sequence=Math.max(0,...jobs.filter(j=>j.date===group.date&&j.lineId===group.lineId).map(j=>j.sequence))+1;
+    jobs.push({...base,id:makeId('job'),derivedFromJobId:source.id,date:group.date,lineId:group.lineId,sequence,
+      bin:group.bin.trim(),remarks,binNeedsReview:source.binNeedsReview || (group.lineId!==source.lineId && Boolean(group.bin.trim())),
+      orderNo:rows.length ? rows[0].sourceSnapshot.doNo+(rows.length>1?` +${rows.length-1}`:'') : source.orderNo,
+      bagCount:unit==='Bags'?quantity:null,quantityMt:unit==='Bags'?Number((quantity*bagWeight/1000).toFixed(9)):quantity,
+      ...(unit==='Bags'?{bagWeightKgSnapshot:bagWeight}:{}),...(rows.length?{sourceAllocations:rows}:{}),
+      status:'pending',actualStart:null,actualEnd:null,createdAt:nowIso,updatedAt:nowIso});
+  }
+  for(const key of new Set([`${source.date}|${source.lineId}`,...groups.map(g=>`${g.date}|${g.lineId}`)])) {
+    const [date,lineId]=key.split('|'); jobs=resequence(jobs,lineId as LineId,date);
+  }
+  return finalizeMutation(state,jobs,event('job.split',`Split ${source.orderNo} into ${groups.length} cards; quantities retained.`,source.id,nowIso));
 }
 
 function normalizeCatalogInput(input: CatalogCreateInput): CatalogCreateInput {

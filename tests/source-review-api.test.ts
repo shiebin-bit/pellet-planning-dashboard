@@ -102,9 +102,9 @@ integration('source import review API',()=>{
     await ok(await command(0,'review-v5-initial',{type:'data.import',input:sourceInput('v5-initial.xlsx','1'.repeat(64),{})}));
     await ok(await command(1,'review-v5-change',{type:'data.import',input:sourceInput('v5-change.xlsx','2'.repeat(64),{remark:'Needs review'})}));
     const backup=await get<any>('/api/backup');
-    assert.equal(backup.schemaVersion,5);assert.equal(backup.sourceData.discrepancies.length,1);assert.deepEqual(backup.productionProgress,{samples:[],resets:[]});
+    assert.equal(backup.schemaVersion,6);assert.equal(backup.sourceData.discrepancies.length,1);assert.deepEqual(backup.productionProgress,{samples:[],resets:[]});
     await ok(await command(2,'review-v5-reset',{type:'workspace.resetDemo',date:'2026-11-03'}));
-    const previous=await get<any>('/api/backup/previous');assert.equal(previous.schemaVersion,5);assert.equal(previous.sourceData.discrepancies.length,1);
+    const previous=await get<any>('/api/backup/previous');assert.equal(previous.schemaVersion,6);assert.equal(previous.sourceData.discrepancies.length,1);
     await ok(await command(3,'review-v5-restore',{type:'workspace.restore',backup}));
     const restored=await get<SourceImportReviewPage>('/api/data/reviews?status=pending&page=1');assert.equal(restored.total,1);assert.equal(restored.items[0].candidateFields.remark,'Needs review');
     assert.equal((await get<any>('/api/data')).items[0].needsReview,true,'Pending review visibility is derived even when the base legacy flag is false.');

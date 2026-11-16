@@ -50,7 +50,7 @@ export function BusinessPriorities() {
     const page = key === 'stockShortages' ? 'stock' : 'data';
     if (!navigate(page)) return;
     if (key === 'stockShortages') {
-      preset({ 'stock.tab': 'stock', 'stock.list.search': '', 'stock.list.strategy': 'mts', 'stock.list.variant': '', 'stock.list.low': true, 'stock.list.page': 1 }, ['stock.position', 'stock.list.table']);
+      preset({ 'stock.tab': 'stock', 'stock.list.search': '', 'stock.list.strategy': 'mts', 'stock.list.variant': '', 'stock.list.packaging':'', 'stock.list.low': true, 'stock.list.page': 1 }, ['stock.position', 'stock.list.table']);
     } else if (key === 'pendingImportReviews') {
       preset({ 'data.section': 'reviews', 'reviews.status': 'pending', 'reviews.page': 1 });
     } else {

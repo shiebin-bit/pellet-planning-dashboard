@@ -1,4 +1,5 @@
 import type { InventorySnapshot, InventoryOrderProgressSnapshot, InventoryDailyStockRow, InventoryOrderJournalRow, InventoryDraftPreview, InventoryDraftRequest, InventoryLedgerEntry } from '../domain/inventoryTypes';
+import type { DailyImportPreview, DailyReportInput } from '../domain/dailyImport';
 
 export async function inventoryRequest<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', cache: 'no-store', headers: { 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
@@ -14,3 +15,4 @@ export const readDailyStock = (date: string) => inventoryRequest<InventoryDailyS
 export const readOrderJournal = (id: string) => inventoryRequest<InventoryOrderJournalRow[]>(`/api/inventory/orders/${encodeURIComponent(id)}/journal`);
 export const readLedger = (itemId: string) => inventoryRequest<InventoryLedgerEntry[]>(`/api/inventory/ledger?itemId=${encodeURIComponent(itemId)}`);
 export const previewInventoryDraft = (request: InventoryDraftRequest) => inventoryRequest<InventoryDraftPreview>('/api/inventory/draft', request);
+export const previewDailyReports = (reports: DailyReportInput[]) => inventoryRequest<DailyImportPreview>('/api/inventory/daily-import/preview', { reports });

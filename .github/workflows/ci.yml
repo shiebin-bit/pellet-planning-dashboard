@@ -73,4 +73,5 @@ jobs:
             output/playwright/weekly-list/
             output/playwright/automatic-backup/
             output/playwright/workbench-ux/
+            output/playwright/baseline-split/
           if-no-files-found: ignore

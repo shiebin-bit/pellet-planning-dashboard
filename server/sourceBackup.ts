@@ -7,24 +7,40 @@ import type { PortableInventoryData, PortableWorkspaceBackupV4 } from "../src/do
 import type { PortableProductionProgress, PortableWorkspaceBackupV5 } from "../src/domain/productionProgress";
 import { getJobSourceAllocations } from "../src/domain/jobSources";
 import { SOURCE_REVIEWABLE_FIELD_NAMES } from "../src/domain/importReview";
+import type { PortableBaselineHistory, PlanningControl } from "../src/domain/dailyImport";
+import type { PortableWorkspaceBackupV6 } from "../src/domain/baselineBackup";
+
+export function validatePortableBackupV6(value: unknown): PortableWorkspaceBackupV6 {
+  const root=record(value,"backup");
+  exact(root,["schemaVersion","exportedAt","planning","sourceData","inventory","productionProgress","baselineHistory"],"backup");
+  if(root.schemaVersion!==6)throw new Error("backup.schemaVersion must be 6.");
+  const legacy=validatePortableBackupV5Internal({schemaVersion:5,exportedAt:root.exportedAt,planning:root.planning,sourceData:root.sourceData,inventory:root.inventory,productionProgress:root.productionProgress},true);
+  return{...legacy,schemaVersion:6,baselineHistory:validatePortableBaselineHistory(root.baselineHistory,legacy)};
+}
 
 export function validatePortableBackupV4(value: unknown): PortableWorkspaceBackupV4 {
+  return validatePortableBackupV4Internal(value,false);
+}
+function validatePortableBackupV4Internal(value: unknown,allowReportedDifferences:boolean): PortableWorkspaceBackupV4 {
   const root = record(value, "backup");
   exact(root, ["schemaVersion", "exportedAt", "planning", "sourceData", "inventory"], "backup");
   if (root.schemaVersion !== 4) throw new Error("backup.schemaVersion must be 4.");
   const legacy = validatePortableBackupV3({ schemaVersion: 3, exportedAt: root.exportedAt, planning: root.planning, sourceData: root.sourceData });
   return { schemaVersion: 4, exportedAt: legacy.exportedAt, planning: legacy.planning, sourceData: legacy.sourceData,
-    inventory: validatePortableInventoryData(root.inventory, legacy.sourceData, legacy.planning) };
+    inventory: validatePortableInventoryData(root.inventory, legacy.sourceData, legacy.planning,allowReportedDifferences) };
 }
 
 export function validatePortableBackupV5(value: unknown): PortableWorkspaceBackupV5 {
+  return validatePortableBackupV5Internal(value,false);
+}
+function validatePortableBackupV5Internal(value: unknown,allowReportedDifferences:boolean): PortableWorkspaceBackupV5 {
   const root = record(value, "backup");
   exact(root, ["schemaVersion", "exportedAt", "planning", "sourceData", "inventory", "productionProgress"], "backup");
   if (root.schemaVersion !== 5) throw new Error("backup.schemaVersion must be 5.");
   const rawSource = record(root.sourceData, "backup.sourceData");
   exact(rawSource, ["imports", "orders", "versions", "discrepancies"], "backup.sourceData");
-  const legacy = validatePortableBackupV4({ schemaVersion: 4, exportedAt: root.exportedAt, planning: root.planning,
-    sourceData: { imports: rawSource.imports, orders: rawSource.orders, versions: rawSource.versions }, inventory: root.inventory });
+  const legacy = validatePortableBackupV4Internal({ schemaVersion: 4, exportedAt: root.exportedAt, planning: root.planning,
+    sourceData: { imports: rawSource.imports, orders: rawSource.orders, versions: rawSource.versions }, inventory: root.inventory },allowReportedDifferences);
   const discrepancies = validatePortableDiscrepancies(rawSource.discrepancies, legacy.sourceData);
   const productionProgress = validatePortableProductionProgress(root.productionProgress, legacy.planning);
   return { schemaVersion: 5, exportedAt: legacy.exportedAt, planning: legacy.planning,
@@ -100,7 +116,7 @@ function validatePortableProductionProgress(value: unknown, planning: AppState):
   return{samples,resets};
 }
 
-export function validatePortableInventoryData(value: unknown, sourceData: PortableSourceData, planning: AppState): PortableInventoryData {
+export function validatePortableInventoryData(value: unknown, sourceData: PortableSourceData, planning: AppState,allowReportedDifferences=false): PortableInventoryData {
   const root = record(value, "backup.inventory");
   exact(root, ["items", "imports", "baselineReports", "orders", "ledger", "reservations"], "backup.inventory");
   const items = array(root.items, "backup.inventory.items", 10_000).map((value,index)=>{
@@ -116,7 +132,7 @@ export function validatePortableInventoryData(value: unknown, sourceData: Portab
   const reservations = array(root.reservations,"backup.inventory.reservations",100_000).map((value,index)=>{const p=`backup.inventory.reservations[${index}]`,r=record(value,p);exact(r,["sourceOrderId","itemId","medication","fmrOmed","quantityScaled","updatedAt"],p);return{sourceOrderId:text(r.sourceOrderId,`${p}.sourceOrderId`,200),itemId:text(r.itemId,`${p}.itemId`,200),medication:string(r.medication,`${p}.medication`,200),fmrOmed:string(r.fmrOmed,`${p}.fmrOmed`,200),quantityScaled:safeInteger(r.quantityScaled,`${p}.quantityScaled`,0),updatedAt:timestamp(r.updatedAt,`${p}.updatedAt`)}});
   unique(items.map(r=>r.id),"inventory item id");unique(items.map(r=>r.materialCode.trim().toLowerCase()),"inventory material code");unique(imports.map(r=>r.id),"inventory import id");unique(imports.map(r=>r.semanticDigest),"inventory import digest");unique(orders.map(r=>r.sourceOrderId),"inventory order");unique(ledger.map(r=>r.id),"inventory movement id");unique(ledger.map(r=>r.postingKey),"inventory posting key");unique(reservations.map(r=>r.sourceOrderId),"inventory reservation");
   const itemIds=new Set(items.map(r=>r.id)),importIds=new Set(imports.map(r=>r.id)),sourceIds=new Set(sourceData.orders.map(r=>r.id)),jobIds=new Set(planning.jobs.map(r=>r.id)),movementIds=new Set(ledger.map(r=>r.id));
-  const baselineKeys=new Set<string>();for(const r of baselineReports){if(!itemIds.has(r.itemId)||!importIds.has(r.importId))throw new Error("Inventory baseline refers to a missing item or import.");const key=`${r.importId}\0${r.itemId}\0${r.medication}\0${r.fmrOmed}`;if(baselineKeys.has(key))throw new Error("Backup contains a duplicate inventory baseline row.");baselineKeys.add(key);if(r.openingScaled+r.productionScaled+r.receivedScaled+r.salesReturnScaled-r.reworkScaled-r.issueScaled!==r.closingScaled)throw new Error("An inventory baseline row does not balance.");}
+  const baselineKeys=new Set<string>();for(const r of baselineReports){if(!itemIds.has(r.itemId)||!importIds.has(r.importId))throw new Error("Inventory baseline refers to a missing item or import.");const key=`${r.importId}\0${r.itemId}\0${r.medication}\0${r.fmrOmed}`;if(baselineKeys.has(key))throw new Error("Backup contains a duplicate inventory baseline row.");baselineKeys.add(key);if(!allowReportedDifferences&&r.openingScaled+r.productionScaled+r.receivedScaled+r.salesReturnScaled-r.reworkScaled-r.issueScaled!==r.closingScaled)throw new Error("An inventory baseline row does not balance.");}
   for(const r of orders)if(!itemIds.has(r.itemId)||!sourceIds.has(r.sourceOrderId))throw new Error("Inventory order refers to a missing item or source order.");
   const movementById=new Map(ledger.map(r=>[r.id,r]));const balances=new Map<string,number>();
   const inventoryById=new Map(items.map(item=>[item.id,item]));
@@ -132,7 +148,9 @@ export function validatePortableInventoryData(value: unknown, sourceData: Portab
     if(original.movementType==='dispatch'){if(row.movementType!=='reversal'||row.quantityDeltaScaled<=0)throw new Error('A delivery reversal must return stock.');const total=(reversedDispatch.get(original.id)??0)+row.quantityDeltaScaled;if(total>-original.quantityDeltaScaled)throw new Error('Delivery reversals exceed the original pickup.');reversedDispatch.set(original.id,total);}
     else if(row.movementType!=='production'&&row.movementType!=='reversal')throw new Error('A production correction has an invalid type.');
   }
-  for(const r of [...ledger].sort((a,b)=>a.recordedAt.localeCompare(b.recordedAt)||a.id.localeCompare(b.id))){if(!itemIds.has(r.itemId)||r.importId&&!importIds.has(r.importId)||r.sourceOrderId&&!sourceIds.has(r.sourceOrderId)||r.jobId&&!jobIds.has(r.jobId)||r.reversesMovementId&&!movementIds.has(r.reversesMovementId))throw new Error("Inventory movement contains an orphan reference.");if(["baseline","production","received","return"].includes(r.movementType)&&r.quantityDeltaScaled<0)throw new Error("A positive inventory movement has a negative quantity.");if(["dispatch","rework"].includes(r.movementType)&&r.quantityDeltaScaled>0)throw new Error("An outbound inventory movement has a positive quantity.");if(r.movementType==="reversal"&&!r.reversesMovementId)throw new Error("An inventory reversal must refer to its original movement.");if(r.reversesMovementId){const original=movementById.get(r.reversesMovementId);if(!original||original.itemId!==r.itemId||original.medication!==r.medication||original.fmrOmed!==r.fmrOmed)throw new Error("An inventory correction does not match its original bucket.");}const key=`${r.itemId}\0${r.medication}\0${r.fmrOmed}`,next=(balances.get(key)??0)+r.quantityDeltaScaled;if(next<0)throw new Error("Inventory backup replays to negative physical stock.");balances.set(key,next);}
+  const dailyBalances=new Map<string,number>();
+  for(const r of ledger){if(!itemIds.has(r.itemId)||r.importId&&!importIds.has(r.importId)||r.sourceOrderId&&!sourceIds.has(r.sourceOrderId)||r.jobId&&!jobIds.has(r.jobId)||r.reversesMovementId&&!movementIds.has(r.reversesMovementId))throw new Error("Inventory movement contains an orphan reference.");if(["baseline","production","received","return"].includes(r.movementType)&&r.quantityDeltaScaled<0)throw new Error("A positive inventory movement has a negative quantity.");if(["dispatch","rework"].includes(r.movementType)&&r.quantityDeltaScaled>0)throw new Error("An outbound inventory movement has a positive quantity.");if(r.movementType==="reversal"&&!r.reversesMovementId)throw new Error("An inventory reversal must refer to its original movement.");if(r.reversesMovementId){const original=movementById.get(r.reversesMovementId);if(!original||original.itemId!==r.itemId||original.medication!==r.medication||original.fmrOmed!==r.fmrOmed)throw new Error("An inventory correction does not match its original bucket.");}const dailyKey=`${r.occurredOn}\0${r.itemId}\0${r.medication}\0${r.fmrOmed}`;dailyBalances.set(dailyKey,(dailyBalances.get(dailyKey)??0)+r.quantityDeltaScaled);}
+  for(const [dailyKey,delta] of [...dailyBalances].sort(([left],[right])=>left.localeCompare(right))){const [,itemId,medication,fmrOmed]=dailyKey.split('\0'),key=`${itemId}\0${medication}\0${fmrOmed}`,next=(balances.get(key)??0)+delta;if(next<0)throw new Error("Inventory backup replays to negative physical stock.");balances.set(key,next);}
   const orderBySource=new Map(orders.map(r=>[r.sourceOrderId,r])),reservedByBucket=new Map<string,number>();for(const r of reservations){const order=orderBySource.get(r.sourceOrderId);if(!itemIds.has(r.itemId)||!sourceIds.has(r.sourceOrderId)||!order||order.itemId!==r.itemId||order.medication!==r.medication||order.fmrOmed!==r.fmrOmed)throw new Error("Inventory reservation contains an orphan or mismatched reference.");const key=`${r.itemId}\0${r.medication}\0${r.fmrOmed}`;reservedByBucket.set(key,(reservedByBucket.get(key)??0)+r.quantityScaled);}for(const [key,reserved] of reservedByBucket)if(reserved>(balances.get(key)??0))throw new Error("Inventory reservations exceed physical stock.");
   return{items,imports,baselineReports,orders,ledger,reservations};
 }
@@ -311,6 +329,55 @@ export function portableBackupV5(planning: AppState, sourceData: PortableSourceD
   return { schemaVersion: 5, exportedAt, planning, sourceData, inventory, productionProgress };
 }
 
+export async function exportBaselineHistory(client:pg.Pool|pg.PoolClient):Promise<PortableBaselineHistory>{
+  const observations=await client.query<any>("SELECT * FROM source_order_observations WHERE workspace_id=1 ORDER BY as_of_date,created_at,id");
+  const controls=await client.query<any>("SELECT source_order_id,planning_control,planning_control_reason,COALESCE(planning_control_updated_at,updated_at) updated_at FROM inventory_orders WHERE workspace_id=1 ORDER BY source_order_id");
+  const events=await client.query<any>("SELECT * FROM planning_control_events WHERE workspace_id=1 ORDER BY occurred_at,id");
+  const sourceImports=await client.query<any>("SELECT id,import_mode,daily_sheet_name FROM source_imports WHERE workspace_id=1 ORDER BY imported_at,id");
+  const inventoryImports=await client.query<any>("SELECT id,import_mode,sheet_name FROM inventory_imports WHERE workspace_id=1 ORDER BY imported_at,id");
+  const diagnostics=await client.query<any>("SELECT * FROM inventory_baseline_reports ORDER BY import_id,item_id,medication,fmr_omed");
+  return{
+    observations:observations.rows.map((r:any)=>({id:r.id,importId:r.import_id,sourceOrderId:r.source_order_id,asOfDate:dbDate(r.as_of_date),sourceRow:r.source_row,rawStatus:r.raw_status,effectiveStatus:r.effective_status,fields:r.fields,createdAt:new Date(r.created_at).toISOString()})),
+    planningControls:controls.rows.map((r:any)=>({sourceOrderId:r.source_order_id,control:r.planning_control,reason:r.planning_control_reason,updatedAt:new Date(r.updated_at).toISOString()})),
+    planningControlEvents:events.rows.map((r:any)=>({id:r.id,sourceOrderId:r.source_order_id,action:r.action,beforeControl:r.before_control,afterControl:r.after_control,reason:r.reason,occurredAt:new Date(r.occurred_at).toISOString()})),
+    sourceImports:sourceImports.rows.map((r:any)=>({importId:r.id,importMode:r.import_mode,dailySheetName:r.daily_sheet_name})),
+    inventoryImports:inventoryImports.rows.map((r:any)=>({importId:r.id,importMode:r.import_mode,sheetName:r.sheet_name})),
+    reportDiagnostics:diagnostics.rows.map((r:any)=>({importId:r.import_id,itemId:r.item_id,medication:r.medication,fmrOmed:r.fmr_omed,calculatedClosingScaled:nullableDbInteger(r.calculated_closing_scaled),formulaDifferenceScaled:dbInteger(r.formula_difference_scaled),continuityDifferenceScaled:dbInteger(r.continuity_difference_scaled),reconciliationDifferenceScaled:dbInteger(r.reconciliation_difference_scaled)})),
+  };
+}
+
+export async function restoreBaselineHistory(client:pg.PoolClient,data:PortableBaselineHistory):Promise<void>{
+  for(const rows of chunks(data.sourceImports,1000))await client.query(`UPDATE source_imports i SET import_mode=x.import_mode,daily_sheet_name=x.daily_sheet_name FROM jsonb_to_recordset($1::jsonb)x(import_id text,import_mode text,daily_sheet_name text) WHERE i.id=x.import_id`,[JSON.stringify(rows.map(r=>({import_id:r.importId,import_mode:r.importMode,daily_sheet_name:r.dailySheetName})))]);
+  for(const rows of chunks(data.inventoryImports,1000))await client.query(`UPDATE inventory_imports i SET import_mode=x.import_mode,sheet_name=x.sheet_name FROM jsonb_to_recordset($1::jsonb)x(import_id text,import_mode text,sheet_name text) WHERE i.id=x.import_id`,[JSON.stringify(rows.map(r=>({import_id:r.importId,import_mode:r.importMode,sheet_name:r.sheetName})))]);
+  for(const rows of chunks(data.reportDiagnostics,1000))await client.query(`UPDATE inventory_baseline_reports b SET calculated_closing_scaled=x.calculated_closing_scaled,formula_difference_scaled=x.formula_difference_scaled,continuity_difference_scaled=x.continuity_difference_scaled,reconciliation_difference_scaled=x.reconciliation_difference_scaled FROM jsonb_to_recordset($1::jsonb)x(import_id text,item_id text,medication text,fmr_omed text,calculated_closing_scaled bigint,formula_difference_scaled bigint,continuity_difference_scaled bigint,reconciliation_difference_scaled bigint) WHERE b.import_id=x.import_id AND b.item_id=x.item_id AND b.medication=x.medication AND b.fmr_omed=x.fmr_omed`,[JSON.stringify(rows.map(r=>({import_id:r.importId,item_id:r.itemId,medication:r.medication,fmr_omed:r.fmrOmed,calculated_closing_scaled:r.calculatedClosingScaled,formula_difference_scaled:r.formulaDifferenceScaled,continuity_difference_scaled:r.continuityDifferenceScaled,reconciliation_difference_scaled:r.reconciliationDifferenceScaled})))]);
+  for(const rows of chunks(data.planningControls,1000))await client.query(`UPDATE inventory_orders o SET planning_control=x.control,planning_control_reason=x.reason,planning_control_updated_at=x.updated_at::timestamptz FROM jsonb_to_recordset($1::jsonb)x(source_order_id text,control text,reason text,updated_at text) WHERE o.source_order_id=x.source_order_id`,[JSON.stringify(rows.map(r=>({source_order_id:r.sourceOrderId,control:r.control,reason:r.reason,updated_at:r.updatedAt})))]);
+  for(const rows of chunks(data.observations,1000))await client.query(`INSERT INTO source_order_observations(id,workspace_id,import_id,source_order_id,as_of_date,source_row,raw_status,effective_status,fields,fields_hash,created_at) SELECT id,1,import_id,source_order_id,as_of_date::date,source_row,raw_status,effective_status,fields,$2,created_at::timestamptz FROM jsonb_to_recordset($1::jsonb)x(id text,import_id text,source_order_id text,as_of_date text,source_row integer,raw_status text,effective_status text,fields jsonb,created_at text)`,[JSON.stringify(rows.map(r=>({id:r.id,import_id:r.importId,source_order_id:r.sourceOrderId,as_of_date:r.asOfDate,source_row:r.sourceRow,raw_status:r.rawStatus,effective_status:r.effectiveStatus,fields:r.fields,created_at:r.createdAt}))),"restored-v6"]);
+  for(const rows of chunks(data.planningControlEvents,1000))await client.query(`INSERT INTO planning_control_events(id,workspace_id,source_order_id,action,before_control,after_control,reason,occurred_at) SELECT id,1,source_order_id,action,before_control,after_control,reason,occurred_at::timestamptz FROM jsonb_to_recordset($1::jsonb)x(id text,source_order_id text,action text,before_control text,after_control text,reason text,occurred_at text)`,[JSON.stringify(rows.map(r=>({id:r.id,source_order_id:r.sourceOrderId,action:r.action,before_control:r.beforeControl,after_control:r.afterControl,reason:r.reason,occurred_at:r.occurredAt})))]);
+}
+
+export function portableBackupV6(planning:AppState,sourceData:PortableSourceDataWithReviews,inventory:PortableInventoryData,productionProgress:PortableProductionProgress,baselineHistory:PortableBaselineHistory,exportedAt=new Date().toISOString()):PortableWorkspaceBackupV6{
+  return{schemaVersion:6,exportedAt,planning,sourceData,inventory,productionProgress,baselineHistory};
+}
+
+function validatePortableBaselineHistory(value:unknown,backup:PortableWorkspaceBackupV5):PortableBaselineHistory{
+  const root=record(value,"backup.baselineHistory");exact(root,["observations","planningControls","planningControlEvents","sourceImports","inventoryImports","reportDiagnostics"],"backup.baselineHistory");
+  const sourceIds=new Set(backup.sourceData.orders.map(r=>r.id)),sourceImportIds=new Set(backup.sourceData.imports.map(r=>r.id)),inventoryImportIds=new Set(backup.inventory.imports.map(r=>r.id)),itemIds=new Set(backup.inventory.items.map(r=>r.id));
+  const controls=(['active','hold','cancel','review'] as const);
+  const planningControls=array(root.planningControls,"backup.baselineHistory.planningControls",500000).map((v,i)=>{const p=`backup.baselineHistory.planningControls[${i}]`,r=record(v,p);exact(r,["sourceOrderId","control","reason","updatedAt"],p);if(!controls.includes(r.control as PlanningControl))throw new Error(`${p}.control is invalid.`);return{sourceOrderId:text(r.sourceOrderId,`${p}.sourceOrderId`,200),control:r.control as PlanningControl,reason:nullableText(r.reason,`${p}.reason`,1000),updatedAt:timestamp(r.updatedAt,`${p}.updatedAt`)};});
+  const observations=array(root.observations,"backup.baselineHistory.observations",1000000).map((v,i)=>{const p=`backup.baselineHistory.observations[${i}]`,r=record(v,p);exact(r,["id","importId","sourceOrderId","asOfDate","sourceRow","rawStatus","effectiveStatus","fields","createdAt"],p);if(r.effectiveStatus!=="pending"&&r.effectiveStatus!=="done"&&r.effectiveStatus!=="out")throw new Error(`${p}.effectiveStatus is invalid.`);return{id:text(r.id,`${p}.id`,200),importId:text(r.importId,`${p}.importId`,200),sourceOrderId:text(r.sourceOrderId,`${p}.sourceOrderId`,200),asOfDate:date(r.asOfDate,`${p}.asOfDate`),sourceRow:r.sourceRow===null?null:integer(r.sourceRow,`${p}.sourceRow`,1),rawStatus:string(r.rawStatus,`${p}.rawStatus`,1000),effectiveStatus:r.effectiveStatus,fields:sourceFields(r.fields,`${p}.fields`),createdAt:timestamp(r.createdAt,`${p}.createdAt`)} as PortableBaselineHistory['observations'][number];});
+  const planningControlEvents=array(root.planningControlEvents,"backup.baselineHistory.planningControlEvents",1000000).map((v,i)=>{const p=`backup.baselineHistory.planningControlEvents[${i}]`,r=record(v,p);exact(r,["id","sourceOrderId","action","beforeControl","afterControl","reason","occurredAt"],p);if(!controls.includes(r.beforeControl as PlanningControl)||!controls.includes(r.afterControl as PlanningControl))throw new Error(`${p} control is invalid.`);return{id:text(r.id,`${p}.id`,200),sourceOrderId:text(r.sourceOrderId,`${p}.sourceOrderId`,200),action:text(r.action,`${p}.action`,100),beforeControl:r.beforeControl as PlanningControl,afterControl:r.afterControl as PlanningControl,reason:text(r.reason,`${p}.reason`,1000),occurredAt:timestamp(r.occurredAt,`${p}.occurredAt`)};});
+  const sourceImports=array(root.sourceImports,"backup.baselineHistory.sourceImports",10000).map((v,i)=>{const p=`backup.baselineHistory.sourceImports[${i}]`,r=record(v,p);exact(r,["importId","importMode","dailySheetName"],p);if(r.importMode!=="sap-append"&&r.importMode!=="dated-report")throw new Error(`${p}.importMode is invalid.`);return{importId:text(r.importId,`${p}.importId`,200),importMode:r.importMode,dailySheetName:nullableText(r.dailySheetName,`${p}.dailySheetName`,255)} as PortableBaselineHistory['sourceImports'][number];});
+  const inventoryImports=array(root.inventoryImports,"backup.baselineHistory.inventoryImports",10000).map((v,i)=>{const p=`backup.baselineHistory.inventoryImports[${i}]`,r=record(v,p);exact(r,["importId","importMode","sheetName"],p);if(r.importMode!=="legacy"&&r.importMode!=="dated-report")throw new Error(`${p}.importMode is invalid.`);return{importId:text(r.importId,`${p}.importId`,200),importMode:r.importMode,sheetName:nullableText(r.sheetName,`${p}.sheetName`,255)} as PortableBaselineHistory['inventoryImports'][number];});
+  const reportDiagnostics=array(root.reportDiagnostics,"backup.baselineHistory.reportDiagnostics",100000).map((v,i)=>{const p=`backup.baselineHistory.reportDiagnostics[${i}]`,r=record(v,p);exact(r,["importId","itemId","medication","fmrOmed","calculatedClosingScaled","formulaDifferenceScaled","continuityDifferenceScaled","reconciliationDifferenceScaled"],p);return{importId:text(r.importId,`${p}.importId`,200),itemId:text(r.itemId,`${p}.itemId`,200),medication:string(r.medication,`${p}.medication`,200),fmrOmed:string(r.fmrOmed,`${p}.fmrOmed`,200),calculatedClosingScaled:r.calculatedClosingScaled===null?null:safeInteger(r.calculatedClosingScaled,`${p}.calculatedClosingScaled`,0),formulaDifferenceScaled:signedSafeInteger(r.formulaDifferenceScaled,`${p}.formulaDifferenceScaled`),continuityDifferenceScaled:signedSafeInteger(r.continuityDifferenceScaled,`${p}.continuityDifferenceScaled`),reconciliationDifferenceScaled:signedSafeInteger(r.reconciliationDifferenceScaled,`${p}.reconciliationDifferenceScaled`)};});
+  for(const r of observations)if(!sourceIds.has(r.sourceOrderId)||!sourceImportIds.has(r.importId))throw new Error("A baseline observation contains an orphan reference.");
+  for(const r of [...planningControls,...planningControlEvents])if(!sourceIds.has(r.sourceOrderId))throw new Error("A planning control contains an orphan source order.");
+  for(const r of sourceImports)if(!sourceImportIds.has(r.importId))throw new Error("Baseline history contains an orphan source import.");
+  for(const r of inventoryImports)if(!inventoryImportIds.has(r.importId))throw new Error("Baseline history contains an orphan inventory import.");
+  for(const r of reportDiagnostics)if(!inventoryImportIds.has(r.importId)||!itemIds.has(r.itemId))throw new Error("Baseline history contains an orphan report diagnostic.");
+  unique(observations.map(r=>r.id),"baseline observation id");unique(planningControls.map(r=>r.sourceOrderId),"planning control source order");unique(planningControlEvents.map(r=>r.id),"planning control event id");
+  return{observations,planningControls,planningControlEvents,sourceImports,inventoryImports,reportDiagnostics};
+}
+
 function sourceFields(value: unknown, path: string): SourceOrderFields {
   const row = record(value, path); const keys = ["doNo","deliveryDate","soldToParty","shipToParty","materialCode","description","quantity","unit","deliveryLeadDays","remark","daysOutstanding","medication","fmrOmed"];
   const optional = ["goodsMovementStatus","sourceSheet","sourceRow"]; const allowed=new Set([...keys,...optional]);for(const key of Object.keys(row))if(!allowed.has(key))throw new Error(`${path}.${key} is not supported.`);for(const key of keys)if(!(key in row))throw new Error(`${path}.${key} is required.`);if (row.unit !== "MT" && row.unit !== "Bags") throw new Error(`${path}.unit is invalid.`);
@@ -325,6 +392,7 @@ function text(v:unknown,p:string,max:number):string{const r=string(v,p,max);if(!
 function nullableText(v:unknown,p:string,max:number):string|null{return v===null?null:string(v,p,max)}
 function integer(v:unknown,p:string,min:number):number{if(!Number.isSafeInteger(v)||(v as number)<min||(v as number)>2_147_483_647)throw new Error(`${p} must be an integer within the PostgreSQL integer range.`);return v as number}
 function safeInteger(v:unknown,p:string,min:number):number{if(!Number.isSafeInteger(v)||(v as number)<min)throw new Error(`${p} must be a safe integer of at least ${min}.`);return v as number}
+function signedSafeInteger(v:unknown,p:string):number{if(!Number.isSafeInteger(v))throw new Error(`${p} must be a safe integer.`);return v as number}
 function nonzeroSafeInteger(v:unknown,p:string):number{if(!Number.isSafeInteger(v)||v===0)throw new Error(`${p} must be a nonzero safe integer.`);return v as number}
 function number(v:unknown,p:string,signed:boolean):number{if(typeof v!=="number"||!Number.isFinite(v)||(!signed&&v<0))throw new Error(`${p} must be a finite number.`);return v}
 function bool(v:unknown,p:string):boolean{if(typeof v!=="boolean")throw new Error(`${p} must be true or false.`);return v}

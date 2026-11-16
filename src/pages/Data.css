@@ -149,3 +149,30 @@
 .import-review-dialog{width:min(900px,calc(100vw - 2rem));max-height:calc(100vh - 2rem);overflow:auto}.import-review-dialog>header{display:flex;justify-content:space-between;align-items:flex-start}.import-review-dialog>header h2,.import-review-dialog>header p{margin:0}.import-review-dialog .dialog-body{display:grid;gap:1rem}.review-provenance{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem;margin:0}.review-provenance div{padding:.65rem;background:var(--surface-raised);border-radius:8px}.review-provenance dt{font-size:.75rem;color:var(--muted);text-transform:uppercase}.review-provenance dd{margin:.2rem 0 0}.review-field-list{display:grid;border:1px solid var(--border);border-radius:10px;overflow:hidden}.review-field-list>label{display:grid;grid-template-columns:auto minmax(120px,.6fr) minmax(260px,1.4fr);gap:.75rem;align-items:start;padding:.8rem;border-bottom:1px solid var(--border)}.review-field-list>label:last-child{border-bottom:0}.review-field-list>label.protected{background:var(--surface-raised)}.review-field-list label>span:first-of-type{display:flex;gap:.5rem;align-items:center}.review-field-list em{font-size:.72rem;font-style:normal;color:var(--amber)}.review-values{display:grid;grid-template-columns:1fr 1fr;gap:.65rem}.review-values>span{display:grid;gap:.2rem;overflow-wrap:anywhere}.review-values small{color:var(--muted)}.import-review-dialog textarea{resize:vertical}.import-review-dialog footer{display:flex;gap:.6rem;justify-content:flex-end;flex-wrap:wrap}
 .import-review-dialog footer{padding:16px 24px;border-top:1px solid var(--border);flex-shrink:0}
 @media(max-width:600px){.import-review-heading{display:grid}.import-review-row{grid-template-columns:1fr}.review-provenance{grid-template-columns:1fr}.review-field-list>label{grid-template-columns:auto 1fr}.review-values{grid-column:1 / -1;grid-template-columns:1fr}.import-review-dialog{width:calc(100vw - 1rem);max-height:calc(100vh - 1rem)}.import-review-dialog footer{display:grid;padding:12px}.import-review-dialog footer .button{width:100%}}
+.import-dialog>.import-mode-pane { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow: hidden; }
+.import-dialog>.import-mode-pane[hidden] { display: none; }
+.import-dialog .editor-body { flex: 1; min-height: 0; overscroll-behavior: contain; }
+.import-mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 14px 22px; border-bottom: 1px solid var(--border); flex-shrink: 0; background: #f7f9fb; }
+.import-mode-switch button { text-align: left; padding: 12px 14px; border: 1px solid var(--border); border-radius: 5px; background: white; color: var(--text); cursor: pointer; }
+.import-mode-switch button[aria-pressed=true] { border-color: #446e8c; box-shadow: inset 3px 0 #446e8c; background: #edf5fa; }
+.import-mode-switch strong,.import-mode-switch span { display: block; }
+.import-mode-switch strong { font-size: 14px; }
+.import-mode-switch span { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.import-file-list { border: 1px solid var(--border); margin-bottom: 16px; max-height: 220px; overflow: auto; }
+.import-file-list table { min-width: 680px; width: 100%; }
+.import-file-list th { position: sticky; top: 0; background: #f6f7f8; }
+.import-file-list td { overflow-wrap: anywhere; vertical-align: middle; }
+.import-error { white-space: pre-line; }
+.import-dialog .editor-footer { background: white; border-top: 1px solid var(--border); }
+@media(max-width: 600px) { .import-mode-switch { padding: 10px 12px; gap: 8px; }.import-mode-switch button { padding: 9px; }.import-mode-switch span { font-size: 11px; }.import-dialog .editor-header { padding: 14px 16px; } }
+.source-tag.planning-cancel { background: #fde8e6; color: #a43930; }
+.source-tag.planning-hold { background: #fff1cb; color: #785c14; }
+.source-tag.planning-review { background: #fff1cb; color: #785c14; }
+.order-planning-control { margin: 18px 0; padding: 16px; border: 1px solid var(--border); border-left: 3px solid #67839a; background: #f7f9fb; }
+.order-planning-control.control-hold,.order-planning-control.control-review { border-left-color: #b88822; background: #fffaf0; }
+.order-planning-control.control-cancel { border-left-color: #b4443a; background: #fff6f5; }
+.order-planning-control>div>strong { display: block; font-size: 14px; }
+.order-planning-control p { line-height: 1.6; overflow-wrap: anywhere; }
+.order-planning-control>div>.text-link { margin-top: 10px; }
+.order-planning-control form { display: grid; gap: 12px; margin-top: 16px; border-top: 1px solid var(--border); padding-top: 16px; }
+.order-planning-control form>.button { justify-self: start; }

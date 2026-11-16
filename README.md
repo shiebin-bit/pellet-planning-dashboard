@@ -43,7 +43,7 @@ The screenshot uses fictional demonstration records. Company workbooks, customer
 | Workspace | Main responsibility |
 | --- | --- |
 | **Overview** | Daily planned quantity, within-shift plan, received stock, utilisation, order/stock priorities, and weekly line capacity |
-| **Planning board** | Four-line Timeline/List, manual production, reviewed drag-and-drop movement, generated drafts, copy planning, and optional multi-order batches |
+| **Planning board** | Four-line Timeline/List, manual production, reviewed drag-and-drop movement, generated drafts, copy planning, optional multi-order batches, and quantity-preserving card splits |
 | **Orders** | Excel import previews, search and filters, order progress, partial collection, and a review queue for changed SAP records |
 | **Stock** | Bags/bulk balances, reservations, available stock, safety-stock policies, daily movements, and physical-count adjustments |
 | **History** | Production records and activity, combined filters, totals across all matching results, and 50-row pagination |
@@ -53,7 +53,7 @@ Supporting workflows include:
 
 - Due-date scheduling that respects stock reservations, unfinished production, line capacity, downtime, and existing cards.
 - Editable planning drafts with split production across dates and lines, utilisation previews, late-order warnings, and browser-local draft recovery.
-- Same-product order batches with per-order allocations; combining is optional and later-due batches can stay separate.
+- Same-product order batches with per-order allocations; combine or split unstarted cards by order or partial quantity while preserving every order and extra-stock total.
 - Server-time Start and Done, partial production receipts, pause/resume with reasons, and auditable output corrections.
 - Recorded-output progress and estimated finish when enough recent, reliable samples are available.
 - Daily or date-range Excel reports and landscape print/Save as PDF, independent of list pagination.
@@ -61,7 +61,7 @@ Supporting workflows include:
 
 ## Daily Workflow
 
-1. **Import orders.** Preview SAP Excel data and confirm new orders. Existing orders stay intact; differences enter a review queue for an explicit, reasoned correction.
+1. **Choose the import mode.** Use Baseline import for dated company sheets and SAP orders for append-only bag/bulk exports. Review historical remarks and stock reconciliation before saving. **Import orders.** Preview SAP Excel data and confirm new orders. Existing orders stay intact; differences enter a review queue for an explicit, reasoned correction.
 2. **Check stock.** Reserve compatible finished goods and identify the remaining order shortage or Make for stock replenishment need.
 3. **Plan production.** Generate a draft or add cards manually. Review quantities, dates, lines, order allocations, and capacity before saving.
 4. **Record output.** Start at the current server time, post partial quantities as work progresses, and enter the final cumulative output when marking Done.
@@ -110,7 +110,7 @@ Browser / React dashboard
           v
      PostgreSQL 16
           |
-          +---- Automatic V5 workspace snapshots
+          +---- Automatic V6 workspace snapshots
           +---- Full PostgreSQL dumps for database recovery
 ```
 
@@ -234,8 +234,8 @@ The badge above links to the current workflow status. Deployment is managed sepa
 
 ## Backups and Data
 
-- **Automatic recovery copies:** Docker saves portable V5 JSON snapshots to `backups/automatic/` every 24 hours by default, retaining 14 managed successful files. Settings shows last success, next attempt, and failures.
-- **Manual workspace recovery:** Download or restore JSON in **Settings → Backup & recovery**. V5 includes orders, inventory movements, import reviews, and production progress. Older versions remain readable with warnings about omitted data.
+- **Automatic recovery copies:** Docker saves portable V6 JSON snapshots to `backups/automatic/` every 24 hours by default, retaining 14 managed successful files. Settings shows last success, next attempt, and failures.
+- **Manual workspace recovery:** Download or restore JSON in **Settings → Backup & recovery**. V6 includes orders, inventory movements, import reviews, production progress, daily order observations, planning controls, and split-card lineage. Older versions remain readable with warnings about omitted data.
 - **Full database recovery:** Run `.\scripts\backup.ps1` for a PostgreSQL custom-format dump. Portable JSON does not include all database metadata or command receipts.
 - **Restore behaviour:** Workspace restoration replaces the active workspace after preview and retains the preceding recovery copy. It does not merge records.
 - **Browser drafts:** Saved generated drafts belong to that browser/origin and are outside database backups.

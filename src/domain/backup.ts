@@ -43,7 +43,7 @@ const JOB_KEYS = [
   "lockedSegments", "issue",
   "pauseIntervals",
   "sourceOrderId", "sourceOrderVersion", "sourceSnapshot", "sourceAllocations", "bagWeightKgSnapshot",
-  "inventoryItemId", "medication", "fmrOmed", "productionPurpose", "notBefore", "calendarManagedRelease",
+  "inventoryItemId", "medication", "fmrOmed", "productionPurpose", "notBefore", "calendarManagedRelease", "derivedFromJobId",
 ] as const;
 
 const JOB_CHANGE_FIELDS = new Set([
@@ -102,6 +102,16 @@ export function validateWorkspaceBackup(value: unknown): AppState {
   uniqueIds(catalog, "backup.catalog");
   uniqueCatalogCodes(catalog);
   uniqueIds(jobs, "backup.jobs");
+  const jobsById = new Map(jobs.map(job=>[job.id,job]));
+  for(const job of jobs){
+    const seen=new Set([job.id]); let parent=job.derivedFromJobId;
+    while(parent){
+      if(seen.has(parent))throw invalid('backup.jobs','split lineage contains a cycle');
+      const source=jobsById.get(parent);
+      if(!source)throw invalid('backup.jobs','split lineage refers to a missing original card');
+      seen.add(parent); parent=source.derivedFromJobId;
+    }
+  }
   uniqueIds(events, "backup.events");
 
   const restored: AppState = { schemaVersion: 2, catalog, jobs, settings, events };
@@ -337,6 +347,7 @@ function validateJob(value: unknown, path: string): Job {
   if (hasOwn(source, "productionPurpose")) result.productionPurpose = enumValue<"mto" | "mts">(source.productionPurpose, ["mto", "mts"], `${path}.productionPurpose`);
   if (hasOwn(source, "notBefore")) result.notBefore = timestampValue(source.notBefore, `${path}.notBefore`);
   if (hasOwn(source, "calendarManagedRelease")) result.calendarManagedRelease = booleanValue(source.calendarManagedRelease, `${path}.calendarManagedRelease`);
+  if (hasOwn(source, "derivedFromJobId")) result.derivedFromJobId = nonEmptyString(source.derivedFromJobId, `${path}.derivedFromJobId`, MAX_ID_LENGTH);
 
   return result;
 }

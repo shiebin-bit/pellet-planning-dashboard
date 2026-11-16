@@ -133,6 +133,8 @@ export interface SourceOrderSummary extends SourceOrderFields {
   currentDeliveryLeadDays: number | null;
   currentDaysOutstanding: number | null;
   needsReview: boolean;
+  planningControl?: 'active' | 'hold' | 'cancel' | 'review';
+  planningControlReason?: string;
   updatedAt: string;
 }
 

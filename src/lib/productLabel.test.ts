@@ -7,6 +7,11 @@ describe('production product labels', () => {
     expect(productLabel({ materialCode: '7.0312008522000', description: 'FS 5101 STARTER 25KG' })).toBe('5101');
     expect(productLabel({ productCode: '7.0312008522000', description: 'fs 5220A Feed' })).toBe('5220A');
   });
+  it('preserves complete letter suffixes from FS descriptions', () => {
+    for (const code of ['5220CCB', '5220MER', '5128CO']) {
+      expect(productLabel({materialCode: '7.0312008522000', description: `FS ${code} FEED 50KG`})).toBe(code);
+    }
+  });
   it('retains manual codes and full material IDs when the description has no FS code', () => {
     expect(productLabel({ productCode: '6220-DEMO', description: 'Demo feed' })).toBe('6220-DEMO');
     expect(productLabel({ productCode: '7.0312008522000', description: '5220 BROILER' })).toBe('7.0312008522000');

@@ -2,11 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { open, mkdir, readdir, readFile, rename, stat, unlink } from 'node:fs/promises';
 import path from 'node:path';
 import type { AutomaticBackupAttempt, AutomaticBackupStatus, AutomaticBackupSuccess } from '../src/domain/automaticBackup';
-import { validatePortableBackupV5 } from './sourceBackup';
+import { validatePortableBackupV5, validatePortableBackupV6 } from './sourceBackup';
 
 const MAX_PORTABLE_BACKUP_BYTES = 64 * 1024 * 1024;
 const RETRY_DELAY_MS = 15 * 60 * 1_000;
-const MANAGED_FILE = /^millplan-auto-v5-(\d{8}T\d{9}Z)\.json$/;
+const MANAGED_FILE = /^millplan-auto-v(?:5|6)-(\d{8}T\d{9}Z)\.json$/;
 
 export interface AutomaticBackupConfig {
   enabled: boolean;
@@ -37,7 +37,10 @@ export class AutomaticBackupService {
 
   constructor(private readonly config: AutomaticBackupConfig, private readonly dependencies: AutomaticBackupDependencies) {
     this.now = dependencies.now ?? (() => new Date());
-    this.validateBackup = dependencies.validateBackup ?? (value => { validatePortableBackupV5(value); });
+    this.validateBackup = dependencies.validateBackup ?? (value => {
+      const version=(value as {schemaVersion?:unknown})?.schemaVersion;
+      if(version===6)validatePortableBackupV6(value);else validatePortableBackupV5(value);
+    });
     this.retryDelayMs = dependencies.retryDelayMs ?? RETRY_DELAY_MS;
     this.state = config.enabled ? 'idle' : 'disabled';
   }
@@ -62,7 +65,7 @@ export class AutomaticBackupService {
   getStatus(): AutomaticBackupStatus {
     return {
       enabled: this.config.enabled,
-      format: 'portable-v5',
+      format: 'portable-v6',
       intervalHours: this.config.intervalHours,
       retentionCount: this.config.retentionCount,
       state: this.state,
@@ -237,7 +240,7 @@ function attempt(at: Date, result: AutomaticBackupAttempt['result'], code?: stri
 }
 
 export function managedFileName(at: Date): string {
-  return `millplan-auto-v5-${at.toISOString().replace(/[-:.]/g, '')}.json`;
+  return `millplan-auto-v6-${at.toISOString().replace(/[-:.]/g, '')}.json`;
 }
 
 function timestampFromManagedFile(fileName: string): string | null {

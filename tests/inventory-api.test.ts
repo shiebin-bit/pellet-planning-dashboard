@@ -89,13 +89,13 @@ integration("inventory API", () => {
     assert.equal((await get<any[]>("/api/inventory/ledger")).filter(row => row.movementType === "baseline").length, 1);
 
     const backup = await get<any>("/api/backup");
-    assert.equal(backup.schemaVersion, 5);
+    assert.equal(backup.schemaVersion, 6);
     assert.equal(backup.inventory.items.length, 1);
     assert.equal(backup.inventory.ledger.length, 1);
     await ok(await command(2, "reset-after-backup", { type: "workspace.resetDemo", date: malaysiaToday() }));
     assert.equal((await get<InventorySnapshot>("/api/inventory")).items.length, 0);
     const previous = await get<any>("/api/backup/previous");
-    assert.equal(previous.schemaVersion, 5);
+    assert.equal(previous.schemaVersion, 6);
     assert.equal(previous.inventory.ledger.length, 1);
     await ok(await command(3, "restore-v4", { type: "workspace.restore", backup }));
     const restored = await get<InventorySnapshot>("/api/inventory");
@@ -429,7 +429,7 @@ integration("inventory API", () => {
     summary=await get<InventoryProductionSummary>(`/api/inventory/production-summary?date=${malaysiaToday()}`);assert.equal(summary.netQuantityMt,30);assert.equal(summary.jobCount,1);
     assert.deepEqual(production.orderTotals.filter((row:any)=>row.total>0).map((row:any)=>[row.sourceOrderId,row.total]),[[source[0].id,30]]);
     const ledger=(await get<any[]>("/api/inventory/ledger")).filter(row=>row.jobId===job.id);assert.equal(ledger.reduce((sum,row)=>sum+row.quantityDelta,0),30);
-    const backup=await get<any>("/api/backup");assert.equal(backup.schemaVersion,5);assert.equal(backup.planning.jobs[0].sourceAllocations.length,2);
+    const backup=await get<any>("/api/backup");assert.equal(backup.schemaVersion,6);assert.equal(backup.planning.jobs[0].sourceAllocations.length,2);
   });
 
   it("rejects an edited draft that overbooks an order across multiple cards atomically",async()=>{

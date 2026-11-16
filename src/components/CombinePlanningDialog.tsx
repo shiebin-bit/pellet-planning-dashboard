@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Combine, X } from 'lucide-react';
-import { getCompatiblePendingJobs, getJobSourceAllocations, getProductionBatchIdentity } from '../domain/jobSources';
+import { getCompatiblePendingJobs, getJobSourceAllocations, getProductionBatchIdentity, mergeSourceAllocations } from '../domain/jobSources';
 import type { Job } from '../domain/types';
 import { useWorkspace } from '../lib/workspace';
 import { dateLabel, numberLabel } from '../lib/format';
@@ -31,7 +31,11 @@ export function CombinePlanningDialog({onClose, anchorJobId, onSaved}: {onClose:
   const picked = candidates.filter(job => selected.includes(job.id));
   const selectedSources = picked.flatMap(getJobSourceAllocations);
   const selectedSourceIds = new Set(selectedSources.map(row => row.sourceOrderId));
-  const incompatible = (job: Job) => !selected.includes(job.id) && Boolean(first && getProductionBatchIdentity(first) !== getProductionBatchIdentity(job) || getJobSourceAllocations(job).some(row => selectedSourceIds.has(row.sourceOrderId)) || selectedSources.length + getJobSourceAllocations(job).length > 500);
+  const incompatible = (job: Job) => {
+    if(selected.includes(job.id))return false;
+    if(first&&getProductionBatchIdentity(first)!==getProductionBatchIdentity(job))return true;
+    try {mergeSourceAllocations([...selectedSources,...getJobSourceAllocations(job)]);return false;}catch{return true;}
+  };
   function toggle(job: Job) {
     if (incompatible(job) || job.id === anchorJobId || mutationLocked || hasConflict) return;
     if (!selected.length) {setBin(job.bin); setRemarks(job.remarks);}
@@ -52,7 +56,7 @@ export function CombinePlanningDialog({onClose, anchorJobId, onSaved}: {onClose:
           return <span className="combine-order-detail" key={a.sourceOrderId}><b>DO {source.doNo} · {numberLabel(a.plannedQuantity, source.unit === 'Bags' ? 0 : 3)} {source.unit}</b><small>{customer || (loading ? 'Loading customer…' : 'Customer unavailable')}</small><small>Delivery {delivery ? dateLabel(delivery, true) : loading ? 'loading…' : 'not recorded'}</small></span>;
         })}</span><small>{job.productCode} · {job.mode === 'bags' ? `${job.bagWeightKgSnapshot ?? state.settings.bagWeightKg}kg bags` : 'Bulk'} · {job.medication || 'Standard'} / {job.fmrOmed || 'No FMR / OMED'}</small></span></label>) : <p className="data-empty">No not-started order cards on this date. Use Plan from Orders to create a card with several orders.</p>}</div></fieldset>
         {metadataFailed && <p role="status">Some customer or delivery details could not load. <button type="button" className="text-link" onClick={retryMetadata}>Retry details</button></p>}
-        <p aria-live="polite"><strong>{picked.length} {picked.length === 1 ? 'card' : 'cards'} → {selectedSources.length} {selectedSources.length === 1 ? 'order' : 'orders'} · {numberLabel(picked.reduce((n,j) => n+j.quantityMt,0),3)} MT</strong></p>
+        <p aria-live="polite"><strong>{picked.length} {picked.length === 1 ? 'card' : 'cards'} → {selectedSourceIds.size} {selectedSourceIds.size === 1 ? 'order' : 'orders'} · {numberLabel(picked.reduce((n,j) => n+j.quantityMt,0),3)} MT</strong></p>
         {picked.length > 1 && <div className="field-grid"><label className="field span-2">Destination bin for combined card<input maxLength={120} value={bin} onChange={e => setBin(e.target.value)}/></label><label className="field span-2">Remarks for combined card<textarea maxLength={1000} value={remarks} onChange={e => setRemarks(e.target.value)}/></label></div>}
         {picked.length > 1 && (new Set(picked.map(j => j.bin)).size > 1 || new Set(picked.map(j => j.remarks)).size > 1) && <p className="notice warning">The selected cards have different bins or remarks. Check the combined values above; the original values stay in History.</p>}
         {failed && toast?.error && <p className="data-error" role="alert">{toast.message}</p>}

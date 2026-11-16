@@ -1,77 +1,108 @@
-import { useEffect, useState, useRef } from 'react';
-import { X, Check, ArrowLeft } from 'lucide-react';
-import type { FeedWorkbookData } from '../lib/feedWorkbook';
-import { useWorkspace } from '../lib/workspace';
-import { readInventory, readDailyStock } from '../lib/inventoryApi';
-import { previewSourceImport } from '../lib/dataApi';
-import { useModal } from './useModal';
-import { ImportChanges } from './ImportChanges';
-import type { SourceImportPreviewRow } from '../domain/sourceTypes';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowLeft, Check, Upload, X } from 'lucide-react';
+import type { DailyImportPreview, DailyReportInput } from '../domain/dailyImport';
+import { readImportBook, type ImportBook } from '../lib/excelImport';
+import { parseDailyReportWorkbook } from '../lib/feedWorkbook';
+import { previewDailyReports } from '../lib/inventoryApi';
 import { numberLabel } from '../lib/format';
+import { productLabel } from '../lib/productLabel';
+import { useWorkspace } from '../lib/workspace';
 
-export function FeedImportDialog({ data, onBack }: { data: FeedWorkbookData; onBack: () => void }) {
-  const { commit, closeImport, navigate, mutationLocked, hasConflict, resolveConflict, toast,confirmedRetry } = useWorkspace();
-  const retryAtMount=useRef(confirmedRetry?.nonce??0);
-  useEffect(()=>{if(confirmedRetry&&confirmedRetry.nonce>retryAtMount.current&&['inventory.importBaseline','inventory.importWorkbook'].includes(confirmedRetry.type)){closeImport();navigate('data');}},[confirmedRetry?.nonce]);
-  const [baseline, setBaseline] = useState(false);
-  const [existing, setExisting] = useState<boolean | null>(null);
-  const [previewRows, setPreviewRows] = useState<SourceImportPreviewRow[]>([]);
-  const [summary, setSummary] = useState({ added: 0, changed: 0, unchanged: 0, operationalChanged: 0 });
-  const [comparing,setComparing] = useState(true);
-  const [comparisonError,setComparisonError] = useState('');
+/** Content only: ImportDialog owns the single modal, focus trap and body lock. */
+export function FeedImportDialog({ reports, onReportsChange, onBusyChange }: {
+  reports: DailyReportInput[];
+  onReportsChange: (reports: DailyReportInput[]) => void;
+  onBusyChange: (busy: boolean) => void;
+}) {
+  const { commit, closeImport, navigate, mutationLocked, hasConflict, resolveConflict, toast } = useWorkspace();
+  const [books, setBooks] = useState<Record<string, ImportBook>>({});
+  const [preview, setPreview] = useState<DailyImportPreview | null>(null);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
-  const [page, setPage] = useState(1);
   const [reconcile, setReconcile] = useState(false);
-  const [countBalances, setCountBalances] = useState<Record<string,number>>({});
-  const dialog = useModal(closeImport);
-  useEffect(() => {
-    let active = true;
-    readInventory().then(stock => {
-      if (!active) return;
-      const hasStock = stock.baselineDate !== null;
-      setExisting(hasStock); setBaseline(!hasStock);
-      if(hasStock)readDailyStock(data.asOfDate).then(rows=>{if(active)setCountBalances(Object.fromEntries(rows.map(row=>[`${row.materialCode}\0${row.medication}\0${row.fmrOmed}`,row.closing])));}).catch(e=>{if(active)setError(e.message);});
+  const [reason, setReason] = useState('');
+  const [page, setPage] = useState(1);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const generation = useRef(0);
+  useEffect(() => () => { generation.current++; }, []);
+  useEffect(() => { onBusyChange(busy); }, [busy, onBusyChange]);
 
-    }).catch(e => { if (active) setError(e.message); });
-    return () => { active = false; };
-  }, [data]);
-  useEffect(() => {
-    if (existing === null) return;
-    let active = true;
-    setComparing(true); setComparisonError(''); setPreviewRows([]); setConfirmed(false);
-    Promise.all(data.orders.map(batch => previewSourceImport(batch, {includeBaseline: baseline, annotations: data.annotations}))).then(previews => {
-      if (!active) return;
-      setPreviewRows(previews.flatMap(p => p.rows));
-      setSummary(previews.reduce((sum,p) => ({added:sum.added+p.added,changed:sum.changed+p.changed,unchanged:sum.unchanged+p.unchanged,operationalChanged:sum.operationalChanged+(p.operationalChanged??0)}),{added:0,changed:0,unchanged:0,operationalChanged:0}));
-    }).catch(e => { if(active) setComparisonError(e.message); }).finally(() => { if(active) setComparing(false); });
-    return () => { active = false; };
-  }, [data, existing, baseline]);
-  const rows = data.orders.flatMap(batch => batch.rows);
-  const comparisons = new Map(previewRows.map(row => [row.fields.doNo + '\0' + row.fields.materialCode, row]));
-  const bag = data.items.filter(i => i.unit === 'Bags');
-  const bulk = data.items.filter(i => i.unit === 'MT');
-  const totalMt = data.items.reduce((sum, i) => sum + (i.unit === 'MT' ? i.closing : i.closing * i.bagWeightKg! / 1000), 0);
-  async function save() {
-    if (await commit({ type: 'inventory.importWorkbook', input: { ...data, includeBaseline: baseline, reconcileStock: reconcile } }, 'Workbook imported. New orders added; existing orders kept as-is.')) { closeImport(); navigate('data'); }
+  function resetPreview() { setPreview(null); setConfirmed(false); setReconcile(false); setError(''); setPage(1); }
+  function updateReports(next: DailyReportInput[]) {
+    onReportsChange([...next].sort((a, b) => a.asOfDate.localeCompare(b.asOfDate)));
+    resetPreview();
   }
-  return <div className="editor-layer"><button className="editor-scrim" aria-label="Close workbook import" disabled={mutationLocked} onClick={closeImport}/><section ref={dialog} className="production-editor import-dialog" role="dialog" aria-modal="true" aria-labelledby="feed-import-title" tabIndex={-1}>
-    <header className="editor-header"><div><h2 id="feed-import-title">Daily stock workbook</h2><p>{data.fileName} · As of {data.asOfDate}</p></div><button className="icon-button" disabled={mutationLocked} onClick={closeImport} aria-label="Close workbook import"><X/></button></header>
+  async function readFiles(files: File[]) {
+    const request = ++generation.current;
+    setBusy(true); resetPreview();
+    const next = [...reports];
+    const nextBooks = { ...books };
+    const errors: string[] = [];
+    for (const file of files) {
+      try {
+        const book = await readImportBook(file);
+        const candidateSheets = book.sheets.filter(sheet => /^\d{1,2}(st|nd|rd|th)$/i.test(sheet.name.trim()));
+        let report = parseDailyReportWorkbook(book, file.name, candidateSheets[0]?.name);
+        // Another file may contain the same first day plus additional dated sheets.
+        // Start with the first unused day so that the worksheet chooser stays usable.
+        if (next.some(row => row.asOfDate === report.asOfDate)) {
+          for (const sheet of candidateSheets.slice(1)) {
+            const candidate = parseDailyReportWorkbook(book, file.name, sheet.name);
+            if (!next.some(row => row.asOfDate === candidate.asOfDate)) { report = candidate; break; }
+          }
+        }
+        if (next.some(row => row.digest === report.digest && row.sheetName === report.sheetName)) continue;
+        if (next.some(row => row.asOfDate === report.asOfDate)) throw Error(`A report for ${report.asOfDate} is already selected. Remove it before choosing a replacement.`);
+        if (next.length >= 31) throw Error('Select at most 31 daily reports in one batch.');
+        next.push(report); nextBooks[report.digest] = book;
+      } catch (reason) { errors.push(`${file.name}: ${reason instanceof Error ? reason.message : 'Could not read workbook.'}`); }
+    }
+    if (request !== generation.current) return;
+    onReportsChange(next.sort((a, b) => a.asOfDate.localeCompare(b.asOfDate)));
+    setBooks(nextBooks); setError(errors.join('\n')); setBusy(false);
+  }
+  function changeSheet(report: DailyReportInput, sheetName: string) {
+    try {
+      const next = parseDailyReportWorkbook(books[report.digest], report.fileName, sheetName);
+      if (reports.some(row => row !== report && row.asOfDate === next.asOfDate)) throw Error(`A report for ${next.asOfDate} is already selected.`);
+      updateReports(reports.map(row => row === report ? next : row));
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not read worksheet.'); }
+  }
+  async function review() {
+    setBusy(true); setError('');
+    try { setPreview(await previewDailyReports(reports)); setConfirmed(false); setPage(1); }
+    catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not compare daily reports. Your selected files are preserved.'); }
+    finally { setBusy(false); }
+  }
+  async function save() {
+    if (!preview || !confirmed || (preview.requiresReconcile && (!reconcile || !reason.trim()))) return;
+    if (await commit({ type: 'inventory.importDailyReports', reports, reconcile, reason: reason.trim() }, 'Daily reports imported with their stock and historical order observations.')) { closeImport(); navigate('data'); }
+  }
+  const observations = reports.flatMap(report => report.orderRows.map(row => ({ report, row })));
+  const locked = busy || mutationLocked || hasConflict;
+  return <>
     <div className="editor-body">
-      {hasConflict && <div className="notice warning">The workspace changed. Your workbook is preserved. <button className="text-link" onClick={() => { resolveConflict(); setConfirmed(false); }}>Refresh before confirming</button></div>}
-      <div className="import-summary"><div><strong>{rows.length}</strong><span>SAP orders · {data.orders.map(b => `${b.sheetName}: ${b.rows.length}`).join(' / ')}</span></div><div><strong>{data.items.length}</strong><span>Stock items · {bag.length} bag / {bulk.length} bulk</span></div><div><strong>{numberLabel(totalMt, 3)} MT</strong><span>Reported closing stock</span></div></div>
-      {comparing ? <p role="status">Comparing workbook values…</p> : <p>{summary.added} new orders · {summary.changed + summary.unchanged} existing orders skipped · {summary.changed} differ in Excel (kept as-is)</p>}
-      <p className="data-note">Only the initial stock baseline reads Medication / FMR and historical DONE / OUT from the dated daily sheet. Later imports keep existing order data as-is. DONE is production ready; OUT is collected. Neither posts another stock movement against the closing baseline.</p>
-      <label className="checkbox-label"><input type="checkbox" checked={baseline} disabled={existing === null || existing || mutationLocked} onChange={e => { setBaseline(e.target.checked); setConfirmed(false); }}/>Establish opening inventory from {data.asOfDate} Closing</label>
-      {existing && <><p className="notice warning">Only new orders are added. Existing orders and physical stock are kept as-is. Only confirm a physical count if this workbook contains a verified count.</p><label className="checkbox-label"><input type="checkbox" checked={reconcile} disabled={mutationLocked} onChange={e=>{setReconcile(e.target.checked);setConfirmed(false);}}/>Reconcile {data.asOfDate} physical Closing with the ledger</label></>}
-      {reconcile && <div className="notice warning"><strong>Physical count differences — {data.items.filter(i=>i.closing!==(countBalances[`${i.materialCode}\0${i.medication}\0${i.fmrOmed}`]??0)).length} items</strong><p>Confirmation records each difference as a dated adjustment and preserves all original movements.</p><div className="table-scroll"><table><thead><tr><th>PRODUCT</th><th>LEDGER CLOSING</th><th>COUNTED</th><th>ADJUSTMENT</th></tr></thead><tbody>{data.items.map(i=>{const current=countBalances[`${i.materialCode}\0${i.medication}\0${i.fmrOmed}`]??0;return <tr key={i.materialCode}><td>{i.materialCode}</td><td>{current} {i.unit}</td><td>{i.closing} {i.unit}</td><td>{numberLabel(i.closing-current,3)}</td></tr>;})}</tbody></table></div></div>}
-      {baseline && <p className="notice warning">This is an {data.asOfDate} stock snapshot. Production and deliveries after that date must be recorded separately. {data.items.filter(i => i.strategy === 'mts').length} products have numeric safety stock; {data.items.filter(i => i.needsReview).length} need policy review.</p>}
-      <div className="table-scroll import-preview" role="region" aria-label="Workbook import comparison" tabIndex={0}><table><colgroup>{[12,22,12,10,12,32].map((width,index)=><col key={index} style={{width:`${width}%`}}/>)}</colgroup><thead><tr><th>DO</th><th>MATERIAL</th><th>DELIVERY</th><th>QUANTITY</th><th>SHEET</th><th>RESULT / CHANGES</th></tr></thead><tbody>{rows.slice((page - 1) * 50, page * 50).map((r, n) => { const comparison = comparisons.get(r.doNo + "\0" + r.materialCode); return <tr key={n}><td>{r.doNo}</td><td><strong>{r.materialCode}</strong><small>{r.description}</small></td><td>{r.deliveryDate}</td><td>{r.quantity} {r.unit}</td><td>{r.sourceSheet}</td><td>{comparison ? <><span className={"source-tag " + (comparison.operationalChanged ? "changed" : comparison.disposition)}>{comparison.disposition === "added" ? "New" : "Skipped"}</span><ImportChanges row={comparison} asOfDate={data.asOfDate}/></> : "Comparing…"}</td></tr>; })}</tbody></table></div>
-      <div className="data-pagination"><span>{(page - 1) * 50 + 1}–{Math.min(page * 50, rows.length)} of {rows.length}</span><div><button className="button secondary" disabled={page === 1} onClick={() => setPage(p => p - 1)}>Previous</button><button className="button secondary" disabled={page * 50 >= rows.length} onClick={() => setPage(p => p + 1)}>Next</button></div></div>
-      <details><summary>Stock baseline · {data.items.length} items</summary><div className="table-scroll"><table><thead><tr><th>PRODUCT</th><th>OPENING</th><th>PRODUCTION</th><th>ISSUE</th><th>CLOSING</th><th>STRATEGY / TARGET</th></tr></thead><tbody>{data.items.map(i => <tr key={i.materialCode}><td>{i.materialCode}<small>{i.description} · {i.bagWeightKg ? `${i.bagWeightKg}kg` : 'Bulk'}</small></td><td>{i.opening}</td><td>{i.production}</td><td>{i.issue}</td><td>{i.closing} {i.unit}</td><td>{i.strategy.toUpperCase()} / {i.targetQuantity}{i.needsReview ? ' · Review' : ''}</td></tr>)}</tbody></table></div></details>
-      {data.packingBinTotal !== null && <p className="data-note">Packing bin total: {data.packingBinTotal} (reference only; excluded from allocatable stock).</p>}
-      <label className="checkbox-label import-confirm"><input type="checkbox" checked={confirmed} disabled={comparing || !!comparisonError} onChange={e => setConfirmed(e.target.checked)}/>I checked the orders, stock date and historical statuses.</label>
-      {(error || comparisonError || toast?.error) && <p className="data-error" role="alert">{error || comparisonError || toast?.message}</p>}
-    </div><footer className="editor-footer"><button className="button secondary" disabled={mutationLocked} onClick={onBack}><ArrowLeft size={15}/>Choose another workbook</button><div className="toolbar-spacer"/><button className="button primary" disabled={!confirmed || existing === null || comparing || !!comparisonError || !!error || mutationLocked || hasConflict} onClick={() => void save()}><Check size={15}/>Confirm import</button></footer>
-  </section></div>;
+      {hasConflict && <div className="notice warning" role="alert">The workspace changed. Your files and draft are preserved. <button className="text-link" disabled={mutationLocked} onClick={() => { resolveConflict(); resetPreview(); }}>Reload and compare again</button></div>}
+      {!preview && <div className="import-file"><Upload size={22}/><div><strong>Company daily worksheets</strong><p>Select one or more .xlsx / .xlsm files. Only the dated worksheet (26th, 27th, etc.) is used.</p></div><button className="button secondary" disabled={locked} onClick={() => fileInput.current?.click()}>{reports.length ? 'Add files' : 'Choose files'}</button><input hidden multiple type="file" accept=".xlsx,.xlsm" ref={fileInput} aria-label="Baseline Excel files" onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ''; if (files.length) void readFiles(files); }}/></div>}
+      <p className="data-note">Reports are processed by date. In an empty ledger, Opening plus reported movements establishes the first stock baseline. With an existing ledger, reports are saved as history; differences change stock only through a confirmed count adjustment, without replaying production or deliveries. DONE means production ready. OUT means collected. CANCEL blocks planning and stock reservation; HOLD blocks planning but keeps reservations. Blank remarks and day counts do not clear earlier statuses.</p>
+      {reports.length > 0 && <div className="table-scroll import-file-list" role="region" aria-label="Selected baseline reports" tabIndex={0}><table><thead><tr><th>FILE</th><th>DAILY WORKSHEET</th><th>DATE</th><th>ORDERS</th><th>STOCK</th><th/></tr></thead><tbody>{reports.map(report => <tr key={`${report.digest}-${report.sheetName}`}><td>{report.fileName}</td><td>{!preview && books[report.digest] ? <select aria-label={`Daily worksheet for ${report.fileName}`} disabled={locked} value={report.sheetName} onChange={event => changeSheet(report, event.target.value)}>{books[report.digest].sheets.filter(sheet => /^\d{1,2}(st|nd|rd|th)$/i.test(sheet.name.trim())).map(sheet => <option key={sheet.id}>{sheet.name}</option>)}</select> : report.sheetName}</td><td>{report.asOfDate}</td><td>{report.orderRows.length}</td><td>{report.stockRows.length}</td><td>{!preview && <button className="icon-button" disabled={locked} aria-label={`Remove ${report.fileName}`} onClick={() => updateReports(reports.filter(row => row !== report))}><X size={16}/></button>}</td></tr>)}</tbody></table></div>}
+      {busy && <p role="status">{reports.length ? 'Reading and comparing daily reports…' : 'Reading workbooks…'}</p>}
+      {preview && <>
+        <div className="import-summary"><div><strong>{preview.reports.length}</strong><span>Daily reports</span></div><div><strong>{preview.newOrders}</strong><span>New orders</span></div><div><strong>{preview.existingOrders}</strong><span>Existing orders · history retained</span></div></div>
+        {preview.warnings.map((warning, index) => <p className="notice warning" key={index}>{warning}</p>)}
+        {[['Formula reconciliation', preview.formulaDifferences], ['Daily stock continuity', preview.continuityDifferences], ['Ledger / Closing differences', preview.stockDifferences]].map(([title, entries]) => {
+          const rows = entries as DailyImportPreview['stockDifferences'];
+          return rows.length > 0 && <details key={String(title)} open><summary>{String(title)} · {rows.length} items</summary><div className="table-scroll import-preview" tabIndex={0}><table><thead><tr><th>DATE</th><th>MATERIAL</th><th>DIFFERENCE</th></tr></thead><tbody>{rows.map((row, index) => <tr key={index}><td>{row.date}</td><td>{row.materialCode}</td><td>{numberLabel(row.difference, row.unit === 'Bags' ? 0 : 3)} {row.unit}</td></tr>)}</tbody></table></div></details>;
+        })}
+        {preview.requiresReconcile && <div className="notice warning"><label className="checkbox-label"><input type="checkbox" checked={reconcile} disabled={locked} onChange={event => { setReconcile(event.target.checked); setConfirmed(false); }}/>Reconcile the reported Closing and record the displayed differences as stock adjustments</label><label className="field">Reconciliation reason<textarea maxLength={1000} value={reason} onChange={event => setReason(event.target.value)} placeholder="Explain the formula, continuity or ledger differences and why the reported Closing is correct"/></label></div>}
+        <p className="data-note">Read-only comparison against workspace revision {preview.revision}. Confirmation validates the whole batch again before saving.</p>
+      </>}
+      {observations.length > 0 && <><h3>Order observations · {observations.length}</h3><div className="table-scroll import-preview" role="region" aria-label="Baseline order observations" tabIndex={0}><table><thead><tr><th>REPORT DATE</th><th>DO / CUSTOMER</th><th>PRODUCT</th><th>DELIVERY</th><th>QUANTITY</th><th>REMARK</th></tr></thead><tbody>{observations.slice((page - 1) * 50, page * 50).map(({report, row}, index) => <tr key={index}><td>{report.asOfDate}</td><td><strong>{row.doNo}</strong><small>{row.soldToParty}</small></td><td><strong>{productLabel(row)}</strong><small>{row.description}</small><small>{row.materialCode}</small></td><td>{row.deliveryDate || 'Not recorded'}</td><td>{numberLabel(row.quantity, row.unit === 'Bags' ? 0 : 3)} {row.unit}</td><td><strong>{row.remark || 'Blank · retains earlier status'}</strong></td></tr>)}</tbody></table></div><div className="data-pagination"><span>{(page - 1) * 50 + 1}–{Math.min(page * 50, observations.length)} of {observations.length} observations</span><div><button className="button secondary" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Previous</button><button className="button secondary" disabled={page * 50 >= observations.length} onClick={() => setPage(value => value + 1)}>Next</button></div></div></>}
+      {preview && <label className="checkbox-label import-confirm"><input type="checkbox" checked={confirmed} disabled={locked} onChange={event => setConfirmed(event.target.checked)}/>I checked the dates, stock differences and historical remarks. Import these daily reports in date order.</label>}
+      {error && <p className="data-error import-error" role="alert">{error}</p>}
+      {toast?.error && <p className="data-error" role="alert">{toast.message}</p>}
+    </div>
+    <footer className="editor-footer">{preview && <button className="button secondary" disabled={locked} onClick={resetPreview}><ArrowLeft size={15}/>Back to selected files</button>}<div className="toolbar-spacer"/><button className="button secondary" disabled={busy || mutationLocked} onClick={closeImport}>Cancel</button>{preview ? <button className="button primary" disabled={locked || !confirmed || (preview.requiresReconcile && (!reconcile || !reason.trim()))} onClick={() => void save()}><Check size={16}/>{mutationLocked ? 'Saving…' : 'Confirm baseline import'}</button> : <button className="button primary" disabled={locked || !reports.length} onClick={() => void review()}>Review baseline import</button>}</footer>
+  </>;
 }

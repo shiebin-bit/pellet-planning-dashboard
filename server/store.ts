@@ -14,7 +14,7 @@ import type { SourceImportInput, SourceImportPreviewContext } from "../src/domai
 import type { PortableSourceData, PortableSourceDataWithReviews } from "../src/domain/sourceTypes";
 import type { PortableInventoryData, PortableWorkspaceBackupV4 } from "../src/domain/inventoryTypes";
 import type { PortableProductionProgress, PortableWorkspaceBackupV5 } from "../src/domain/productionProgress";
-import { clearInventoryData, exportInventoryData, exportSourceData, portableBackupV5, restoreInventoryData, restoreSourceData, validatePortableBackupV3, validatePortableBackupV4, validatePortableBackupV5 } from "./sourceBackup";
+import { clearInventoryData, exportBaselineHistory, exportInventoryData, exportSourceData, portableBackupV5, portableBackupV6, restoreBaselineHistory, restoreInventoryData, restoreSourceData, validatePortableBackupV3, validatePortableBackupV4, validatePortableBackupV5, validatePortableBackupV6 } from "./sourceBackup";
 import {
   applySourceImport,
   clearSourceData,
@@ -43,6 +43,10 @@ import {
 } from "./inventory";
 import { clearProductionProgress, exportProductionProgress, getProductionProgress, restoreProductionProgress } from "./productionProgress";
 import { getOperationsSummary } from "./operationsSummary";
+import type { DailyReportInput } from "../src/domain/dailyImport";
+import { importDailyReports, importSourceBatch, listSourceOrderObservations, previewDailyReports, setPlanningControl } from "./dailyImport";
+import type { PortableBaselineHistory } from "../src/domain/dailyImport";
+import type { PortableWorkspaceBackupV6 } from "../src/domain/baselineBackup";
 
 interface WorkspaceRow {
   revision: string;
@@ -53,6 +57,7 @@ interface WorkspaceRow {
   previous_source_backup: unknown | null;
   previous_inventory_backup: unknown | null;
   previous_production_progress_backup: unknown | null;
+  previous_baseline_history_backup: unknown | null;
   undo_state: unknown | null;
   undo_revision: string | null;
   updated_at: Date | string;
@@ -66,6 +71,7 @@ interface LoadedWorkspace {
   previousSourceBackup: PortableSourceDataWithReviews | null;
   previousInventoryBackup: PortableInventoryData | null;
   previousProductionProgressBackup: PortableProductionProgress | null;
+  previousBaselineHistoryBackup: PortableBaselineHistory | null;
   undoState: AppState | null;
   undoRevision: number | null;
   updatedAt: string;
@@ -89,6 +95,8 @@ export class WorkspaceStore {
   }
 
   async getOperationsSummary() { return getOperationsSummary(this.pool); }
+  async previewDailyReports(reports: DailyReportInput[]) { return previewDailyReports(this.pool, reports); }
+  async getSourceOrderObservations(id: string) { return listSourceOrderObservations(this.pool, id); }
 
   async previewSourceImport(input: SourceImportInput, context?: SourceImportPreviewContext) { return previewSourceImport(this.pool, input, context); }
   async listSourceOrders(query: URLSearchParams) { return listSourceOrders(this.pool, query); }
@@ -172,13 +180,13 @@ export class WorkspaceStore {
     return result.rows.map(row => ({ id: row.id, fileName: row.file_name, asOfDate: String(row.as_of_date).slice(0, 10), importedAt: new Date(row.imported_at).toISOString(), rowCount: row.row_count }));
   }
 
-  async getPortableBackup(): Promise<PortableWorkspaceBackupV5> {
+  async getPortableBackup(): Promise<PortableWorkspaceBackupV6> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY");
       const loaded = await loadWorkspace(client, false);
       const sourceData = await exportSourceData(client);
-      const result = portableBackupV5(loaded.state, sourceData, await exportInventoryData(client), await exportProductionProgress(client));
+      const result = portableBackupV6(loaded.state, sourceData, await exportInventoryData(client), await exportProductionProgress(client), await exportBaselineHistory(client));
       assertPortableBackupSize(result);
       await client.query("COMMIT");
       return result;
@@ -188,10 +196,12 @@ export class WorkspaceStore {
     } finally { client.release(); }
   }
 
-  async getPreviousPortableBackup(): Promise<PortableWorkspaceBackupV5 | null> {
+  async getPreviousPortableBackup(): Promise<PortableWorkspaceBackupV5 | PortableWorkspaceBackupV6 | null> {
     const current = await this.getWorkspaceWithPreviousSource();
     if (!current.previousBackup) return null;
-    const result = portableBackupV5(current.previousBackup, current.previousSourceBackup ?? emptySourceData(), current.previousInventoryBackup ?? emptyInventoryData(), current.previousProductionProgressBackup ?? emptyProductionProgress());
+    const result = current.previousBaselineHistoryBackup
+      ? portableBackupV6(current.previousBackup, current.previousSourceBackup ?? emptySourceData(), current.previousInventoryBackup ?? emptyInventoryData(), current.previousProductionProgressBackup ?? emptyProductionProgress(), current.previousBaselineHistoryBackup)
+      : portableBackupV5(current.previousBackup, current.previousSourceBackup ?? emptySourceData(), current.previousInventoryBackup ?? emptyInventoryData(), current.previousProductionProgressBackup ?? emptyProductionProgress());
     assertPortableBackupSize(result);
     return result;
   }
@@ -262,7 +272,9 @@ export class WorkspaceStore {
       let previousSourceBackup = current.previousSourceBackup;
       let previousInventoryBackup = current.previousInventoryBackup;
       let previousProductionProgressBackup = current.previousProductionProgressBackup;
+      let previousBaselineHistoryBackup = current.previousBaselineHistoryBackup;
       let productionProgressToRestore: PortableProductionProgress | null = null;
+      let baselineHistoryToRestore: PortableBaselineHistory | null = null;
       let undoState: AppState | null = null;
       let undoRevision: number | null = null;
 
@@ -272,13 +284,15 @@ export class WorkspaceStore {
             assertPortableBackupSize(command.backup);
             {
               const backup = "planning" in command.backup
-                ? (command.backup.schemaVersion === 5 ? validatePortableBackupV5(command.backup)
+                ? (command.backup.schemaVersion === 6 ? validatePortableBackupV6(command.backup)
+                  : command.backup.schemaVersion === 5 ? validatePortableBackupV5(command.backup)
                   : "inventory" in command.backup ? validatePortableBackupV4(command.backup) : validatePortableBackupV3(command.backup))
                 : null;
               const restoredPlanning = backup?.planning ?? stripSourceLinks(validateWorkspaceBackup(command.backup));
               previousSourceBackup = await exportSourceData(client);
               previousInventoryBackup = await exportInventoryData(client);
               previousProductionProgressBackup = await exportProductionProgress(client);
+              previousBaselineHistoryBackup = await exportBaselineHistory(client);
               await clearProductionProgress(client);
               await clearInventoryData(client);
               await clearSourceData(client);
@@ -286,6 +300,7 @@ export class WorkspaceStore {
               if (backup) await restoreSourceData(client, backup.sourceData);
               if (backup && "inventory" in backup) await restoreInventoryData(client, backup.inventory);
               productionProgressToRestore = backup && "productionProgress" in backup ? backup.productionProgress : emptyProductionProgress();
+              baselineHistoryToRestore = backup && "baselineHistory" in backup ? backup.baselineHistory : null;
               nextState = appendEvent(restoredPlanning, {
                 id: `event-${randomUUID()}`,
                 at: nowIso,
@@ -299,6 +314,7 @@ export class WorkspaceStore {
             previousSourceBackup = await exportSourceData(client);
             previousInventoryBackup = await exportInventoryData(client);
             previousProductionProgressBackup = await exportProductionProgress(client);
+            previousBaselineHistoryBackup = await exportBaselineHistory(client);
             await clearProductionProgress(client);
             await clearInventoryData(client);
             await clearSourceData(client);
@@ -328,6 +344,16 @@ export class WorkspaceStore {
             nextState = result.state;
             break;
           }
+          case "inventory.importDailyReports":
+            nextState = await importDailyReports(client, current.state, command.reports, command.reconcile, command.reason, nowIso);
+            isDemo = false;
+            break;
+          case "data.importBatch":
+            nextState = await importSourceBatch(client, current.state, command.inputs, nowIso);
+            break;
+          case "data.setPlanningControl":
+            nextState = await setPlanningControl(client, current.state, command.sourceOrderId, command.action, command.reason, command.stockAccounted, nowIso);
+            break;
           case "data.applySourceCorrection":
           case "data.dismissSourceCorrection": {
             const result = await executeSourceImportReview(client, current.state, command, nowIso);
@@ -348,6 +374,12 @@ export class WorkspaceStore {
           case "job.combinePending": {
             const posted=await client.query("SELECT 1 FROM inventory_ledger WHERE job_id=ANY($1::text[]) LIMIT 1",[command.jobIds]);
             if(posted.rowCount)throw new ApiError(409,"POSTED_JOB_IMMUTABLE","Cards with inventory movements cannot be combined. Correct or complete them separately.");
+            nextState=executeCommand(current.state,command,{nowIso});
+            break;
+          }
+          case "job.splitPending": {
+            const posted=await client.query("SELECT 1 FROM inventory_ledger WHERE job_id=$1 LIMIT 1",[command.jobId]);
+            if(posted.rowCount)throw new ApiError(409,"POSTED_JOB_IMMUTABLE","A card with recorded or corrected production cannot be split.");
             nextState=executeCommand(current.state,command,{nowIso});
             break;
           }
@@ -378,6 +410,10 @@ export class WorkspaceStore {
             if((command.type==="inventory.importBaseline"||command.type==="inventory.importWorkbook")&&command.input.includeBaseline)isDemo=false;
             break;
           default:
+            if (command.type === "job.start") {
+              const blocked=await client.query(`SELECT 1 FROM job_source_allocations a JOIN inventory_orders io ON io.source_order_id=a.source_order_id WHERE a.job_id=$1 AND io.planning_control<>'active' LIMIT 1`,[command.jobId]);
+              if(blocked.rowCount)throw new ApiError(409,"SOURCE_PLANNING_BLOCKED","This production card contains an order that is on hold, cancelled, or requires review.");
+            }
             nextState = executeCommand(current.state, command, { nowIso });
             if ((command.type === "job.complete" || command.type === "job.recordActual")) {
               const job = nextState.jobs.find(candidate => candidate.id === command.jobId);
@@ -409,11 +445,13 @@ export class WorkspaceStore {
         previousSourceBackup,
         previousInventoryBackup,
         previousProductionProgressBackup,
+        previousBaselineHistoryBackup,
         undoState,
         undoRevision,
         updatedAt: nowIso,
       });
       if (productionProgressToRestore) await restoreProductionProgress(client, productionProgressToRestore);
+      if (baselineHistoryToRestore) await restoreBaselineHistory(client, baselineHistoryToRestore);
       await client.query(
         `INSERT INTO command_receipts(command_id, payload_hash, applied_revision, created_at)
          VALUES ($1, $2, $3, $4::timestamptz)`,
@@ -442,7 +480,7 @@ async function loadWorkspace(client: pg.PoolClient, lock: false | "update"): Pro
   const lockClause = lock === "update" ? " FOR UPDATE" : "";
   const workspace = await client.query<WorkspaceRow>(
     `SELECT revision, is_demo, settings, catalog, previous_backup, previous_source_backup, previous_inventory_backup,
-       previous_production_progress_backup, undo_state, undo_revision, updated_at
+       previous_production_progress_backup, previous_baseline_history_backup, undo_state, undo_revision, updated_at
      FROM workspace WHERE id = 1${lockClause}`,
   );
   if (!workspace.rowCount) throw new Error("Workspace has not been initialized.");
@@ -464,6 +502,7 @@ async function loadWorkspace(client: pg.PoolClient, lock: false | "update"): Pro
     previousSourceBackup: row.previous_source_backup === null ? null : normalizePreviousSourceData(row.previous_source_backup),
     previousInventoryBackup: row.previous_inventory_backup === null ? null : row.previous_inventory_backup as PortableInventoryData,
     previousProductionProgressBackup: row.previous_production_progress_backup === null ? null : row.previous_production_progress_backup as PortableProductionProgress,
+    previousBaselineHistoryBackup: row.previous_baseline_history_backup === null ? null : row.previous_baseline_history_backup as PortableBaselineHistory,
     undoState: row.undo_state === null ? null : validateWorkspaceBackup(row.undo_state),
     undoRevision: row.undo_revision === null ? null : safeRevision(row.undo_revision),
     updatedAt: new Date(row.updated_at).toISOString(),
@@ -475,7 +514,7 @@ async function persistWorkspace(client: pg.PoolClient, value: LoadedWorkspace): 
     `UPDATE workspace SET revision = $1, is_demo = $2, settings = $3::jsonb,
        catalog = $4::jsonb, previous_backup = $5::jsonb, previous_source_backup = $6::jsonb,
        previous_inventory_backup = $7::jsonb, previous_production_progress_backup=$8::jsonb,
-       undo_state = $9::jsonb, undo_revision = $10, updated_at = $11::timestamptz WHERE id = 1`,
+       previous_baseline_history_backup=$9::jsonb, undo_state = $10::jsonb, undo_revision = $11, updated_at = $12::timestamptz WHERE id = 1`,
     [
       value.revision,
       value.isDemo,
@@ -485,6 +524,7 @@ async function persistWorkspace(client: pg.PoolClient, value: LoadedWorkspace): 
       value.previousSourceBackup === null ? null : JSON.stringify(value.previousSourceBackup),
       value.previousInventoryBackup === null ? null : JSON.stringify(value.previousInventoryBackup),
       value.previousProductionProgressBackup === null ? null : JSON.stringify(value.previousProductionProgressBackup),
+      value.previousBaselineHistoryBackup === null ? null : JSON.stringify(value.previousBaselineHistoryBackup),
       value.undoState === null ? null : JSON.stringify(value.undoState),
       value.undoRevision,
       value.updatedAt,

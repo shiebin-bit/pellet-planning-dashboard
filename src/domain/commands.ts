@@ -1,6 +1,8 @@
+import type { PortableWorkspaceBackupV6 } from './baselineBackup';
 import {
   cancelJob,
   combinePendingJobs,
+  splitPendingJob,
   copyJobBatch,
   createCatalogProduct,
   completeJob,
@@ -25,6 +27,17 @@ import type { CreateJobFromSourceInput, CreateJobFromSourcesInput, PortableWorks
 import { parseInventoryCommand, type InventoryCommand, type PortableWorkspaceBackupV4 } from './inventoryTypes';
 import { parseImportReviewCommand, type ImportReviewCommand } from './importReview';
 import type { PortableWorkspaceBackupV5 } from './productionProgress';
+import { parseDailyImportCommand, type DailyImportCommand } from './dailyImport';
+
+export interface SplitPendingGroup {
+  date: string;
+  lineId: LineId;
+  bin: string;
+  remarks: string;
+  allocations: Array<{ sourceOrderId: string; plannedQuantity: number }>;
+  /** Extra output not allocated to a customer, in whole Bags or 0.001 MT. */
+  unallocatedQuantity: number;
+}
 
 export type CopyBatchQuantity =
   | { mode: "bags"; bagCount: number }
@@ -47,6 +60,7 @@ export type CatalogUpdatePatch = Partial<CatalogCreateInput>;
 export type Command =
   | InventoryCommand
   | ImportReviewCommand
+  | DailyImportCommand
   | { type: "job.create"; input: JobInput }
   | { type: "job.update"; jobId: string; patch: Partial<JobInput> }
   | { type: "job.move"; jobId: string; toLineId: LineId; beforeJobId?: string }
@@ -63,6 +77,7 @@ export type Command =
   | { type: "job.resume"; jobId: string }
   | { type: "job.copyBatch"; sourceDate: string; targetDate: string; items: CopyBatchItem[] }
   | { type: "job.combinePending"; jobIds: string[]; bin: string; remarks: string }
+  | { type: "job.splitPending"; jobId: string; groups: SplitPendingGroup[] }
   | { type: "catalog.create"; input: CatalogCreateInput }
   | { type: "catalog.update"; productId: string; patch: CatalogUpdatePatch }
   | { type: "catalog.setActive"; productId: string; active: boolean }
@@ -71,7 +86,7 @@ export type Command =
   | { type: "settings.activateCalendar"; effectiveFrom: string; dayStart: string; availableHours: number }
   | { type: "data.import"; input: SourceImportInput }
   | { type: "data.setDeliveryStatus"; sourceOrderId: string; delivered: boolean; reason?: string }
-  | { type: "workspace.restore"; backup: AppState | PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 | PortableWorkspaceBackupV5 }
+  | { type: "workspace.restore"; backup: AppState | PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 | PortableWorkspaceBackupV5 | PortableWorkspaceBackupV6 }
   | { type: "workspace.resetDemo"; date: string }
   | { type: "workspace.undoLastMove" };
 
@@ -132,6 +147,8 @@ export function executeCommand(
       );
     case "job.combinePending":
       return combinePendingJobs(state, command.jobIds, command.bin, command.remarks, context.nowIso ?? new Date().toISOString());
+    case "job.splitPending":
+      return splitPendingJob(state, command.jobId, command.groups, context.nowIso ?? new Date().toISOString());
     case "catalog.create":
       return createCatalogProduct(state, command.input, context.nowIso ?? new Date().toISOString());
     case "catalog.update":
@@ -159,6 +176,26 @@ export function parseCommand(value: unknown): Command {
   const source = object(value, "command");
   const type = text(source.type, "command.type", 80);
   switch (type) {
+    case 'inventory.importDailyReports':
+    case 'data.importBatch':
+    case 'data.setPlanningControl':
+      return parseDailyImportCommand(value);
+    case 'job.splitPending': {
+      exact(source, ['type','jobId','groups'], 'command');
+      const groups = array(source.groups, 'command.groups', 500).map((value,index) => {
+        const path = `command.groups[${index}]`, group = object(value,path);
+        exact(group,['date','lineId','bin','remarks','allocations','unallocatedQuantity'],path);
+        const allocations = array(group.allocations,`${path}.allocations`,500).map((value,n) => {
+          const row = object(value,`${path}.allocations[${n}]`);
+          exact(row,['sourceOrderId','plannedQuantity'],`${path}.allocations[${n}]`);
+          return {sourceOrderId:reference(row.sourceOrderId,`${path}.allocations[${n}].sourceOrderId`),plannedQuantity:finite(row.plannedQuantity,`${path}.allocations[${n}].plannedQuantity`,Number.EPSILON)};
+        });
+        if (new Set(allocations.map(row=>row.sourceOrderId)).size!==allocations.length) throw new Error(`${path} contains duplicate orders.`);
+        return {date:date(group.date,`${path}.date`),lineId:lineId(group.lineId,`${path}.lineId`),bin:string(group.bin,`${path}.bin`,200),remarks:string(group.remarks,`${path}.remarks`,1000),allocations,unallocatedQuantity:finite(group.unallocatedQuantity,`${path}.unallocatedQuantity`,0)};
+      });
+      if(groups.length<2)throw new Error('Choose at least two split cards.');
+      return {type,jobId:id(source.jobId,'command.jobId'),groups};
+    }
     case "job.create":
       exact(source, ["type", "input"], "command");
       return { type, input: jobInput(source.input, "command.input", false) as JobInput };
@@ -316,7 +353,7 @@ export function parseCommand(value: unknown): Command {
       return parseImportReviewCommand(value);
     case "workspace.restore":
       exact(source, ["type", "backup"], "command");
-      if (plainPortableV3(source.backup)) return { type, backup: source.backup as unknown as PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 | PortableWorkspaceBackupV5 };
+      if (plainPortableV3(source.backup)) return { type, backup: source.backup as unknown as PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 | PortableWorkspaceBackupV5 | PortableWorkspaceBackupV6 };
       return { type, backup: validateWorkspaceBackup(source.backup) };
     case "workspace.resetDemo":
       exact(source, ["type", "date"], "command");
@@ -538,8 +575,10 @@ function sha256(value: unknown, path: string): string {
 function plainPortableV3(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const source = value as Record<string, unknown>;
-  if (source.schemaVersion !== 3 && source.schemaVersion !== 4 && source.schemaVersion !== 5) return false;
-  exact(source, source.schemaVersion === 5
+  if (source.schemaVersion !== 3 && source.schemaVersion !== 4 && source.schemaVersion !== 5 && source.schemaVersion !== 6) return false;
+  exact(source, source.schemaVersion === 6
+    ? ["schemaVersion", "exportedAt", "planning", "sourceData", "inventory", "productionProgress", "baselineHistory"]
+    : source.schemaVersion === 5
     ? ["schemaVersion", "exportedAt", "planning", "sourceData", "inventory", "productionProgress"]
     : source.schemaVersion === 4
       ? ["schemaVersion", "exportedAt", "planning", "sourceData", "inventory"]

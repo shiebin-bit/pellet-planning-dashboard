@@ -2,6 +2,7 @@ import { readJobProduction } from '../lib/inventoryApi';
 import { getCompatiblePendingJobs, getJobSourceAllocations } from '../domain/jobSources';
 import { ProductionOrderBreakdown } from './ProductionOrderBreakdown';
 import { CombinePlanningDialog } from './CombinePlanningDialog';
+import { SplitPlanningDialog } from './SplitPlanningDialog';
 import './CombinedProduction.css';
 import { productLabel } from '../lib/productLabel';
 import { useEffect, useRef, useState } from 'react';
@@ -34,6 +35,7 @@ export function JobDrawer() {
   const [showOutput,setShowOutput]=useState(false);
   const [outputValid,setOutputValid]=useState(false);
   const [showCombine,setShowCombine]=useState(false);
+  const [showSplit,setShowSplit]=useState(false);
   const outputToggle=useRef<HTMLButtonElement>(null);
   const receiptInput=useRef<HTMLInputElement>(null);
   const combineToggle=useRef<HTMLButtonElement>(null);
@@ -45,10 +47,10 @@ export function JobDrawer() {
   useEffect(()=>{
     if(!job)return;
     setToLine(job.lineId);setBeforeId('');setShowMove(false);setReviewMove(false);setConfirmCancel(false);
-    setShowIssue(false);setIssueReason('');setShowOutput(false);setShowCombine(false);
+    setShowIssue(false);setIssueReason('');setShowOutput(false);setShowCombine(false);setShowSplit(false);
   },[job?.id]);
   useEffect(()=>{
-    if(!job||showCombine||reviewMove)return;
+    if(!job||showCombine||showSplit||reviewMove)return;
     if(restoreCombineFocus.current){combineToggle.current?.focus();restoreCombineFocus.current=false;}
     else {previousFocus.current=document.activeElement as HTMLElement;closeRef.current?.focus();}
     const originalOverflow=document.body.style.overflow;document.body.style.overflow='hidden';
@@ -63,7 +65,7 @@ export function JobDrawer() {
     };
     window.addEventListener('keydown',key);
     return()=>{document.body.style.overflow=originalOverflow;window.removeEventListener('keydown',key);previousFocus.current?.focus();};
-  },[job?.id,showCombine,reviewMove]);
+  },[job?.id,showCombine,showSplit,reviewMove]);
   if(!job)return null;
   const allocations=getJobSourceAllocations(job);
   const pending=job.status==='pending';
@@ -81,6 +83,7 @@ export function JobDrawer() {
     setShowIssue(false);setIssueReason('');setShowOutput(false);resolveConflict();
   };
   if(showCombine)return <CombinePlanningDialog anchorJobId={job.id} onClose={()=>{restoreCombineFocus.current=true;setShowCombine(false);}} onSaved={id=>{setShowCombine(false);openJob(id);}}/>;
+  if(showSplit)return <SplitPlanningDialog job={job} onClose={()=>setShowSplit(false)} onSaved={()=>{setShowSplit(false);closeJob();}}/>;
   if(reviewMove)return <MoveImpactDialog input={{jobId:job.id,toLineId:toLine,...(beforeId?{beforeJobId:beforeId}:{})}} onClose={()=>{setReviewMove(false);requestAnimationFrame(()=>drawerRef.current?.querySelector<HTMLButtonElement>('.drawer-move-form .button')?.focus());}} onSaved={()=>{setReviewMove(false);setShowMove(false);}}/>;
   return <div className="drawer-layer"><button className="drawer-scrim" aria-label="Close production details" disabled={mutationLocked} onClick={closeJob}/><aside className={'job-drawer'+(allocations.length ? ' has-order-allocations' : '')} ref={drawerRef} role="dialog" aria-modal="true" aria-labelledby="drawer-title">
     <div className="drawer-top"><span>PRODUCTION DETAILS</span><button ref={closeRef} className="icon-button" disabled={mutationLocked} onClick={closeJob} aria-label="Close production details"><X size={21}/></button></div>
@@ -92,6 +95,8 @@ export function JobDrawer() {
       {job.issue&&<section className="issue-banner" aria-label="Reported production issue" inert={mutationLocked||hasConflict}><div><AlertTriangle size={19}/><strong>Production issue</strong><StatusBadge status={job.status} paused={result.isPaused}/></div><p>{job.issue.reason}</p><small>Reported {fullDateTime(job.issue.reportedAt)}</small><button className="button secondary full-width" onClick={()=>commit({type:'job.resolveIssue',jobId:job.id},'Issue resolved. Original production status retained.')}><Check size={15}/>Resolve issue</button></section>}
       {job.binNeedsReview&&<div className="bin-review-box" inert={mutationLocked||hasConflict}><AlertTriangle size={18}/><div><strong>Review the destination bin</strong><p>This task changed production line. Confirm that bin {job.bin||'—'} is suitable for {job.lineId}.</p><button className="text-link" onClick={()=>commit({type:'job.confirmBin',jobId:job.id},'Destination bin confirmed.')}><Check size={14}/>Confirm bin assignment</button></div></div>}
       {allocations.length > 0 ? <ProductionOrderBreakdown key={job.id+'-'+allocations.length} job={job} orderOutput={orderOutput} combineCount={combineCount} combineRef={combineToggle} onCombine={()=>setShowCombine(true)}/> : <div className="drawer-volume"><span>{numberLabel(job.quantityMt,2)}<small>MT</small></span><div><Package size={16}/>{job.mode==='bags'?numberLabel(job.bagCount||0,0)+' bags':'Bulk production'}</div></div>}
+      {pending&&<button className="button secondary drawer-split-action" disabled={mutationLocked||hasConflict} onClick={()=>setShowSplit(true)}>Split card / quantities</button>}
+      {job.derivedFromJobId&&<p className="data-note">Split from an earlier production card. <button className="text-link" onClick={()=>openJob(job.derivedFromJobId!)}>View original card</button></p>}
       <div className="detail-grid"><Detail label="ORDER REFERENCE" value={allocations.length > 1 ? `${allocations.length} orders combined` : job.orderNo||'—'}/><Detail label="DESTINATION BIN" value={job.bin||'Not assigned'}/><Detail label="PRODUCTION RATE" value={numberLabel(job.rate)+' MT / hr'}/><Detail label="PRODUCTION TIME" value={durationLabel(job.durationMinutes)}/></div>
       <section className="drawer-section"><div className="drawer-section-title"><CalendarDays size={16}/><h3>Planned schedule</h3>{job.overflow&&<span className="pill amber">Carry-over</span>}</div>
         {job.plannedStart?<><div className="planned-time-range"><div><span>START</span><strong>{timeLabel(job.plannedStart)}</strong><small>{dateLabel(toDateTimeInput(job.plannedStart).slice(0,10),true)}</small></div><ArrowRight size={20}/><div><span>END</span><strong>{timeLabel(job.plannedEnd)}</strong><small>{dateLabel(toDateTimeInput(job.plannedEnd).slice(0,10),true)}</small></div></div><div className="schedule-breakdown"><span>Changeover before this task</span><strong>{durationLabel(job.changeoverMinutes,true)}</strong></div>{job.segments.filter(segment=>segment.kind==='production').length>1&&<p className="field-help">Production is split around unavailable time. All segments belong to this task.</p>}</>:<p className="subtle-empty">Add a quantity to calculate the planned time.</p>}

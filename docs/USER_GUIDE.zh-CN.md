@@ -81,7 +81,7 @@ Daily stock 的 **Enter physical count** 会立即打开盘点弹窗，载入所
 
 Settings → **Backup & recovery** → Download backup 下载整个 workspace JSON。Restore JSON backup 会先预览，再由 Replace workspace 确认替换；它不会合并资料。替换或数据库版 Reset demo 前的一份 workspace 可以下载恢复，但只保留最近一次。
 
-数据库新版备份为 version 5，包含排产、Orders、库存和完整流水；离线版为 version 2，包含排产及产品清单。旧版 version 1 仍能读取，但没有产品清单，恢复后清单为空；预览会明确提醒。恢复前应下载当前备份。
+数据库新版备份为 version 6，包含排产、Orders、库存和完整流水；离线版为 version 2，包含排产及产品清单。旧版 version 1 仍能读取，但没有产品清单，恢复后清单为空；预览会明确提醒。恢复前应下载当前备份。
 
 旧离线资料：在原本浏览器、原本 HTML 路径打开 → 下载 JSON → 在数据库版导入。不会自动迁移。
 
@@ -118,14 +118,14 @@ Orders 表格右侧的 Plan（完整操作名称为 Plan production）或 Planni
 
 四条线默认每天 07:00–19:00。Settings → Workspace 可修改 Planning day starts 和 Daily available hours，画面会预览结束时间，跨午夜时显示 +1 day。按 Save settings 后，从服务器当前马来西亚日期开始采用新工时，重算今天及之后未开始的排程；当天排不下的生产延到下一个工作时段。较早排产日期的计划沿用旧班次，已开始、暂停、完成的计划及实际时间保留。保存工时不会增删卡片或改变数量。Day 显示当班，Full plan 显示跨日分段。排产日期不会因队列延后而被改写，请同时查看计算后的开始日期。
 
-数据库 Download backup 生成版本 5，包含排产、Orders 订单、导入批次、原始版本、库存及完整流水。旧版仍可读取；恢复前会提示缺少的订单、产品清单或库存资料，并保留上一份工作区供下载。含订单或库存的备份须在数据库版恢复。
+数据库 Download backup 生成版本 6，包含排产、Orders 订单、导入批次、原始版本、库存及完整流水。旧版仍可读取；恢复前会提示缺少的订单、产品清单或库存资料，并保留上一份工作区供下载。含订单或库存的备份须在数据库版恢复。
 
 每次导入都应核对文件日期、数量／单位及变更预览，确认后才保存。公开仓库和自动测试只使用虚构工作簿。
 
 
 ## 库存与订单进度
 
-Orders 页面专门查看 Orders；左侧独立的 Stock 页面包含 Stock 和 Daily stock 两个标签。两个页面都可按 Import Excel 导入 daily stock 工作簿：订单取自 bag order、bulk order；首次以日期页 Closing 建立库存基准。系统只读数据，不执行宏；Packing bin 汇总不作为可分配库存。
+Orders 页面专门查看 Orders；左侧独立的 Stock 页面包含 Stock 和 Daily stock 两个标签。两个页面都可按 Import Excel，明确选择 Baseline import（26th／27th 等自制日期表）或 SAP orders（bag order／bulk order）。空台账首次以 Opening 加每日汇总变动建立库存；已有台账时保存原日报，只有确认差异及原因后才做盘点调整。系统只读数据，不执行宏；Packing bin 汇总不作为可分配库存。
 
 Orders 分开显示订单量、现货预留、累计生产、已取货、仍需生产和已排未入库数量。历史 DONE 表示已备齐，OUT 表示已取走；它们不会再次增加或扣减基准库存。Medication、FMR／OMED 后续由人工维护，SAP 再导入不会覆盖。
 
@@ -137,7 +137,7 @@ Orders、Stock 和 Daily stock 的产品主标题统一为 **5220 · 25kg Bags**
 
 Stock 的标准 Make for stock 库存低于目标时，在 Available 下显示 **Short X Bags／MT**，缺口按「安全库存 − 可用库存」计算。药物／FMR 版本不会混入标准补库存缺口。首次载入显示 Loading，失败时可按 Retry loading stock；刷新期间显示上次成功读取的余额及更新提示，不会把尚未载入的资料当成零或未建立基准。
 
-Daily stock 可选日期查看 Opening、Production、Received、Return、Rework、Issue、Adjustment、Closing，并按 Enter physical count 输入盘点数量及原因，预览差异后确认。后续库存 Excel 导入默认只添加新订单；如需盘点对账，勾选 Reconcile physical Closing，核对每项差异后确认，不会覆盖原流水。
+Daily stock 可选日期查看 Opening、Production、Received、Return、Rework、Issue、Adjustment、Closing，并按 Enter physical count 输入盘点数量及原因，预览差异后确认。SAP orders 只添加新订单；Baseline import 会保存日期表原始 Remark 和每日库存。盘点差异须勾选确认并填写原因，生成调整而不覆盖原流水。
 
 切换 Daily stock 日期时，先隐藏旧日期资料，等待新日期完成载入；读取失败可直接重试。若只是产品说明无法读取，日报数量仍按完整 material code 显示，可用 Retry product details 重新取得说明。
 
@@ -183,4 +183,23 @@ Planning 的 Now 线表示当前马来西亚时间，只在所查看的时间范
 
 Excel 重复订单仍不会自动覆盖。差异保存于 Orders → **Import review queue**：打开记录，对照 Current 与 Imported candidate，勾选已核对字段，填写原因，再 Apply selected fields；不采用的差异可填写原因后 Dismiss review。DO、完整 Material code、单位和受保护字段不可覆盖。已有预留／排程／实际生产／取货时，不允许直接改订单数量。审核更正新增来源版本，历史卡片及库存流水保留原记录。
 
-数据库完整备份现在为 version 5，包含审核记录与实时进度样本；旧版本仍可恢复，但缺少的审核／进度记录会清空，恢复前会提醒并保留上一份完整工作区。离线备份仍为 version 2。
+数据库完整备份现在为 version 6，包含审核记录与实时进度样本；旧版本仍可恢复，但缺少的审核／进度记录会清空，恢复前会提醒并保留上一份完整工作区。离线备份仍为 version 2。
+
+## 两种 Excel 导入与历史状态
+
+按 Import Excel 后先选来源，切换来源不会清掉尚未保存的文件和草稿。弹窗内容独立滚动，底部确认按钮保持可见；Cancel／Escape 关闭后回到原清单。
+
+- **Baseline import**：选择自制的26th、27th等日期表，可一次选多份文件，按日期先后预览。保留每一天的库存栏与每张订单的原始Remark。空台账的首批记录Opening和每日汇总变动；已有台账时保存原日报，确认盘点差异及原因后才生成调整，不重新加一次全天产量或扣一次全天出货。
+- **SAP orders**：读取bag order／bulk order或原有手动列映射。只添加新DO＋完整Material组合；旧单的数量、日期、人工字段、生产和交货状态保留。新出现且在文件日期前已经过期的单会先暂停排产，需核对后释放。
+
+DONE是已经备齐，OUT是已取走，CANCEL是取消，HOLD是暂缓。日期、Delivery lead和Days outstanding即使仍有数字，也不能把DONE／CANCEL变回待生产。DONE后来变空白，或旧单在最新日期表消失，都会保留并标记待核对；不会直接删除或视作已出货。HOLD保留兼容库存预留，CANCEL和缺失待核对单释放预留。订单详情的Planning control可填写原因后处理，并查看Daily report history。未知实际生产／取货时间保持未知。Historical OUT须确认库存基准已经计入；新发生的取货继续用Record collection扣库存。
+
+Stock、Daily stock和Stock policies都有All packaging／Bags／Bulk筛选，切换筛选回第一页。产品简称保留FS后完整数字及字母后缀，例如5220CCB；完整SAP Material仍可展开查看，也继续用于库存和订单匹配。
+
+## 拆分生产卡片
+
+打开未开始卡片，按**Split card / quantities**。可把不同订单分开，或把同一订单的一部分数量放到另一张卡片；每张分别选日期、产线、bin和备注。每张订单及额外补库存数量的remaining都必须为零，不能凭拆卡增加或减少数量。预览显示调整后各线负荷及结束时间。
+
+保存后原卡片保留为取消，子卡片记录来源；拆卡不会入库。已有实际产量、已开始或锁定的卡片不能拆。拆后的同订单部分可在同日同线、完整产品／包装／药物版本一致时重新Combine，数量合回同一订单明细。旧卡片资料版本不同则需先核对。操作失败或冲突保留草稿，按现有Retry connection流程重试。
+
+V6数据库备份新增每日订单观察、Planning control历史及拆卡来源。旧V1–V5备份仍可读取，恢复前会提醒缺少的新资料；务必先下载完整备份。

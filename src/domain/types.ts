@@ -46,6 +46,8 @@ export interface JobSourceAllocation {
 }
 
 export interface Job {
+  /** Immediate parent retained as a cancelled record when a pending card is split. */
+  derivedFromJobId?: string;
   inventoryItemId?: string;
   medication?: string;
   fmrOmed?: string;

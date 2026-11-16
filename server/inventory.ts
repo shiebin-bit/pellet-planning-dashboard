@@ -51,6 +51,8 @@ interface OrderRow {
   source_order_id: string; item_id: string; do_no: string; material_code: string; description: string;
   unit: InventoryUnit; due_date: string | Date; ordered_quantity_scaled: string; medication: string; fmr_omed: string;
   historical_status: "pending" | "done" | "out"; needs_review: boolean;
+  planning_control: "active" | "hold" | "cancel" | "review";
+  planning_control_reason: string | null;
 }
 
 interface BalanceRow { item_id: string; medication: string; fmr_omed: string; quantity_scaled: string }
@@ -237,22 +239,26 @@ export async function syncInventoryOrders(
     // Only the opening workbook can establish a historical state without physical postings.
     const status = applyBaselineAnnotations ? rawStatus : "pending";
     const updateAnnotatedBucket = applyBaselineAnnotations && annotation !== undefined;
+    const staleNewSap = !applyBaselineAnnotations && fields.deliveryDate < input.asOfDate;
+    const planningControl = staleNewSap || (!applyBaselineAnnotations && rawStatus !== "pending") ? "review" : "active";
     const ordered = quantityToScaled(fields.unit, fields.quantity, `${fields.doNo} ordered quantity`);
     await client.query(
       `INSERT INTO inventory_orders(source_order_id, workspace_id, item_id, due_date, ordered_quantity_scaled,
-         medication, fmr_omed, historical_status, needs_review, created_at, updated_at)
-       VALUES ($1,1,$2,$3::date,$4,$5,$6,$7,$8,$9::timestamptz,$9::timestamptz)
+         medication, fmr_omed, historical_status, needs_review, planning_control, planning_control_reason, planning_control_updated_at, created_at, updated_at)
+       VALUES ($1,1,$2,$3::date,$4,$5,$6,$7,$8,$9,$10,$11::timestamptz,$11::timestamptz,$11::timestamptz)
        ON CONFLICT (source_order_id) DO UPDATE SET
          item_id = EXCLUDED.item_id,
          due_date = CASE WHEN inventory_orders.manual_due_date THEN inventory_orders.due_date ELSE EXCLUDED.due_date END,
          ordered_quantity_scaled = EXCLUDED.ordered_quantity_scaled,
-         medication = CASE WHEN $10 AND NOT inventory_orders.manual_medication THEN EXCLUDED.medication ELSE inventory_orders.medication END,
-         fmr_omed = CASE WHEN $10 AND NOT inventory_orders.manual_fmr_omed THEN EXCLUDED.fmr_omed ELSE inventory_orders.fmr_omed END,
-         historical_status = CASE WHEN $10 THEN EXCLUDED.historical_status ELSE inventory_orders.historical_status END,
+         medication = CASE WHEN $12 AND NOT inventory_orders.manual_medication THEN EXCLUDED.medication ELSE inventory_orders.medication END,
+         fmr_omed = CASE WHEN $12 AND NOT inventory_orders.manual_fmr_omed THEN EXCLUDED.fmr_omed ELSE inventory_orders.fmr_omed END,
+         historical_status = CASE WHEN $12 THEN EXCLUDED.historical_status ELSE inventory_orders.historical_status END,
          needs_review = inventory_orders.needs_review OR EXCLUDED.needs_review,
          updated_at = EXCLUDED.updated_at
-       WHERE $11::boolean`,
-      [source.id, item.id, fields.deliveryDate, ordered, medication, fmrOmed, status, item.needs_review || (!applyBaselineAnnotations && rawStatus !== "pending"), nowIso, updateAnnotatedBucket, applyBaselineAnnotations],
+       WHERE $13::boolean`,
+      [source.id, item.id, fields.deliveryDate, ordered, medication, fmrOmed, status, item.needs_review || staleNewSap || (!applyBaselineAnnotations && rawStatus !== "pending"), planningControl,
+        planningControl === "review" ? (staleNewSap ? "New SAP order is already overdue" : "Imported SAP status requires review") : null,
+        nowIso, updateAnnotatedBucket, applyBaselineAnnotations],
     );
     await synchronizeDeliveryStatus(client, source.id, nowIso);
   }
@@ -600,7 +606,7 @@ export async function getOrderProgress(pool: pg.Pool, state: AppState): Promise<
     for (const row of rows) {
       const item = items.get(row.item_id)!; const ordered = numeric(row.ordered_quantity_scaled);
       const delivered = row.historical_status === "out" ? ordered : movementTotals.get(row.source_order_id)?.delivered ?? 0;
-      const produced = row.historical_status === "done" ? ordered : movementTotals.get(row.source_order_id)?.produced ?? 0;
+      const produced = movementTotals.get(row.source_order_id)?.produced ?? 0;
       const reserved = numeric(reservations.rows.find(value => value.source_order_id === row.source_order_id)?.quantity_scaled ?? "0");
       const scheduled = (await Promise.all(state.jobs.filter(job => jobHasSourceOrder(job,row.source_order_id) && (job.status === "pending" || job.status === "running")).map(async job => Math.max(0, jobAllocationScaled(job,row.source_order_id,item.unit) - await jobSourceProductionTotal(client, job.id,row.source_order_id))))).reduce((a,b)=>a+b,0);
       const need = row.historical_status === "done" ? 0 : orderNeedScaled(ordered, delivered, reserved);
@@ -608,7 +614,9 @@ export async function getOrderProgress(pool: pg.Pool, state: AppState): Promise<
         description: row.description, dueDate: dbDate(row.due_date), unit: row.unit, medication: row.medication, fmrOmed: row.fmr_omed,
         ordered: scaledToQuantity(row.unit, ordered), produced: scaledToQuantity(row.unit, produced), delivered: scaledToQuantity(row.unit, delivered),
         reserved: scaledToQuantity(row.unit, reserved), orderNeed: scaledToQuantity(row.unit, need), scheduledUnreceived: scaledToQuantity(row.unit, Math.max(0, scheduled)),
-        netToPlan: scaledToQuantity(row.unit, Math.max(0, need - Math.max(0, scheduled))), historicalStatus: row.historical_status, needsReview: row.needs_review || (row.historical_status === "done" && reserved < Math.max(0, ordered-delivered)) });
+        netToPlan: scaledToQuantity(row.unit, Math.max(0, need - Math.max(0, scheduled))), historicalStatus: row.historical_status,
+        needsReview: row.needs_review || row.planning_control === "review" || (row.historical_status === "done" && reserved < Math.max(0, ordered-delivered)),
+        planningControl: row.planning_control, ...(row.planning_control_reason ? { planningControlReason: row.planning_control_reason } : {}) });
     }
     await client.query("COMMIT");
     return { revision, asOfDate: malaysiaDateAt(new Date().toISOString()), orders };
@@ -627,7 +635,7 @@ export async function buildPlanningDemand(client: pg.PoolClient, state: AppState
   const result: InventoryPlanningDemandRow[] = [];
   const details:Array<{order:OrderRow;item:ItemRow;core:number;scheduled:number}>=[],coreByItem=new Map<string,number>();
   for(const order of rows){
-    if(order.historical_status!=="pending"||(selected?!selected.has(order.source_order_id):dbDate(order.due_date)>(request.demandThrough??request.toDate)))continue;
+    if(order.historical_status!=="pending"||order.planning_control!=="active"||(selected?!selected.has(order.source_order_id):dbDate(order.due_date)>(request.demandThrough??request.toDate)))continue;
     const item=items.get(order.item_id)!;if(item.unit==="Bags"&&!item.bag_weight_kg)continue;
     const ordered=numeric(order.ordered_quantity_scaled),delivered=deliveredByOrder.get(order.source_order_id)??0;
     const reserved=numeric(reservationRows.rows.find(row=>row.source_order_id===order.source_order_id)?.quantity_scaled??"0");
@@ -736,7 +744,8 @@ export async function recalculateReservations(client: pg.PoolClient, nowIso: str
     const delivered = order.historical_status === "out" ? ordered : movementTotals.get(order.source_order_id)?.delivered ?? 0;
     const remaining = Math.max(0, ordered - delivered);
     const key = bucketKey(order.item_id, order.medication, order.fmr_omed);
-    const reserved = Math.min(remaining, available.get(key) ?? 0);
+    const reservable = order.planning_control === "active" || order.planning_control === "hold";
+    const reserved = reservable ? Math.min(remaining, available.get(key) ?? 0) : 0;
     allocations.set(order.source_order_id, reserved);
     available.set(key, (available.get(key) ?? 0) - reserved);
   }
@@ -750,7 +759,7 @@ export async function recalculateReservations(client: pg.PoolClient, nowIso: str
   }
 }
 
-async function upsertWorkbookItem(client: pg.PoolClient, state: AppState, row: InventoryWorkbookInput["items"][number], nowIso: string, configure: boolean): Promise<ItemRow> {
+export async function upsertWorkbookItem(client: pg.PoolClient, state: AppState, row: InventoryWorkbookInput["items"][number], nowIso: string, configure: boolean): Promise<ItemRow> {
   const current = await findItemByMaterial(client, row.materialCode, true);
   if (current && current.unit !== row.unit) throw new ApiError(409, "INVENTORY_UNIT_CONFLICT", `${row.materialCode} is already configured as ${current.unit}.`);
   const catalogId = state.catalog.find(product => product.code.trim().toLocaleUpperCase("en-US") === row.materialCode.trim().toLocaleUpperCase("en-US"))?.id ?? current?.catalog_id ?? null;
@@ -814,7 +823,7 @@ async function allItems(client: pg.PoolClient): Promise<ItemRow[]> { return (awa
 async function allOrders(client: pg.PoolClient): Promise<OrderRow[]> { return (await client.query<OrderRow>(`SELECT io.*,o.do_no,i.material_code,i.description,i.unit FROM inventory_orders io JOIN source_orders o ON o.id=io.source_order_id JOIN inventory_items i ON i.id=io.item_id WHERE io.workspace_id=1 ORDER BY io.due_date,o.do_no,i.material_code`)).rows; }
 async function orderById(client: pg.PoolClient, id: string, lock: boolean): Promise<OrderRow> { const result = await client.query<OrderRow>(`SELECT io.*,o.do_no,i.material_code,i.description,i.unit FROM inventory_orders io JOIN source_orders o ON o.id=io.source_order_id JOIN inventory_items i ON i.id=io.item_id WHERE io.workspace_id=1 AND io.source_order_id=$1${lock ? " FOR UPDATE OF io" : ""}`, [id]); if (!result.rowCount) throw new ApiError(400,"INVENTORY_ORDER_NOT_FOUND","Inventory order not found."); return result.rows[0]; }
 
-interface MovementInput { itemId:string; medication:string; fmrOmed:string; movementType:string; quantityDeltaScaled:number; occurredOn:string; recordedAt:string; postingKey:string; sourceOrderId?:string|null; jobId?:string|null; reversesMovementId?:string|null; importId?:string|null; note?:string|null; metadata?:unknown }
+export interface MovementInput { itemId:string; medication:string; fmrOmed:string; movementType:string; quantityDeltaScaled:number; occurredOn:string; recordedAt:string; postingKey:string; sourceOrderId?:string|null; jobId?:string|null; reversesMovementId?:string|null; importId?:string|null; note?:string|null; metadata?:unknown }
 async function replayPosting(client:pg.PoolClient, postingKey:string, command:InventoryCommand):Promise<boolean>{
   const result=await client.query<{metadata:{commandFingerprint?:string}}>("SELECT metadata FROM inventory_ledger WHERE workspace_id=1 AND posting_key=$1 FOR UPDATE",[postingKey]);
   if(!result.rowCount)return false;
@@ -827,7 +836,7 @@ async function synchronizeDeliveryStatus(client:pg.PoolClient,sourceOrderId:stri
   await client.query(`UPDATE source_orders SET delivery_status=$2,delivery_source=CASE WHEN $3 THEN COALESCE(delivery_source,'manual') ELSE NULL END,
     delivery_recorded_at=CASE WHEN $3 THEN COALESCE(delivery_recorded_at,$4::timestamptz) ELSE NULL END,updated_at=$4::timestamptz WHERE id=$1`,[sourceOrderId,delivered?"delivered":"pending",delivered,nowIso]);
 }
-async function insertMovement(client:pg.PoolClient,input:MovementInput):Promise<{id:string;existing:boolean}>{
+export async function insertMovement(client:pg.PoolClient,input:MovementInput):Promise<{id:string;existing:boolean}>{
   const medication=normalizeBucketText(input.medication),fmrOmed=normalizeBucketText(input.fmrOmed);
   const existing=await client.query<any>("SELECT * FROM inventory_ledger WHERE workspace_id=1 AND posting_key=$1 FOR UPDATE",[input.postingKey]);
   if(existing.rowCount){const row=existing.rows[0];if(row.item_id!==input.itemId||row.medication!==medication||row.fmr_omed!==fmrOmed||row.movement_type!==input.movementType||numeric(row.quantity_delta_scaled)!==input.quantityDeltaScaled||dbDate(row.occurred_on)!==input.occurredOn||row.source_order_id!==(input.sourceOrderId??null)||row.job_id!==(input.jobId??null)||row.reverses_movement_id!==(input.reversesMovementId??null)||row.import_id!==(input.importId??null))throw new ApiError(409,"POSTING_KEY_CONFLICT","This posting key was already used for a different movement.");return{id:row.id,existing:true};}

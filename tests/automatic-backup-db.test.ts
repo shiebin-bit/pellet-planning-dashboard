@@ -7,14 +7,14 @@ import pg from 'pg';
 import { runMigrations } from '../server/migrate';
 import { WorkspaceStore } from '../server/store';
 import { AutomaticBackupService } from '../server/automaticBackup';
-import { validatePortableBackupV5 } from '../server/sourceBackup';
+import { validatePortableBackupV6 } from '../server/sourceBackup';
 import { createDefaultSettings } from '../src/domain/defaults';
 import type { Command } from '../src/domain/commands';
 import type { InventoryWorkbookInput } from '../src/domain/inventoryTypes';
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
 const integration = databaseUrl ? describe : describe.skip;
-integration('automatic V5 recovery against PostgreSQL', () => {
+integration('automatic V6 recovery against PostgreSQL', () => {
   it('exports real source, inventory, reviews and progress without a revision change, then restores the business graph', async () => {
     const target = new URL(databaseUrl!);
     assert.match(target.pathname.slice(1), /(^|[-_])test(?:[-_]|$)/i, 'Use a dedicated test database.');
@@ -48,13 +48,15 @@ integration('automatic V5 recovery against PostgreSQL', () => {
       await service.start(); await service.runDueBackup(); await service.close();
       assert.equal(service.getStatus().state, 'idle'); assert.equal((await store.getWorkspace()).revision, revision);
       const files = (await readdir(directory)).filter(file => file.endsWith('.json')); assert.equal(files.length, 1);
-      const saved = validatePortableBackupV5(JSON.parse(await readFile(path.join(directory, files[0]), 'utf8')));
+      const saved = validatePortableBackupV6(JSON.parse(await readFile(path.join(directory, files[0]), 'utf8')));
       assert.deepEqual(saved.planning, expected.planning); assert.deepEqual(saved.sourceData, expected.sourceData); assert.deepEqual(saved.inventory, expected.inventory); assert.deepEqual(saved.productionProgress, expected.productionProgress);
+      assert.deepEqual(saved.baselineHistory, expected.baselineHistory);
       await command({ type: 'workspace.resetDemo', date: today });
       await command({ type: 'workspace.restore', backup: saved });
       const restored = await store.getPortableBackup();
       assert.deepEqual(restored.planning.jobs, saved.planning.jobs); assert.deepEqual(restored.planning.settings, saved.planning.settings); assert.deepEqual(restored.planning.catalog, saved.planning.catalog);
       assert.deepEqual(restored.sourceData, saved.sourceData); assert.deepEqual(restored.inventory, saved.inventory); assert.deepEqual(restored.productionProgress, saved.productionProgress);
+      assert.deepEqual(restored.baselineHistory, saved.baselineHistory);
       for (const event of saved.planning.events) assert.deepEqual(restored.planning.events.find(item => item.id === event.id), event);
     } finally {
       await service?.close(); await pool.end();

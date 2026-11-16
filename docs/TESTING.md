@@ -159,3 +159,11 @@ The 4 November 2026 release includes 342 domain tests, one dependency compatibil
 Production readability checks cover consistent product/quantity/time/status order, multi-order badges, aligned allocation table columns with mobile reflow, and plain Overview labels with keyboard/outside-dismissed metric explanations. Navigation assertions use Orders while preserving the existing data route.
 
 Card-preview regressions cover late focus-induced scroll events, real page scrolling and viewport resizing. A focused card retains its accessible preview within the viewport; hover-only previews still dismiss when the page moves.
+
+## Dated-import and split regression coverage
+
+`tests/daily-import-api.test.ts` covers read-only previews, raw observations, exact anonymous stock history, sticky DONE/OUT/HOLD/CANCEL, absent-order review, stale SAP quarantine, late-file protection, zero-stock baselines, reasoned count-only reconciliation, duplicate no-op behavior and V6 validation. `tests/split-api.test.ts` verifies invalid-batch rollback, stale revisions, retry deduplication, source-quantity conservation, split lineage restore, recombination and rejection after a physical receipt.
+
+`tests/browser-baseline-split.cjs` uses fictional multi-file workbooks to exercise the single Baseline/SAP modal, preserved file drafts across mode changes, failed/retried read-only preview, keyboard/focus restoration, scrolling at1366/390/320px, packaging filters and partial-order split/recombine. No mutation suite is allowed against production8080. Real company workbook reconciliation is a separate private staged rehearsal; its files and screenshots must stay outside public Git history.
+
+Local verification on 16 November 2026 passed 352 domain tests, one dependency compatibility test, 11 backup scheduler/status tests, the complete PostgreSQL API suite and all 20 browser scripts. Additional API checks cover duplicate history after later stock activity and manual review, an established zero-stock baseline, and historical DONE/OUT without invented timestamps. The production and Docker builds pass; the runtime dependency audit reports zero vulnerabilities. A private five-day baseline was imported and restored in a separate database, with every latest Closing checked against the ledger. Real records and maintenance payloads are excluded from the public repository.

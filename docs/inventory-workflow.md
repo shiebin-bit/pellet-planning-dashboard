@@ -14,7 +14,7 @@ Orders and inventory are available in the database workspace on separate pages. 
 
 The offline `dist/index.html` remains a planning-only workspace. It does not provide the inventory tabs or PostgreSQL stock ledger.
 
-The source-file scale used for the handoff is described only as **443 order rows and 87 finished-goods stock items**. Do not put the source workbook, customer/company names, or raw DO codes in this repository, screenshots, fixtures, or public GitHub history.
+Company workbooks and raw customer/order identifiers must remain private. Use fictional fixtures in the public repository.
 
 ## Quantity and compatibility rules
 
@@ -38,40 +38,32 @@ Example: if an exact bucket has 30 units available against a 100-unit order, an 
 
 ## Daily workbook contract
 
-Use **Orders → Import Excel** in the PostgreSQL workspace. The feed adapter accepts the saved cell values of `.xlsx` and `.xlsm` workbooks; it does not run VBA, evaluate formulas, follow external links, or use scratch calculations.
+Choose **Orders → Import Excel → Baseline import** for dated company worksheets such as `26th` or `27th`. Choose **SAP orders** for `bag order` / `bulk order` exports. These modes never silently switch based on the file. The reader uses cached cell values only: no VBA, formulas or external links are executed.
 
-The workbook must contain these exact worksheet names (case and surrounding spaces are normalized):
+### Baseline import
 
-- `bag order`
-- `bulk order`
-- one dated daily-stock sheet such as `18th`
+Select one or more files and review them in ascending report-date order. R14 supplies the report date and must match the dated worksheet name. Finished-goods rows before row131 read B material, C description, D bag weight, F packaging, G Opening, H Production, I Received, J Sales return, K Rework, L Issue, M Closing and N Safety stock. Numeric safety selects MTS; PER ADVICE selects MTO; blank or unknown policies require review. Packing-bin summaries have no allocatable product detail and are excluded.
 
-### Order sheets
+Dated order rows read C DO, D delivery date, G sold-to, J ship-to, L full material, M description, P quantity, Q unit, R lead days, S Remark, T outstanding, V Medication and W FMR/OMED. U duplicates and X/Y discussion fields are excluded. A DO + full material pair identifies an order. Full material identifiers remain unchanged even when the UI shows a short FS product label.
 
-Both order sheets use the SAP core order range **A:I**. Rows start at row 2. The adapter reads the DO number, raw goods-movement status, delivery date, sold-to party, ship-to party, material code, description, delivery quantity, and sales unit from that range. A delivery quantity in a bag sheet must be an integer; bulk quantity is MT to 0.001. A DO + material pair must be unique within each order sheet. SAP item numbers are required when otherwise identical rows need to be distinguished.
+With an empty ledger, the initial batch records the first Opening and the reported daily aggregate movements. Closing is checked using exact whole bags or 0.001MT. Discrepancies require an explicit reconciliation reason and adjustment. Historical aggregate production has no fabricated job or per-order attribution. Later imports retain raw reports and only change physical stock through confirmed count adjustments; they never replay an entire day's production and dispatch.
 
-The raw status is retained with the immutable source order version. It is not replaced by the dashboard’s interpreted status labels. `DONE` and `OUT` are interpreted for inventory planning as described below.
+Each report retains immutable order observations. The latest dated projection preserves DONE/OUT, HOLD and CANCEL even when a subsequent SAP export is stale. DONE is production-ready; OUT is collected. Numeric dates and outstanding days do not prove either status. Missing actual timestamps stay unknown. A vanished DONE remark or an order absent from the latest dated report is retained for review. HOLD retains compatible stock reservations; CANCEL and review-blocked missing orders release them. A reasoned manual control action is recorded in the order details. Historical OUT requires confirmation that the baseline already accounts for its stock.
 
-### Dated daily-stock sheet
+### SAP orders
 
-The dated sheet supplies the physical baseline and historical annotations:
+SAP sheets use A:I: Delivery, raw goods movement status, Goods Issue Date, sold-to, ship-to, full Material, Description, Delivery quantity, Sales Unit. At least one recognised bag/bulk sheet must contain valid rows. The as-of date is chosen explicitly. New identities are appended; existing quantities, dates, execution status and manual fields stay intact. Changed rows enter the review queue. Missing orders are never deleted or assumed OUT. A newly seen SAP order already past due at its file date is held for verification before reservations or planning. Existing genuinely overdue demand remains eligible.
 
-- `R14` is the workbook as-of date.
-- Finished-goods rows in the first 130 rows identify the material, description, bag/bulk mode, bag weight where applicable, opening, production, received, sales return, rework, issue, and closing quantities. A numeric safety-stock value selects MTS; a blank safety-stock value leaves the item MTO and marks it for policy review.
-- `G130`, when present, is the packing-bin total. It is retained as a **reference only** and is excluded from allocatable finished-goods stock.
-- Historical annotation rows begin at row 131. The adapter reads the dated sheet’s order annotation fields (DO in column C, material in column L, remark in column S, Medication in column V, and FMR / OMED in column W). These manual Medication/FMR values are preserved on later imports and are not overwritten by a later blank feed value.
-- Columns X and Y are not part of the contract. Do not use them as scratch fields or depend on them for import behavior.
-
-The importer only needs the contract fields above. Keep any other workbook presentation, formulas, or helper cells out of the reconciliation decision.
+Import previews write nothing. Confirmation revalidates the batch under the workspace revision lock. Repeated files and network retries cannot replay inventory. Selected files and draft values stay available after a failed save or conflict.
 
 ## First import and later imports
 
-1. Confirm that the workbook has `bag order`, `bulk order`, and one dated daily sheet. Confirm the dated sheet’s `R14` date and review the order and stock counts before saving.
-2. On the first inventory import, select **Establish opening inventory from [as-of date] Closing**. This creates the physical baseline from the dated sheet and checks the baseline balance for every product/bucket.
-3. On a later import, leave the baseline option off. The import adds only new DO + full-material identities. Existing orders, source versions, raw statuses, descriptions, dates, quantities and manual fields are skipped and retained; it does **not** replace physical stock. To reconcile a later verified count, select **Reconcile physical Closing**, review the per-product ledger/count differences and confirm the reasoned adjustments.
+1. Confirm that the selected mode has its required sheets: a dated daily sheet for Baseline, or bag/bulk order sheets for SAP. Confirm the dated sheet’s `R14` date and review the order and stock counts before saving.
+2. Choose Baseline import for dated reports or SAP orders for append-only SAP exports; review the comparison.
+3. Verify the dates, historical remarks and count differences. Confirm a reason for any stock adjustment.
 4. Review **Orders** and **Stock** after the import. Resolve missing bag weights, missing policies, incompatible units, and Medication/FMR mismatches before generating a draft.
 
-The dated baseline is a count boundary. A historical `DONE` row means production was complete before tracking began; it does not create a second production receipt. A historical `OUT` row means the order was fully collected before tracking began; it does not create a dispatch or replay a historical delivery. The 18 October Closing baseline is therefore not replayed through historical `DONE`/`OUT`/other annotations.
+Historical DONE/OUT observations describe readiness and collection only. Their raw status never creates an extra production receipt or dispatch.
 
 Order import recalculates reservations in due-date and status order. Reservation is a planning allocation, not a physical movement: on-hand still includes reserved stock, while available stock excludes it.
 
@@ -104,7 +96,7 @@ The **Daily stock** tab reports one row per product and exact Medication/FMR buc
 Opening + Production + Received + Sales return - Rework - Issue + Adjustment = Closing
 ```
 
-The imported baseline day retains the reported workbook totals after the baseline balance check. Later dates are derived from posted ledger movements. Use a count adjustment when a physical count differs from the running ledger; do not re-import the same historical count as a new production or delivery event.
+Daily stock retains each dated report and its reconciliation diagnostics. Ledger movements and subsequent reasoned corrections remain auditable.
 
 ## Generate planning draft
 
@@ -123,7 +115,7 @@ After confirmation, review the Planning board and destination bins. The generate
 
 ### Portable JSON
 
-The database workspace’s **Settings → Workspace backup** download is schema version 5. It includes:
+The database workspace’s **Settings → Workspace backup** download is schema version 6. It includes:
 
 - planning cards, catalog, settings, activity, and execution history;
 - the source graph: imported workbooks, source orders, immutable source versions, and links to planning cards; and
@@ -151,7 +143,7 @@ The local Docker/PostgreSQL development connection remains on loopback port **54
 ## Data handling rules
 
 - Treat the real SAP workbook and any customer/company export as private operational data. Never commit the source workbook, `.xlsx`/`.xlsm` derivatives, raw DO codes, screenshots containing identifiers, or database dumps to public GitHub.
-- Use fictional material codes, customers, order numbers, and dates in tests and examples. The handoff documents only the generic source scale (443 orders and 87 stock items).
+- Use fictional material codes, customers, order numbers, and dates in tests and examples. The handoff excludes all raw company data).
 - Review `git status` before a commit and keep source workbooks in a protected location outside the repository. The repository’s ignored extensions are a safeguard, not permission to force-add a file.
 - No release, deployment, CI, or test-pass status is asserted by this workflow document. Use the project’s existing installation and disposable-database verification instructions when validating a change.
 

@@ -85,7 +85,7 @@ describe("production batch compatibility", () => {
     expect(result.map(item => item.id)).toEqual(["earlier", "anchor", "later"]);
   });
 
-  it("excludes duplicate source allocations within a card and source IDs already held by the anchor", () => {
+  it("excludes duplicate allocations within a card but allows matching portions of the same order", () => {
     const anchor = job("anchor", 1);
     const duplicateInside = job("duplicate-inside", 2, {
       sourceAllocations: [allocation("dup"), allocation("dup")],
@@ -95,7 +95,7 @@ describe("production batch compatibility", () => {
     });
     const valid = job("valid", 4);
     expect(getCompatiblePendingJobs([anchor, duplicateInside, duplicateAnchor, valid], anchor).map(item => item.id))
-      .toEqual(["anchor", "valid"]);
+      .toEqual(["anchor", "duplicate-anchor", "valid"]);
     expect(getCompatiblePendingJobs([valid], duplicateInside)).toEqual([]);
   });
 

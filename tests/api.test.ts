@@ -534,7 +534,7 @@ integration("PostgreSQL workspace API", () => {
 
     const backupResponse = await fetch(`${baseUrl}/api/backup`);
     const backup = await backupResponse.json();
-    assert.equal(backup.schemaVersion, 5);
+    assert.equal(backup.schemaVersion, 6);
     assert.equal(backup.sourceData.orders.length, 1);
     assert.equal(backup.planning.jobs[0].sourceOrderId, source.id);
 
