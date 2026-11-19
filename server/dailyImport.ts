@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type pg from 'pg';
-import type { DailyImportPreview, DailyReportInput, PlanningControl, PlanningControlAction, SourceOrderObservation } from '../src/domain/dailyImport';
+import type { DailyImportPreview, DailyReportInput, PlanningControl, PlanningControlAction, SourceOrderObservation, StockReportInput } from '../src/domain/dailyImport';
 import { baselineBalances, normalizeBucketText, quantityToScaled, scaledToQuantity } from '../src/domain/inventory';
 import type { InventoryWorkbookItemInput } from '../src/domain/inventoryTypes';
 import type { SourceImportInput, SourceOrderFields } from '../src/domain/sourceTypes';
@@ -9,20 +9,12 @@ import { ApiError } from './errors';
 import { insertMovement, recalculateReservations, upsertWorkbookItem } from './inventory';
 import { applySourceImport } from './sourceData';
 
-export async function previewDailyReports(db: pg.Pool | pg.PoolClient, reports: DailyReportInput[]): Promise<DailyImportPreview> {
+export async function previewDailyReports(db: pg.Pool | pg.PoolClient, reports: StockReportInput[]): Promise<DailyImportPreview> {
   const sorted = validateReports(reports);
   const revisionRow = await db.query<{ revision: string }>('SELECT revision::text FROM workspace WHERE id=1');
   const stored = await db.query<{digest:string;as_of_date:string}>("SELECT digest,as_of_date::text FROM inventory_imports WHERE workspace_id=1 AND import_mode='dated-report' AND as_of_date=ANY($1::date[])",[sorted.map(report=>report.asOfDate)]);
   const storedKeys = new Set(stored.rows.map(row=>`${row.digest}|${row.as_of_date}`));
   const fresh = sorted.filter(report=>!storedKeys.has(`${report.digest}|${report.asOfDate}`));
-  const keys = uniqueOrderKeys(sorted);
-  const existing = keys.length ? await db.query<{ do_no: string; material_code: string }>(
-    `SELECT do_no,material_code FROM source_orders
-      WHERE workspace_id=1 AND (lower(btrim(do_no)),lower(btrim(material_code))) IN
-      (SELECT lower(btrim(x.do_no)),lower(btrim(x.material_code)) FROM jsonb_to_recordset($1::jsonb) x(do_no text,material_code text))`,
-    [JSON.stringify(keys.map(([do_no, material_code]) => ({ do_no, material_code })))],
-  ) : { rows: [] } as { rows: Array<{ do_no: string; material_code: string }> };
-  const existingKeys = new Set(existing.rows.map(row => `${row.do_no.trim().toLowerCase()}\0${row.material_code.trim().toLowerCase()}`));
   const formulaDifferences: DailyImportPreview['formulaDifferences'] = [];
   const continuityDifferences: DailyImportPreview['continuityDifferences'] = [];
   const stockDifferences: DailyImportPreview['stockDifferences'] = [];
@@ -56,24 +48,22 @@ export async function previewDailyReports(db: pg.Pool | pg.PoolClient, reports: 
     if (difference) stockDifferences.push(differenceView(row, last.asOfDate, difference));
   }
   const warnings: string[] = [];
-  if(fresh.length<sorted.length)warnings.push(`${sorted.length-fresh.length} report(s) are already stored and will be skipped without changing stock or order controls.`);
+  if(fresh.length<sorted.length)warnings.push(`${sorted.length-fresh.length} stock report(s) are already stored and will be skipped without changing the inventory ledger.`);
   if (formulaDifferences.length) warnings.push(`${formulaDifferences.length} daily stock row(s) do not match their reported Closing.`);
   if (continuityDifferences.length) warnings.push(`${continuityDifferences.length} Opening value(s) do not continue from the preceding Closing.`);
   if (stockDifferences.length) warnings.push(`${stockDifferences.length} latest Closing value(s) differ from the current stock ledger.`);
   return {
     revision: Number(revisionRow.rows[0]?.revision ?? 0),
     reports: sorted.map(report => ({ asOfDate: report.asOfDate, fileName: report.fileName, sheetName: report.sheetName,
-      orderCount: report.orderRows.length, stockCount: report.stockRows.length,
-      bagCount: report.orderRows.filter(row => row.unit === 'Bags').length, bulkCount: report.orderRows.filter(row => row.unit === 'MT').length })),
-    newOrders: keys.filter(([a,b]) => !existingKeys.has(`${a.trim().toLowerCase()}\0${b.trim().toLowerCase()}`)).length,
-    existingOrders: keys.filter(([a,b]) => existingKeys.has(`${a.trim().toLowerCase()}\0${b.trim().toLowerCase()}`)).length,
+      stockCount: report.stockRows.length,
+      bagCount: report.stockRows.filter(row => row.unit === 'Bags').length, bulkCount: report.stockRows.filter(row => row.unit === 'MT').length })),
     formulaDifferences, continuityDifferences, stockDifferences,
     requiresReconcile: Boolean(formulaDifferences.length || continuityDifferences.length || stockDifferences.length), warnings,
   };
 }
 
 export async function importDailyReports(
-  client: pg.PoolClient, state: AppState, reports: DailyReportInput[], reconcile: boolean, reason: string, nowIso: string,
+  client: pg.PoolClient, state: AppState, reports: StockReportInput[], reconcile: boolean, reason: string, nowIso: string,
 ): Promise<AppState> {
   const sorted = validateReports(reports);
   const preview = await previewDailyReports(client, sorted);
@@ -101,7 +91,7 @@ export async function importDailyReports(
         initialHistory && report === sorted[0], nowIso, report.sheetName],
     );
     for (const row of report.stockRows) {
-      const item = await upsertWorkbookItem(client, next, row, nowIso, initialHistory && report === sorted[0]);
+      const item = await upsertWorkbookItem(client, next, row, nowIso, initialHistory && report === sorted[0], true);
       const values = stockValues(row);
       const calculated = baselineBalances(values.opening, values.production, values.received, values.salesReturn, values.rework, values.issue);
       const formulaDifference = values.closing - calculated;
@@ -135,13 +125,10 @@ export async function importDailyReports(
         }
       }
     }
-    next = await importDailyOrders(client, next, report, nowIso);
     previousReport=report;
   }
   if(!importedAny)return state;
-  await applyLatestProjection(client, sorted.at(-1)!.asOfDate, nowIso);
-  await recalculateReservations(client, nowIso);
-  return appendEvent(next, nowIso, 'inventory.daily-reports.imported', `Imported ${sorted.length} dated daily report${sorted.length === 1 ? '' : 's'} through ${sorted.at(-1)!.asOfDate}.`);
+  return appendEvent(next, nowIso, 'inventory.stock-reports.imported', `Imported ${sorted.length} stock report${sorted.length === 1 ? '' : 's'} through ${sorted.at(-1)!.asOfDate}.`);
 }
 
 export async function importSourceBatch(client: pg.PoolClient, state: AppState, inputs: SourceImportInput[], nowIso: string): Promise<AppState> {
@@ -183,7 +170,8 @@ export async function listSourceOrderObservations(db: pg.Pool | pg.PoolClient, s
     sourceRow: row.source_row, rawStatus: row.raw_status, effectiveStatus: row.effective_status, fields: row.fields, createdAt: new Date(row.created_at).toISOString() }));
 }
 
-async function importDailyOrders(client: pg.PoolClient, state: AppState, report: DailyReportInput, nowIso: string): Promise<AppState> {
+/** Historical fixture primitive only; public dated-report commands are stock-only. */
+async function importDailyOrders(client: pg.PoolClient, state: AppState, report: DailyReportInput & {orderRows:SourceOrderFields[]}, nowIso: string): Promise<AppState> {
   if (!report.orderRows.length) return state;
   const input: SourceImportInput = { fileName: report.fileName, sheetName: report.sheetName, digest: report.digest, asOfDate: report.asOfDate, rows: report.orderRows };
   const result = await applySourceImport(client, state, input, nowIso);
@@ -272,7 +260,7 @@ async function upsertProjectionOrder(client: pg.PoolClient, state: AppState, sou
   );
 }
 
-async function syncSapOrders(client: pg.PoolClient, input: SourceImportInput, nowIso: string): Promise<void> {
+export async function syncSapOrders(client: pg.PoolClient, input: SourceImportInput, nowIso: string): Promise<void> {
   const ids = await sourceIds(client, input.rows);
   for (const fields of input.rows) {
     const id = ids.get(orderKey(fields)); if (!id) continue;
@@ -300,7 +288,7 @@ async function movement(client:pg.PoolClient,itemId:string,row:InventoryWorkbook
     importId, note: note || `${kind} reported by ${report.fileName}.`, metadata: { datedReport: true, sheetName: report.sheetName } });
 }
 
-function validateReports(reports: DailyReportInput[]): DailyReportInput[] {
+function validateReports(reports: StockReportInput[]): StockReportInput[] {
   if (!reports.length) throw new ApiError(400, 'DAILY_REPORTS_REQUIRED', 'At least one dated report is required.');
   const sorted = reports.slice().sort((a,b) => a.asOfDate.localeCompare(b.asOfDate));
   if (new Set(sorted.map(row => row.asOfDate)).size !== sorted.length) throw new ApiError(400, 'DAILY_REPORT_DATE_DUPLICATE', 'Only one dated report may be imported for each day.');
@@ -317,7 +305,6 @@ function scaled(row:InventoryWorkbookItemInput,value:number){return quantityToSc
 function differenceView(row:InventoryWorkbookItemInput,date:string,difference:number){return{materialCode:row.materialCode,unit:row.unit,date,difference:scaledToQuantity(row.unit,difference)}}
 function stockKey(row:{materialCode:string;medication:string;fmrOmed:string}){return`${row.materialCode.trim().toUpperCase()}\0${normalizeBucketText(row.medication)}\0${normalizeBucketText(row.fmrOmed)}`}
 function orderKey(row:{doNo:string;materialCode:string}){return`${row.doNo.trim().toLowerCase()}\0${row.materialCode.trim().toLowerCase()}`}
-function uniqueOrderKeys(reports:DailyReportInput[]){const map=new Map<string,[string,string]>();for(const row of reports.flatMap(r=>r.orderRows))map.set(orderKey(row),[row.doNo,row.materialCode]);return[...map.values()]}
 function effectiveStatus(raw:string):'pending'|'done'|'out'{const token=raw.trim().toUpperCase();return token.includes('OUT')?'out':token.includes('DONE')?'done':'pending'}
 function canonicalHash(value:unknown){return createHash('sha256').update(canonical(value)).digest('hex')}
 function canonical(value:unknown):string{if(value===null||typeof value!=='object')return JSON.stringify(value);if(Array.isArray(value))return`[${value.map(canonical).join(',')}]`;const row=value as Record<string,unknown>;return`{${Object.keys(row).sort().map(k=>`${JSON.stringify(k)}:${canonical(row[k])}`).join(',')}}`}

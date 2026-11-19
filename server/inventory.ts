@@ -33,7 +33,9 @@ import type {
 } from "../src/domain/inventoryTypes";
 import type { SourceImportInput, SourceOrderFields } from "../src/domain/sourceTypes";
 import type { AppState, HistoryEvent, Job } from "../src/domain/types";
+import type { DraftCarryover } from '../src/domain/dailyPlanning';
 import { ApiError } from "./errors";
+import { applyAndPersistDraftCarryovers, assertFinalReschedulePlacements, reconcileContinuationReservation } from './dailyPlanning';
 import { applySourceImport, backfillSourceImportReviews } from "./sourceData";
 import {
   recordProductionProgressReset,
@@ -53,6 +55,10 @@ interface OrderRow {
   historical_status: "pending" | "done" | "out"; needs_review: boolean;
   planning_control: "active" | "hold" | "cancel" | "review";
   planning_control_reason: string | null;
+  admission_batch_id:string|null;
+  admission_ordinal:number|null;
+  admission_target_date:string|Date|null;
+  admission_priority_ordinal:number|null;
 }
 
 interface BalanceRow { item_id: string; medication: string; fmr_omed: string; quantity_scaled: string }
@@ -328,7 +334,7 @@ export async function executeInventoryCommand(
     case "delivery.record": return recordDelivery(client, state, command, nowIso);
     case "delivery.reverse": return reverseDelivery(client, state, command, nowIso);
     case "data.updateManualFields": return updateManualFields(client, state, command, nowIso);
-    case "planning.commitDraft": return commitDraft(client, state, command.previewRevision, command.jobs, nowIso);
+    case "planning.commitDraft": return commitDraft(client, state, command.previewRevision, command.jobs, command.carryovers??[], nowIso);
   }
 }
 
@@ -340,7 +346,7 @@ async function recordProductionReceipt(client: pg.PoolClient, state: AppState, c
   const total = quantityToScaled(item.unit, command.totalActualQuantity, "total actual quantity");
   const posted = await jobProductionTotal(client, job.id);
   if (total < posted) throw new ApiError(409, "PRODUCTION_TOTAL_DECREASED", "Use production.correctJobTotal to reduce an already posted receipt.");
-  if (total === posted) return state;
+  if (total === posted) return reconcileContinuationReservation(client,state,job.id,nowIso);
   await reconcileJobProduction(client, job, item, total, command.occurredOn ?? malaysiaDateAt(nowIso), nowIso, `production-${randomUUID()}`, `Production receipt total ${scaledToQuantity(item.unit, total)} ${item.unit}.`);
   if (progressContext.commandId) await recordProductionProgressSample(client, {
     commandId: progressContext.commandId,
@@ -353,7 +359,8 @@ async function recordProductionReceipt(client: pg.PoolClient, state: AppState, c
     source: progressContext.receiptSource ?? "operator-live",
   });
   const actualQuantityMt=item.unit==="Bags"?scaledToQuantity(item.unit,total)*(job.bagWeightKgSnapshot??item.bag_weight_kg??50)/1000:scaledToQuantity(item.unit,total);
-  const next={...state,jobs:state.jobs.map(row=>row.id===job.id&&row.status==="completed"?{...row,actualQuantityMt,updatedAt:nowIso}:row)};
+  let next={...state,jobs:state.jobs.map(row=>row.id===job.id&&row.status==="completed"?{...row,actualQuantityMt,updatedAt:nowIso}:row)};
+  next=await reconcileContinuationReservation(client,next,job.id,nowIso);
   return appendEvent(next, nowIso, "production.received", `Received production for ${job.orderNo}.`, job.id);
 }
 
@@ -370,7 +377,9 @@ async function correctProduction(client: pg.PoolClient, state: AppState, command
   await reconcileJobProduction(client,job,item,corrected,command.occurredOn??malaysiaDateAt(nowIso),nowIso,command.postingKey,command.reason,hashCanonical(command));
   if (progressContext.commandId) await recordProductionProgressReset(client, { commandId: progressContext.commandId, jobId: job.id, resetAt: nowIso, reason: command.reason });
   const actualQuantityMt=item.unit==="Bags"?scaledToQuantity(item.unit,corrected)*(job?.bagWeightKgSnapshot??item.bag_weight_kg??50)/1000:scaledToQuantity(item.unit,corrected);
-  return appendEvent({...state,jobs:state.jobs.map(row=>row.id===original.job_id&&row.status==="completed"?{...row,actualQuantityMt,updatedAt:nowIso}:row)}, nowIso, "production.corrected", `Corrected a production receipt: ${command.reason}`, original.job_id);
+  let next={...state,jobs:state.jobs.map(row=>row.id===original.job_id&&row.status==="completed"?{...row,actualQuantityMt,updatedAt:nowIso}:row)};
+  next=await reconcileContinuationReservation(client,next,job.id,nowIso);
+  return appendEvent(next, nowIso, "production.corrected", `Corrected a production receipt: ${command.reason}`, original.job_id);
 }
 
 async function correctJobProductionTotal(client:pg.PoolClient,state:AppState,command:Extract<InventoryCommand,{type:"production.correctJobTotal"}>,nowIso:string,progressContext:ProductionProgressCommandContext):Promise<AppState>{
@@ -382,7 +391,9 @@ async function correctJobProductionTotal(client:pg.PoolClient,state:AppState,com
   await reconcileJobProduction(client,job,item,corrected,command.occurredOn??malaysiaDateAt(nowIso),nowIso,command.postingKey,command.reason,hashCanonical(command));
   if(progressContext.commandId)await recordProductionProgressReset(client,{commandId:progressContext.commandId,jobId:job.id,resetAt:nowIso,reason:command.reason});
   const actualQuantityMt=item.unit==="Bags"?scaledToQuantity(item.unit,corrected)*(job.bagWeightKgSnapshot??item.bag_weight_kg??50)/1000:scaledToQuantity(item.unit,corrected);
-  return appendEvent({...state,jobs:state.jobs.map(row=>row.id===job.id&&row.status==="completed"?{...row,actualQuantityMt,updatedAt:nowIso}:row)},nowIso,"production.corrected",`Corrected a production receipt: ${command.reason}`,job.id);
+  let next={...state,jobs:state.jobs.map(row=>row.id===job.id&&row.status==="completed"?{...row,actualQuantityMt,updatedAt:nowIso}:row)};
+  next=await reconcileContinuationReservation(client,next,job.id,nowIso);
+  return appendEvent(next,nowIso,"production.corrected",`Corrected a production receipt: ${command.reason}`,job.id);
 }
 
 async function reconcileJobProduction(client:pg.PoolClient,job:Job,item:ItemRow,target:number,occurredOn:string,nowIso:string,postingKey:string,note:string,commandFingerprint?:string):Promise<void>{
@@ -460,7 +471,7 @@ async function updateManualFields(client: pg.PoolClient, state: AppState, comman
   return appendEvent(state, nowIso, "data.manual-fields.updated", `Updated manual order fields for ${order.do_no}.`);
 }
 
-async function commitDraft(client: pg.PoolClient, state: AppState, previewRevision: number, rows: InventoryDraftJob[], nowIso: string): Promise<AppState> {
+async function commitDraft(client: pg.PoolClient, state: AppState, previewRevision: number, rows: InventoryDraftJob[], carryovers:DraftCarryover[], nowIso: string): Promise<AppState> {
   // WorkspaceStore has already locked and verified expectedRevision. This second token rejects stale preview UI state.
   if (!Number.isSafeInteger(previewRevision) || previewRevision < 0) throw new ApiError(400, "INVALID_DRAFT_REVISION", "Draft revision is invalid.");
   const requestedByOrder = new Map<string, { requested: number; itemId: string; medication: string; fmrOmed: string }>();
@@ -500,9 +511,10 @@ async function commitDraft(client: pg.PoolClient, state: AppState, previewRevisi
       throw new ApiError(409, "DRAFT_ORDER_QUANTITY_CHANGED", `Order ${order.do_no} no longer has that much unplanned quantity. Refresh the draft.`);
     }
   }
-  let next = state;
+  let next = await applyAndPersistDraftCarryovers(client,state,carryovers,nowIso);
   const createdIds: string[] = [];
-  const oldSchedules = new Map(getScheduledJobs(state).map(job=>[job.id,job]));
+  const carryIds=new Set(carryovers.map(row=>row.jobId));
+  const oldSchedules = new Map(getScheduledJobs(state).filter(job=>!carryIds.has(job.id)).map(job=>[job.id,job]));
   for (let row of rows) {
     const item=await requireItem(client,row.itemId,true);
     if(item.material_code.trim().toUpperCase()!==row.materialCode.trim().toUpperCase()||item.unit!==row.unit||item.bag_weight_kg!==row.bagWeightKg)throw new ApiError(409,"DRAFT_ITEM_CHANGED","The product or bag weight changed. Refresh the draft.");
@@ -538,15 +550,36 @@ async function commitDraft(client: pg.PoolClient, state: AppState, previewRevisi
       next = { ...next, jobs: next.jobs.map(job => job.id === created.id ? row.sourceAllocations ? { ...job, sourceAllocations:allocations,createdAt:nowIso,updatedAt:nowIso } : { ...job,sourceOrderId:allocations[0].sourceOrderId,sourceOrderVersion:allocations[0].sourceOrderVersion,sourceSnapshot:allocations[0].sourceSnapshot,createdAt:nowIso,updatedAt:nowIso } : job) };
     }
   }
+  next=resequenceCommittedDraftJobs(next,createdIds,carryovers,nowIso);
   const schedules = new Map(getScheduledJobs(next).map(job => [job.id, job]));
   for(const [id,old] of oldSchedules){const current=schedules.get(id);if(current?.plannedStart!==old.plannedStart||current?.plannedEnd!==old.plannedEnd)throw new ApiError(409,"DRAFT_EXISTING_PLAN_CHANGED","The draft would change an existing card. Append it after the existing plan.");}
+  assertFinalReschedulePlacements(next,carryovers);
   for (const id of createdIds) {
     const scheduled = schedules.get(id);
     if (!scheduled || scheduled.plannedStart === null || scheduled.overflow) {
       throw new ApiError(409, "DRAFT_CAPACITY_CHANGED", "An edited draft job no longer fits the selected line and day. Adjust the draft and try again.");
     }
   }
-  return appendEvent(next, nowIso, "planning.draft.committed", `Committed ${rows.length} inventory draft job${rows.length === 1 ? "" : "s"}.`);
+  return appendEvent(next, nowIso, "planning.draft.committed", `Committed ${rows.length} inventory draft job${rows.length === 1 ? "" : "s"} and ${carryovers.length} carryover${carryovers.length === 1 ? "" : "s"}.`);
+}
+
+function resequenceCommittedDraftJobs(state:AppState,createdIds:string[],carryovers:DraftCarryover[],nowIso:string):AppState{
+  const mutableIds=new Set([...createdIds,...carryovers.filter(row=>row.kind==='reschedule').map(row=>row.jobId)]);
+  if(!mutableIds.size)return state;
+  const stableRank=new Map(state.jobs.map((job,index)=>[job.id,index]));
+  const groups=new Map<string,Job[]>();
+  for(const job of state.jobs){
+    if(!mutableIds.has(job.id))continue;
+    const key=`${job.date}\u0000${job.lineId}`,values=groups.get(key)??[];values.push(job);groups.set(key,values);
+  }
+  const sequences=new Map<string,number>();
+  for(const [key,jobs] of groups){
+    const [date,lineId]=key.split('\u0000');
+    const untouchedMax=state.jobs.filter(job=>!mutableIds.has(job.id)&&job.date===date&&job.lineId===lineId).reduce((max,job)=>Math.max(max,job.sequence),-1);
+    jobs.sort((a,b)=>Date.parse(a.notBefore??'1970-01-01T00:00:00Z')-Date.parse(b.notBefore??'1970-01-01T00:00:00Z')||(stableRank.get(a.id)??0)-(stableRank.get(b.id)??0));
+    jobs.forEach((job,index)=>sequences.set(job.id,untouchedMax+index+1));
+  }
+  return{...state,jobs:state.jobs.map(job=>{const sequence=sequences.get(job.id);return sequence===undefined?job:{...job,sequence,updatedAt:nowIso};})};
 }
 
 export async function getInventorySnapshot(pool: pg.Pool): Promise<InventorySnapshot> {
@@ -625,6 +658,8 @@ export async function getOrderProgress(pool: pg.Pool, state: AppState): Promise<
 }
 
 export async function buildPlanningDemand(client: pg.PoolClient, state: AppState, request: InventoryDraftRequest, nowIso: string): Promise<InventoryPlanningDemandRow[]> {
+  const baseline=await client.query("SELECT 1 FROM inventory_imports WHERE workspace_id=1 AND included_baseline LIMIT 1");
+  if(!baseline.rowCount)throw new ApiError(409,'STOCK_BASELINE_REQUIRED','Import a stock baseline before generating production planning.');
   const rows = await allOrders(client); const items = new Map((await allItems(client)).map(row => [row.id, row]));
   const balances = await physicalBalances(client); const reservationRows = await client.query<{ source_order_id: string; quantity_scaled: string }>("SELECT source_order_id, quantity_scaled FROM inventory_reservations");
   const postedRows = await client.query<{ job_id:string; total:string }>(`SELECT l.job_id,COALESCE(sum(CASE WHEN l.movement_type='production' THEN l.quantity_delta_scaled WHEN l.movement_type='reversal' AND original.movement_type='production' THEN l.quantity_delta_scaled ELSE 0 END),0)::text total
@@ -635,7 +670,7 @@ export async function buildPlanningDemand(client: pg.PoolClient, state: AppState
   const result: InventoryPlanningDemandRow[] = [];
   const details:Array<{order:OrderRow;item:ItemRow;core:number;scheduled:number}>=[],coreByItem=new Map<string,number>();
   for(const order of rows){
-    if(order.historical_status!=="pending"||order.planning_control!=="active"||(selected?!selected.has(order.source_order_id):dbDate(order.due_date)>(request.demandThrough??request.toDate)))continue;
+    if(!order.admission_batch_id||order.historical_status!=="pending"||order.planning_control!=="active"||(selected?!selected.has(order.source_order_id):dbDate(order.due_date)>(request.demandThrough??request.toDate)))continue;
     const item=items.get(order.item_id)!;if(item.unit==="Bags"&&!item.bag_weight_kg)continue;
     const ordered=numeric(order.ordered_quantity_scaled),delivered=deliveredByOrder.get(order.source_order_id)??0;
     const reserved=numeric(reservationRows.rows.find(row=>row.source_order_id===order.source_order_id)?.quantity_scaled??"0");
@@ -654,7 +689,7 @@ export async function buildPlanningDemand(client: pg.PoolClient, state: AppState
     const order=detail.order,item=detail.item;
     result.push({key:`order:${order.source_order_id}`,itemId:order.item_id,materialCode:order.material_code,description:order.description,
       unit:order.unit,bagWeightKg:item.bag_weight_kg,strategy:item.strategy??"mto",purpose:"mto",sourceOrderId:order.source_order_id,
-      orderNo:order.do_no,dueDate:dbDate(order.due_date),notBefore:scheduleFloor(state.settings,request.fromDate,nowIso),sourceAllocationQuantity:scaledToQuantity(order.unit,orderDemand),quantity:scaledToQuantity(order.unit,demand),medication:order.medication,fmrOmed:order.fmr_omed});
+      orderNo:order.do_no,dueDate:dbDate(order.due_date),priorityDate:dbDate(order.admission_target_date!),priorityOrdinal:order.admission_priority_ordinal!,notBefore:scheduleFloor(state.settings,request.fromDate,nowIso),sourceAllocationQuantity:scaledToQuantity(order.unit,orderDemand),quantity:scaledToQuantity(order.unit,demand),medication:order.medication,fmrOmed:order.fmr_omed});
   }
   for(const item of items.values()){
     if(item.strategy!=="mts"||item.needs_review||!item.target_quantity_scaled||(item.unit==="Bags"&&!item.bag_weight_kg))continue;
@@ -738,13 +773,16 @@ export async function recalculateReservations(client: pg.PoolClient, nowIso: str
   const movementTotals = await movementTotalsByOrder(client);
   const available = new Map(balances.map(row => [bucketKey(row.item_id, row.medication, row.fmr_omed), Math.max(0, numeric(row.quantity_scaled))]));
   const allocations = new Map<string, number>();
-  const sorted = [...orders].sort((a, b) => statusPriority(a.historical_status) - statusPriority(b.historical_status) || dbDate(a.due_date).localeCompare(dbDate(b.due_date)) || a.source_order_id.localeCompare(b.source_order_id));
+  const sorted = [...orders].sort((a, b) => statusPriority(a.historical_status) - statusPriority(b.historical_status)
+    || dbDate(a.admission_target_date??a.due_date).localeCompare(dbDate(b.admission_target_date??b.due_date))
+    || (a.admission_priority_ordinal??Number.MAX_SAFE_INTEGER)-(b.admission_priority_ordinal??Number.MAX_SAFE_INTEGER)
+    || dbDate(a.due_date).localeCompare(dbDate(b.due_date)) || a.source_order_id.localeCompare(b.source_order_id));
   for (const order of sorted) {
     const ordered = numeric(order.ordered_quantity_scaled);
     const delivered = order.historical_status === "out" ? ordered : movementTotals.get(order.source_order_id)?.delivered ?? 0;
     const remaining = Math.max(0, ordered - delivered);
     const key = bucketKey(order.item_id, order.medication, order.fmr_omed);
-    const reservable = order.planning_control === "active" || order.planning_control === "hold";
+    const reservable = Boolean(order.admission_batch_id) && (order.planning_control === "active" || order.planning_control === "hold");
     const reserved = reservable ? Math.min(remaining, available.get(key) ?? 0) : 0;
     allocations.set(order.source_order_id, reserved);
     available.set(key, (available.get(key) ?? 0) - reserved);
@@ -759,11 +797,16 @@ export async function recalculateReservations(client: pg.PoolClient, nowIso: str
   }
 }
 
-export async function upsertWorkbookItem(client: pg.PoolClient, state: AppState, row: InventoryWorkbookInput["items"][number], nowIso: string, configure: boolean): Promise<ItemRow> {
+export async function upsertWorkbookItem(client: pg.PoolClient, state: AppState, row: InventoryWorkbookInput["items"][number], nowIso: string, configure: boolean, preserveExistingPolicy = false): Promise<ItemRow> {
   const current = await findItemByMaterial(client, row.materialCode, true);
   if (current && current.unit !== row.unit) throw new ApiError(409, "INVENTORY_UNIT_CONFLICT", `${row.materialCode} is already configured as ${current.unit}.`);
   const catalogId = state.catalog.find(product => product.code.trim().toLocaleUpperCase("en-US") === row.materialCode.trim().toLocaleUpperCase("en-US"))?.id ?? current?.catalog_id ?? null;
   const id = current?.id ?? stableItemId(row.materialCode);
+  if (configure && preserveExistingPolicy && current) {
+    const target=row.targetQuantity===0?null:quantityToScaled(row.unit,row.targetQuantity,`${row.materialCode} target quantity`);
+    await client.query(`UPDATE inventory_items SET catalog_id=COALESCE($2,catalog_id),description=$3,bag_weight_kg=COALESCE(bag_weight_kg,$4),target_quantity_scaled=CASE WHEN strategy IS NULL THEN $6 ELSE target_quantity_scaled END,needs_review=CASE WHEN strategy IS NULL THEN $7 ELSE needs_review END,strategy=COALESCE(strategy,$5),updated_at=$8::timestamptz WHERE id=$1`,[id,catalogId,row.description,row.bagWeightKg,row.strategy,target,row.needsReview,nowIso]);
+    return requireItem(client,id,false);
+  }
   if (!configure) {
     if (current) {
       await client.query("UPDATE inventory_items SET catalog_id=COALESCE($2,catalog_id),description=$3,updated_at=$4::timestamptz WHERE id=$1", [id,catalogId,row.description,nowIso]);
@@ -820,8 +863,8 @@ async function findItemByMaterial(client: pg.PoolClient, materialCode: string, l
   return result.rows[0] ?? null;
 }
 async function allItems(client: pg.PoolClient): Promise<ItemRow[]> { return (await client.query<ItemRow>("SELECT * FROM inventory_items WHERE workspace_id=1 ORDER BY material_code")).rows; }
-async function allOrders(client: pg.PoolClient): Promise<OrderRow[]> { return (await client.query<OrderRow>(`SELECT io.*,o.do_no,i.material_code,i.description,i.unit FROM inventory_orders io JOIN source_orders o ON o.id=io.source_order_id JOIN inventory_items i ON i.id=io.item_id WHERE io.workspace_id=1 ORDER BY io.due_date,o.do_no,i.material_code`)).rows; }
-async function orderById(client: pg.PoolClient, id: string, lock: boolean): Promise<OrderRow> { const result = await client.query<OrderRow>(`SELECT io.*,o.do_no,i.material_code,i.description,i.unit FROM inventory_orders io JOIN source_orders o ON o.id=io.source_order_id JOIN inventory_items i ON i.id=io.item_id WHERE io.workspace_id=1 AND io.source_order_id=$1${lock ? " FOR UPDATE OF io" : ""}`, [id]); if (!result.rowCount) throw new ApiError(400,"INVENTORY_ORDER_NOT_FOUND","Inventory order not found."); return result.rows[0]; }
+async function allOrders(client: pg.PoolClient): Promise<OrderRow[]> { return (await client.query<OrderRow>(`SELECT io.*,o.do_no,i.material_code,i.description,i.unit,b.target_date admission_target_date,CASE WHEN b.id IS NULL THEN NULL ELSE (row_number() OVER(PARTITION BY b.target_date ORDER BY b.accepted_at,b.id,io.admission_ordinal)-1)::integer END admission_priority_ordinal FROM inventory_orders io JOIN source_orders o ON o.id=io.source_order_id JOIN inventory_items i ON i.id=io.item_id LEFT JOIN order_admission_batches b ON b.id=io.admission_batch_id WHERE io.workspace_id=1 ORDER BY b.target_date NULLS LAST,b.accepted_at NULLS LAST,b.id NULLS LAST,io.admission_ordinal NULLS LAST,io.due_date,o.do_no,i.material_code`)).rows; }
+async function orderById(client: pg.PoolClient, id: string, lock: boolean): Promise<OrderRow> { const result = await client.query<OrderRow>(`SELECT io.*,o.do_no,i.material_code,i.description,i.unit,b.target_date admission_target_date FROM inventory_orders io JOIN source_orders o ON o.id=io.source_order_id JOIN inventory_items i ON i.id=io.item_id LEFT JOIN order_admission_batches b ON b.id=io.admission_batch_id WHERE io.workspace_id=1 AND io.source_order_id=$1${lock ? " FOR UPDATE OF io" : ""}`, [id]); if (!result.rowCount) throw new ApiError(400,"INVENTORY_ORDER_NOT_FOUND","Inventory order not found."); return result.rows[0]; }
 
 export interface MovementInput { itemId:string; medication:string; fmrOmed:string; movementType:string; quantityDeltaScaled:number; occurredOn:string; recordedAt:string; postingKey:string; sourceOrderId?:string|null; jobId?:string|null; reversesMovementId?:string|null; importId?:string|null; note?:string|null; metadata?:unknown }
 async function replayPosting(client:pg.PoolClient, postingKey:string, command:InventoryCommand):Promise<boolean>{

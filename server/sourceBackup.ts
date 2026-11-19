@@ -8,7 +8,17 @@ import type { PortableProductionProgress, PortableWorkspaceBackupV5 } from "../s
 import { getJobSourceAllocations } from "../src/domain/jobSources";
 import { SOURCE_REVIEWABLE_FIELD_NAMES } from "../src/domain/importReview";
 import type { PortableBaselineHistory, PlanningControl } from "../src/domain/dailyImport";
-import type { PortableWorkspaceBackupV6 } from "../src/domain/baselineBackup";
+import type { PortableWorkspaceBackupV6, PortableWorkspaceBackupV7 } from "../src/domain/baselineBackup";
+import type { PortableDailyPlanning } from '../src/domain/dailyPlanning';
+
+export function validatePortableBackupV7(value:unknown):PortableWorkspaceBackupV7{
+  const root=record(value,'backup');
+  exact(root,['schemaVersion','exportedAt','planning','sourceData','inventory','productionProgress','baselineHistory','dailyPlanning'],'backup');
+  if(root.schemaVersion!==7)throw new Error('backup.schemaVersion must be 7.');
+  const legacy=validatePortableBackupV6({schemaVersion:6,exportedAt:root.exportedAt,planning:root.planning,sourceData:root.sourceData,inventory:root.inventory,productionProgress:root.productionProgress,baselineHistory:root.baselineHistory});
+  if(legacy.planning.jobs.some(job=>job.continuationPlan))throw new Error('backup.planning must not duplicate V7 continuation reservations.');
+  return{...legacy,schemaVersion:7,dailyPlanning:validatePortableDailyPlanning(root.dailyPlanning,legacy)};
+}
 
 export function validatePortableBackupV6(value: unknown): PortableWorkspaceBackupV6 {
   const root=record(value,"backup");
@@ -357,6 +367,27 @@ export async function restoreBaselineHistory(client:pg.PoolClient,data:PortableB
 
 export function portableBackupV6(planning:AppState,sourceData:PortableSourceDataWithReviews,inventory:PortableInventoryData,productionProgress:PortableProductionProgress,baselineHistory:PortableBaselineHistory,exportedAt=new Date().toISOString()):PortableWorkspaceBackupV6{
   return{schemaVersion:6,exportedAt,planning,sourceData,inventory,productionProgress,baselineHistory};
+}
+
+export function portableBackupV7(planning:AppState,sourceData:PortableSourceDataWithReviews,inventory:PortableInventoryData,productionProgress:PortableProductionProgress,baselineHistory:PortableBaselineHistory,dailyPlanning:PortableDailyPlanning,exportedAt=new Date().toISOString()):PortableWorkspaceBackupV7{return{schemaVersion:7,exportedAt,planning,sourceData,inventory,productionProgress,baselineHistory,dailyPlanning}}
+
+function validatePortableDailyPlanning(value:unknown,backup:PortableWorkspaceBackupV6):PortableDailyPlanning{
+  const root=record(value,'backup.dailyPlanning');exact(root,['admissionBatches','orderAdmissions','continuationReservations'],'backup.dailyPlanning');
+  const batches=array(root.admissionBatches,'backup.dailyPlanning.admissionBatches',100000).map((value,index)=>{const path=`backup.dailyPlanning.admissionBatches[${index}]`,row=record(value,path);exact(row,['id','targetDate','semanticDigest','acceptedAt','rowCount'],path);return{id:text(row.id,`${path}.id`,200),targetDate:date(row.targetDate,`${path}.targetDate`),semanticDigest:sha256(row.semanticDigest,`${path}.semanticDigest`),acceptedAt:timestamp(row.acceptedAt,`${path}.acceptedAt`),rowCount:integer(row.rowCount,`${path}.rowCount`,1)}});
+  unique(batches.map(row=>row.id),'admission batch id');
+  const batchIds=new Set(batches.map(row=>row.id)),sourceIds=new Set(backup.sourceData.orders.map(row=>row.id)),inventoryOrderIds=new Set(backup.inventory.orders.map(row=>row.sourceOrderId)),jobs=new Map(backup.planning.jobs.map(row=>[row.id,row]));
+  const orderAdmissions=array(root.orderAdmissions,'backup.dailyPlanning.orderAdmissions',500000).map((value,index)=>{const path=`backup.dailyPlanning.orderAdmissions[${index}]`,row=record(value,path);exact(row,['batchId','sourceOrderId','ordinal'],path);const result={batchId:text(row.batchId,`${path}.batchId`,200),sourceOrderId:text(row.sourceOrderId,`${path}.sourceOrderId`,200),ordinal:integer(row.ordinal,`${path}.ordinal`,0)};if(!batchIds.has(result.batchId)||!sourceIds.has(result.sourceOrderId)||!inventoryOrderIds.has(result.sourceOrderId))throw new Error(`${path} contains an orphan reference.`);return result;});
+  unique(orderAdmissions.map(row=>row.sourceOrderId),'order admission source order');unique(orderAdmissions.map(row=>`${row.batchId}\0${row.ordinal}`),'order admission ordinal');
+  const continuationReservations=array(root.continuationReservations,'backup.dailyPlanning.continuationReservations',100000).map((value,index)=>{
+    const path=`backup.dailyPlanning.continuationReservations[${index}]`,row=record(value,path);exact(row,['jobId','remainingQuantity','unit','date','lineId','notBefore','segments','plannedAt'],path);
+    if(row.unit!=='Bags'&&row.unit!=='MT')throw new Error(`${path}.unit is invalid.`);const unit=row.unit as 'Bags'|'MT';if(!['PM1','PM2','PM3','PM4'].includes(String(row.lineId)))throw new Error(`${path}.lineId is invalid.`);
+    const jobId=text(row.jobId,`${path}.jobId`,200),job=jobs.get(jobId);if(!job)throw new Error(`${path} contains an orphan job.`);if((job.mode==='bags')!==(unit==='Bags')||job.lineId!==row.lineId||job.status==='completed'||job.status==='cancelled')throw new Error(`${path} does not match an active original job.`);
+    const remainingQuantity=number(row.remainingQuantity,`${path}.remainingQuantity`,false),scaled=remainingQuantity*(unit==='MT'?1000:1);if(!Number.isSafeInteger(Math.round(scaled))||Math.abs(scaled-Math.round(scaled))>1e-7)throw new Error(`${path}.remainingQuantity has invalid precision.`);
+    const segments=array(row.segments,`${path}.segments`,500).map((value,segmentIndex)=>{const segmentPath=`${path}.segments[${segmentIndex}]`,segment=record(value,segmentPath);exact(segment,['jobId','lineId','kind','start','end'],segmentPath);if(segment.jobId!==jobId||segment.lineId!==row.lineId||(segment.kind!=='production'&&segment.kind!=='changeover'))throw new Error(`${segmentPath} is invalid.`);const start=number(segment.start,`${segmentPath}.start`,false),end=number(segment.end,`${segmentPath}.end`,false);if(end<=start)throw new Error(`${segmentPath} time range is invalid.`);return{jobId,lineId:row.lineId as 'PM1'|'PM2'|'PM3'|'PM4',kind:segment.kind as 'production'|'changeover',start,end};});
+    const ordered=[...segments].sort((a,b)=>a.start-b.start||a.end-b.end);if((remainingQuantity===0&&ordered.length>0)||(remainingQuantity>0&&!ordered.length)||ordered.some((segment,index)=>index>0&&segment.start<ordered[index-1].end))throw new Error(`${path}.segments do not match the reserved quantity or overlap.`);
+    return{jobId,remainingQuantity,unit,date:date(row.date,`${path}.date`),lineId:row.lineId as 'PM1'|'PM2'|'PM3'|'PM4',notBefore:timestamp(row.notBefore,`${path}.notBefore`),segments,plannedAt:timestamp(row.plannedAt,`${path}.plannedAt`)};
+  });
+  unique(continuationReservations.map(row=>row.jobId),'continuation job');return{admissionBatches:batches,orderAdmissions,continuationReservations};
 }
 
 function validatePortableBaselineHistory(value:unknown,backup:PortableWorkspaceBackupV5):PortableBaselineHistory{

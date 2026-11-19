@@ -1,3 +1,4 @@
+const { historicalFixtureCommand } = require('./historical-fixture.cjs');
 // Fictional fixtures only. These mutations require an isolated disposable database/server.
 const {chromium}=require('playwright');
 const {existsSync}=require('node:fs');
@@ -10,7 +11,7 @@ const base=process.env.BROWSER_BASE_URL;
 if(!base||process.env.BROWSER_ALLOW_REPLACE!=='1'||!['127.0.0.1','localhost','[::1]'].includes(new URL(base).hostname)||new URL(base).port==='8080')throw Error('Use an isolated loopback BROWSER_BASE_URL, never production8080, with BROWSER_ALLOW_REPLACE=1.');
 const output=path.resolve('output/playwright/table-ux');
 const json=async route=>{const r=await fetch(base+route);assert.equal(r.status,200);return r.json();};
-const command=async command=>{const w=await json('/api/workspace');const r=await fetch(base+'/api/commands',{method:'POST',headers:{'Content-Type':'application/json',Origin:base},body:JSON.stringify({expectedRevision:w.revision,commandId:randomUUID(),command})});const data=await r.json();assert.equal(r.status,200,JSON.stringify(data));return data;};
+const command=async command=>{ const fixture = await historicalFixtureCommand(base, command); if (fixture) return fixture; const w=await json('/api/workspace');const r=await fetch(base+'/api/commands',{method:'POST',headers:{'Content-Type':'application/json',Origin:base},body:JSON.stringify({expectedRevision:w.revision,commandId:randomUUID(),command})});const data=await r.json();assert.equal(r.status,200,JSON.stringify(data));return data;};
 const wait=async fn=>{for(let i=0;i<100;i++){if(await fn())return;await new Promise(r=>setTimeout(r,100));}assert.fail('Timed out waiting for UI state');};
 const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kuala_Lumpur'}).format(new Date());
 const baselineDate=new Date(Date.parse(today+'T12:00:00Z')-86400000).toISOString().slice(0,10);

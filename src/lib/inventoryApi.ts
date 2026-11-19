@@ -15,4 +15,4 @@ export const readDailyStock = (date: string) => inventoryRequest<InventoryDailyS
 export const readOrderJournal = (id: string) => inventoryRequest<InventoryOrderJournalRow[]>(`/api/inventory/orders/${encodeURIComponent(id)}/journal`);
 export const readLedger = (itemId: string) => inventoryRequest<InventoryLedgerEntry[]>(`/api/inventory/ledger?itemId=${encodeURIComponent(itemId)}`);
 export const previewInventoryDraft = (request: InventoryDraftRequest) => inventoryRequest<InventoryDraftPreview>('/api/inventory/draft', request);
-export const previewDailyReports = (reports: DailyReportInput[]) => inventoryRequest<DailyImportPreview>('/api/inventory/daily-import/preview', { reports });
+export const previewDailyReports = (reports: DailyReportInput[]) => inventoryRequest<DailyImportPreview>('/api/inventory/daily-import/preview', { reports:reports.map(report=>({fileName:report.fileName,digest:report.digest,sheetName:report.sheetName,asOfDate:report.asOfDate,stockRows:report.stockRows})) });

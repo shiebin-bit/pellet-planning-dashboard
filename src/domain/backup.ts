@@ -16,6 +16,7 @@ import {
   type Settings,
 } from "./types";
 import { getCalendarForDate, getRate, getScheduledJobs } from "./engine";
+import { validateLinePreferences } from './linePreferences';
 
 const MAX_BACKUP_CHARACTERS = 64 * 1024 * 1024;
 const MAX_JOBS = 10_000;
@@ -40,7 +41,7 @@ const JOB_KEYS = [
   "description", "bin", "mode", "bagCount", "quantityMt", "status",
   "remarks", "actualStart", "actualEnd", "actualQuantityMt",
   "completionNote", "binNeedsReview", "createdAt", "updatedAt",
-  "lockedSegments", "issue",
+  "lockedSegments", "continuationPlan", "issue",
   "pauseIntervals",
   "sourceOrderId", "sourceOrderVersion", "sourceSnapshot", "sourceAllocations", "bagWeightKgSnapshot",
   "inventoryItemId", "medication", "fmrOmed", "productionPurpose", "notBefore", "calendarManagedRelease", "derivedFromJobId",
@@ -186,6 +187,15 @@ function validateSchedule(state: AppState): void {
     }
     const hasLockedPlan = (job.lockedSegments?.length ?? 0) > 0;
     if (getCalendarForDate(state.settings, job.date).availableHours === 0 && !hasLockedPlan) continue;
+    // A zero continuation marker intentionally suppresses the card's obsolete
+    // automatic future plan after physical production has been posted. The
+    // card remains pending for audit and possible continuation generation, but
+    // it has no confirmed capacity until a new continuation is approved.
+    const isSuppressedPendingPlan =
+      (job.status === "pending" || job.status === "running") &&
+      job.continuationPlan?.remainingQuantityMt === 0 &&
+      job.continuationPlan.segments.length === 0;
+    if (isSuppressedPendingPlan && computed.plannedStart === null && computed.plannedEnd === null) continue;
     if (
       computed.plannedStart === null ||
       computed.plannedEnd === null ||
@@ -286,6 +296,15 @@ function validateJob(value: unknown, path: string): Job {
     result.lockedSegments = segments.map((segment, index) =>
       validateSegment(segment, `${path}.lockedSegments[${index}]`, id, lineId),
     );
+  }
+  if (hasOwn(source, "continuationPlan")) {
+    const plan = objectValue(source.continuationPlan, `${path}.continuationPlan`);
+    onlyKeys(plan, ["remainingQuantityMt", "plannedAt", "segments"], `${path}.continuationPlan`);
+    result.continuationPlan = {
+      remainingQuantityMt: numberValue(plan.remainingQuantityMt, `${path}.continuationPlan.remainingQuantityMt`, { min: 0 }),
+      plannedAt: timestampValue(plan.plannedAt, `${path}.continuationPlan.plannedAt`),
+      segments: arrayValue(plan.segments, `${path}.continuationPlan.segments`, MAX_SEGMENTS_PER_JOB).map((segment, index) => validateSegment(segment, `${path}.continuationPlan.segments[${index}]`, id, lineId)),
+    };
   }
   if (hasOwn(source, "issue")) {
     if (status !== "pending" && status !== "running") {
@@ -491,7 +510,7 @@ function validateSettings(value: unknown, path: string, allowCalendarProjectionC
   const source = objectValue(value, path);
   onlyKeys(source, [
     "siteName", "timeZone", "dayStart", "availableHours", "changeoverMinutes",
-    "bagWeightKg", "rates", "slowProductPrefixes", "slowRatePM2", "downtime", "workingHoursOverrides", "calendarHistory", "calendarCutover",
+    "bagWeightKg", "rates", "slowProductPrefixes", "slowRatePM2", "downtime", "workingHoursOverrides", "calendarHistory", "calendarCutover", "linePreferences",
   ], path);
 
   const ratesValue = objectValue(required(source, "rates", path), `${path}.rates`);
@@ -528,6 +547,7 @@ function validateSettings(value: unknown, path: string, allowCalendarProjectionC
     slowRatePM2: numberValue(required(source, "slowRatePM2", path), `${path}.slowRatePM2`, { exclusiveMin: 0 }),
     downtime,
   };
+  if (hasOwn(source, 'linePreferences')) result.linePreferences = validateLinePreferences(source.linePreferences);
   if (hasOwn(source, "calendarCutover")) {
     const cutover = objectValue(source.calendarCutover, `${path}.calendarCutover`);
     onlyKeys(cutover, ["effectiveFrom", "priorDayStart", "priorAvailableHours", "activatedAt"], `${path}.calendarCutover`);

@@ -1,3 +1,4 @@
+const { historicalFixtureCommand } = require('./historical-fixture.cjs');
 // Fictional fixtures only. Working-hours mutation tests must use the disposable test workspace.
 const { chromium } = require('playwright');
 const { existsSync } = require('node:fs');
@@ -15,7 +16,7 @@ const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }
 const addDay = count => new Date(Date.parse(`${today}T12:00:00Z`) + count * 86_400_000).toISOString().slice(0, 10);
 const planDate = addDay(2), nextDate = addDay(3), historyDate = addDay(-1);
 const json = async route => { const response = await fetch(base + route); const data = await response.json(); assert.equal(response.status, 200, JSON.stringify(data)); return data; };
-const command = async value => { const current = await json('/api/workspace'); const response = await fetch(base + '/api/commands', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ expectedRevision: current.revision, commandId: randomUUID(), command: value }) }); const data = await response.json(); assert.equal(response.status, 200, JSON.stringify(data)); return data; };
+const command = async value => { const fixture = await historicalFixtureCommand(base, value); if (fixture) return fixture;  const current = await json('/api/workspace'); const response = await fetch(base + '/api/commands', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ expectedRevision: current.revision, commandId: randomUUID(), command: value }) }); const data = await response.json(); assert.equal(response.status, 200, JSON.stringify(data)); return data; };
 const wait = async predicate => { for (let index = 0; index < 120; index += 1) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 100)); } throw Error('Working-hours state did not arrive.'); };
 const pass = message => console.log('PASS ' + message);
 
@@ -51,7 +52,7 @@ async function discardDraft(page, draft) {
     const activatedAt = new Date().toISOString();
     const settings = {
       ...backup.planning.settings,
-      dayStart: '07:00', availableHours: 12, changeoverMinutes: 0,
+      dayStart: '07:00', availableHours: 12, linePreferences: { enabled: false, defaultPreferredLines: ['PM3'], rules: [] }, changeoverMinutes: 0,
       rates: { PM1: 10, PM2: 10, PM3: 10, PM4: 10 }, slowProductPrefixes: [], downtime: [],
       calendarHistory: [{ effectiveFrom: null, dayStart: '07:00', availableHours: 12, activatedAt: null }],
     };
@@ -112,7 +113,7 @@ async function discardDraft(page, draft) {
     assert.equal(quantities.reduce((sum, value) => sum + value, 0), 280);
     const lines = await draft.locator('select[aria-label^="Line draft-"]').evaluateAll(selects => selects.map(select => select.value));
     assert.deepEqual([...new Set(lines)].sort(), ['PM1', 'PM2']);
-    const confirm = draft.getByRole('button', { name: /^Confirm \d+ cards$/ });
+    const confirm = draft.getByRole('button', { name: /^Confirm \d+ proposals$/ });
     assert.equal(await confirm.isEnabled(), true, 'Overtime within the configured line shift must be confirmable');
     await page.screenshot({ path: path.join(output, 'overtime-and-closures.png'), fullPage: true });
     await confirm.click();

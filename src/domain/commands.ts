@@ -1,4 +1,4 @@
-import type { PortableWorkspaceBackupV6 } from './baselineBackup';
+import type { PortableWorkspaceBackupV6, PortableWorkspaceBackupV7 } from './baselineBackup';
 import {
   cancelJob,
   combinePendingJobs,
@@ -86,7 +86,7 @@ export type Command =
   | { type: "settings.activateCalendar"; effectiveFrom: string; dayStart: string; availableHours: number }
   | { type: "data.import"; input: SourceImportInput }
   | { type: "data.setDeliveryStatus"; sourceOrderId: string; delivered: boolean; reason?: string }
-  | { type: "workspace.restore"; backup: AppState | PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 | PortableWorkspaceBackupV5 | PortableWorkspaceBackupV6 }
+  | { type: "workspace.restore"; backup: AppState | PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 | PortableWorkspaceBackupV5 | PortableWorkspaceBackupV6 | PortableWorkspaceBackupV7 }
   | { type: "workspace.resetDemo"; date: string }
   | { type: "workspace.undoLastMove" };
 
@@ -176,6 +176,7 @@ export function parseCommand(value: unknown): Command {
   const source = object(value, "command");
   const type = text(source.type, "command.type", 80);
   switch (type) {
+    case 'inventory.importStockReports':
     case 'inventory.importDailyReports':
     case 'data.importBatch':
     case 'data.setPlanningControl':
@@ -353,7 +354,7 @@ export function parseCommand(value: unknown): Command {
       return parseImportReviewCommand(value);
     case "workspace.restore":
       exact(source, ["type", "backup"], "command");
-      if (plainPortableV3(source.backup)) return { type, backup: source.backup as unknown as PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 | PortableWorkspaceBackupV5 | PortableWorkspaceBackupV6 };
+      if (plainPortableV3(source.backup)) return { type, backup: source.backup as unknown as PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 | PortableWorkspaceBackupV5 | PortableWorkspaceBackupV6 | PortableWorkspaceBackupV7 };
       return { type, backup: validateWorkspaceBackup(source.backup) };
     case "workspace.resetDemo":
       exact(source, ["type", "date"], "command");
@@ -575,8 +576,10 @@ function sha256(value: unknown, path: string): string {
 function plainPortableV3(value: unknown): value is Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   const source = value as Record<string, unknown>;
-  if (source.schemaVersion !== 3 && source.schemaVersion !== 4 && source.schemaVersion !== 5 && source.schemaVersion !== 6) return false;
-  exact(source, source.schemaVersion === 6
+  if (source.schemaVersion !== 3 && source.schemaVersion !== 4 && source.schemaVersion !== 5 && source.schemaVersion !== 6&&source.schemaVersion!==7) return false;
+  exact(source, source.schemaVersion === 7
+    ? ["schemaVersion", "exportedAt", "planning", "sourceData", "inventory", "productionProgress", "baselineHistory","dailyPlanning"]
+    : source.schemaVersion === 6
     ? ["schemaVersion", "exportedAt", "planning", "sourceData", "inventory", "productionProgress", "baselineHistory"]
     : source.schemaVersion === 5
     ? ["schemaVersion", "exportedAt", "planning", "sourceData", "inventory", "productionProgress"]

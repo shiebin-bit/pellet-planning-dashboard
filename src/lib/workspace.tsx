@@ -1,4 +1,4 @@
-import type { PortableWorkspaceBackupV6 } from '../domain/baselineBackup';
+import type { PortableWorkspaceBackupV6, PortableWorkspaceBackupV7 } from '../domain/baselineBackup';
 import type { PortableWorkspaceBackupV4 } from '../domain/inventoryTypes';
 import type { PortableWorkspaceBackupV5 } from '../domain/productionProgress';
 import { createContext, useContext, useState, useRef, useMemo, useEffect, useCallback } from 'react';
@@ -57,7 +57,7 @@ interface Workspace {
   undo: () => Promise<void>; canUndo: boolean; toast: { message: string; error: boolean } | null;
   notify: (message: string, error?: boolean) => void;
   resetDemo: () => Promise<boolean>; isDemo: boolean; savedAt: string | null; storageWarning: string;
-  restoreBackup: (backup: AppState | PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 | PortableWorkspaceBackupV5 | PortableWorkspaceBackupV6) => Promise<boolean>; previousBackup: AppState | null;
+  restoreBackup: (backup: AppState | PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 | PortableWorkspaceBackupV5 | PortableWorkspaceBackupV6 | PortableWorkspaceBackupV7) => Promise<boolean>; previousBackup: AppState | null;
   storageMode: 'database' | 'offline'; busy: boolean; refresh: () => Promise<void>;
   hasConflict: boolean; resolveConflict: () => void; mutationLocked: boolean;
   confirmedRetry: { nonce: number; type: Command['type'] } | null;
@@ -300,7 +300,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (saved) { setSelectedId(null); setEditor(null); setCopyDialog(null); setSourceDialog(null); setImportOpen(false); }
     return saved;
   };
-  const restoreBackup = async (backup: AppState | PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 | PortableWorkspaceBackupV5 | PortableWorkspaceBackupV6) => {
+  const restoreBackup = async (backup: AppState | PortableWorkspaceBackupV3 | PortableWorkspaceBackupV4 | PortableWorkspaceBackupV5 | PortableWorkspaceBackupV6 | PortableWorkspaceBackupV7) => {
     const saved = await commit({ type: 'workspace.restore', backup }, 'Backup restored. Your previous workspace is available to download in Settings.');
     if (saved) {
       setSelectedId(null); setEditor(null); setCopyDialog(null); setSourceDialog(null); setImportOpen(false);

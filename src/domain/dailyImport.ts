@@ -4,14 +4,16 @@ import type { SourceImportInput, SourceOrderFields } from './sourceTypes';
 export type PlanningControl = 'active' | 'hold' | 'cancel' | 'review';
 export type PlanningControlAction = 'release' | 'hold' | 'cancel' | 'historicalDone' | 'historicalOut';
 
-export interface DailyReportInput {
+export interface StockReportInput {
   fileName: string;
   digest: string;
   sheetName: string;
   asOfDate: string;
   stockRows: InventoryWorkbookItemInput[];
-  orderRows: SourceOrderFields[];
 }
+
+/** @deprecated Dated reports are stock-only. Retained as a source-compatible alias. */
+export type DailyReportInput = StockReportInput;
 
 export interface DailyImportDifference {
   materialCode: string;
@@ -22,9 +24,7 @@ export interface DailyImportDifference {
 
 export interface DailyImportPreview {
   revision: number;
-  reports: Array<{ asOfDate: string; fileName: string; sheetName: string; orderCount: number; stockCount: number; bagCount: number; bulkCount: number }>;
-  newOrders: number;
-  existingOrders: number;
+  reports: Array<{ asOfDate: string; fileName: string; sheetName: string; stockCount: number; bagCount: number; bulkCount: number }>;
   formulaDifferences: DailyImportDifference[];
   continuityDifferences: DailyImportDifference[];
   stockDifferences: DailyImportDifference[];
@@ -33,7 +33,8 @@ export interface DailyImportPreview {
 }
 
 export type DailyImportCommand =
-  | { type: 'inventory.importDailyReports'; reports: DailyReportInput[]; reconcile: boolean; reason: string }
+  | { type: 'inventory.importStockReports'; reports: StockReportInput[]; reconcile: boolean; reason: string }
+  | { type: 'inventory.importDailyReports'; reports: StockReportInput[]; reconcile: boolean; reason: string }
   | { type: 'data.importBatch'; inputs: SourceImportInput[] }
   | { type: 'data.setPlanningControl'; sourceOrderId: string; action: PlanningControlAction; reason: string; stockAccounted?: boolean };
 
@@ -61,10 +62,10 @@ export interface PortableBaselineHistory {
 export function parseDailyImportCommand(value: unknown): DailyImportCommand {
   const root = object(value, 'command');
   const type = text(root.type, 'command.type', 80);
-  if (type === 'inventory.importDailyReports') {
+  if (type === 'inventory.importStockReports' || type === 'inventory.importDailyReports') {
     exact(root, ['type', 'reports', 'reconcile', 'reason'], 'command');
     if (!Array.isArray(root.reports) || !root.reports.length || root.reports.length > 31) throw new Error('command.reports must contain between 1 and 31 daily reports.');
-    const reports = root.reports.map((entry, index) => dailyReport(entry, `command.reports[${index}]`));
+    const reports = root.reports.map((entry, index) => stockReport(entry, `command.reports[${index}]`, type === 'inventory.importDailyReports'));
     if (new Set(reports.map(row => row.asOfDate)).size !== reports.length) throw new Error('command.reports must not repeat a date.');
     for (let index = 1; index < reports.length; index++) if (reports[index - 1].asOfDate >= reports[index].asOfDate) throw new Error('command.reports must be ordered by ascending date.');
     return { type, reports, reconcile: bool(root.reconcile, 'command.reconcile'), reason: string(root.reason, 'command.reason', 1_000).trim() };
@@ -87,24 +88,24 @@ export function parseDailyImportCommand(value: unknown): DailyImportCommand {
   throw new Error(`Unsupported daily import command ${type}.`);
 }
 
-export function parseDailyPreviewRequest(value: unknown): { reports: DailyReportInput[] } {
+export function parseDailyPreviewRequest(value: unknown): { reports: StockReportInput[] } {
   const root = object(value, 'request'); exact(root, ['reports'], 'request');
   if (!Array.isArray(root.reports) || !root.reports.length || root.reports.length > 31) throw new Error('request.reports must contain between 1 and 31 daily reports.');
-  const reports = root.reports.map((entry, index) => dailyReport(entry, `request.reports[${index}]`));
+  const reports = root.reports.map((entry, index) => stockReport(entry, `request.reports[${index}]`, true));
   if (new Set(reports.map(row => row.asOfDate)).size !== reports.length) throw new Error('request.reports must not repeat a date.');
   return { reports };
 }
 
-function dailyReport(value: unknown, path: string): DailyReportInput {
-  const root = object(value, path); exact(root, ['fileName', 'digest', 'sheetName', 'asOfDate', 'stockRows', 'orderRows'], path);
+function stockReport(value: unknown, path: string, acceptLegacyEmptyOrders: boolean): StockReportInput {
+  const root = object(value, path);
+  rejectUnknown(root, ['fileName', 'digest', 'sheetName', 'asOfDate', 'stockRows', ...(acceptLegacyEmptyOrders ? ['orderRows'] : [])], path);
+  for (const key of ['fileName', 'digest', 'sheetName', 'asOfDate', 'stockRows']) if (!(key in root)) throw new Error(`${path}.${key} is required.`);
   if (!Array.isArray(root.stockRows) || !root.stockRows.length || root.stockRows.length > 1_000) throw new Error(`${path}.stockRows is invalid.`);
-  if (!Array.isArray(root.orderRows) || root.orderRows.length > 10_000) throw new Error(`${path}.orderRows is invalid.`);
+  if ('orderRows' in root && (!Array.isArray(root.orderRows) || root.orderRows.length)) throw new Error(`${path}.orderRows is no longer supported. Baseline import reads stock only.`);
   const stockRows = root.stockRows.map((row, index) => stockRow(row, `${path}.stockRows[${index}]`));
-  const orderRows = root.orderRows.map((row, index) => sourceFields(row, `${path}.orderRows[${index}]`));
   unique(stockRows.map(row => `${row.materialCode.toLowerCase()}\0${row.medication.trim().toLowerCase()}\0${row.fmrOmed.trim().toLowerCase()}`), `${path} stock bucket`);
-  unique(orderRows.map(row => `${row.doNo.toLowerCase()}\0${row.materialCode.toLowerCase()}`), `${path} order identity`);
   return { fileName: trimmed(root.fileName, `${path}.fileName`, 255), digest: sha256(root.digest, `${path}.digest`),
-    sheetName: trimmed(root.sheetName, `${path}.sheetName`, 255), asOfDate: date(root.asOfDate, `${path}.asOfDate`), stockRows, orderRows };
+    sheetName: trimmed(root.sheetName, `${path}.sheetName`, 255), asOfDate: date(root.asOfDate, `${path}.asOfDate`), stockRows };
 }
 
 function sourceImport(value: unknown, path: string): SourceImportInput {

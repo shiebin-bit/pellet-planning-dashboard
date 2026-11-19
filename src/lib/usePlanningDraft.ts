@@ -18,7 +18,7 @@ export function usePlanningDraft(onClose: () => void) {
   const [initial] = useState(() => readPlanningDraft(storage));
   const initialSaved = initial.ok ? initial.value.draft : null;
   const start = date < localDate() ? localDate() : date;
-  const [ui, setUi] = useState<PlanningDraftUiState>(() => initialSaved?.pendingCommit ? initialSaved.ui : { from: start, to: new Date(Date.parse(start + 'T12:00:00Z') + 3 * 86400000).toISOString().slice(0, 10), demandThrough: new Date(Date.parse(localDate() + 'T12:00:00Z') + 3 * 86400000).toISOString().slice(0, 10), combineSameProduct: true });
+  const [ui, setUi] = useState<PlanningDraftUiState>(() => initialSaved?.pendingCommit ? initialSaved.ui : { from: start, to: new Date(Date.parse(start + 'T12:00:00Z') + 3 * 86400000).toISOString().slice(0, 10), demandThrough: new Date(Date.parse(localDate() + 'T12:00:00Z') + 86400000).toISOString().slice(0, 10), combineSameProduct: true });
   const [stored, setStored] = useState(initialSaved);
   const storedRef = useRef(stored); storedRef.current = stored;
   const [preview, setPreview] = useState<InventoryDraftPreview | null>(initialSaved?.pendingCommit ? initialSaved.preview : null);
@@ -36,7 +36,7 @@ export function usePlanningDraft(onClose: () => void) {
   const dirty = !!preview && currentContent !== savedContent && !pending;
   useLeaveGuard('planning-draft', dirty, 'Your planning draft has changes that are not saved in this browser.');
   const now = useCurrentTime(!!preview);
-  const datePassed = jobs.some(job => job.date < localDate(new Date(now)));
+  const datePassed = [...jobs, ...(preview?.carryovers ?? [])].some(job => job.date < localDate(new Date(now)));
   const stale = !!preview && (datePassed || isPlanningDraftStale({ baseRevision: preview.revision, baseUpdatedAt } as SavedPlanningDraft, { revision, updatedAt: workspaceUpdatedAt }));
   useEffect(() => {
     const changed = (event: StorageEvent) => { if (event.key === PLANNING_DRAFT_STORAGE_KEY || event.key === null) { setCrossTab(true); setLocalStatus(''); } };

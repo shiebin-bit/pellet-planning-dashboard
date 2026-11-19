@@ -44,26 +44,28 @@ Choose **Orders → Import Excel → Baseline import** for dated company workshe
 
 Select one or more files and review them in ascending report-date order. R14 supplies the report date and must match the dated worksheet name. Finished-goods rows before row131 read B material, C description, D bag weight, F packaging, G Opening, H Production, I Received, J Sales return, K Rework, L Issue, M Closing and N Safety stock. Numeric safety selects MTS; PER ADVICE selects MTO; blank or unknown policies require review. Packing-bin summaries have no allocatable product detail and are excluded.
 
-Dated order rows read C DO, D delivery date, G sold-to, J ship-to, L full material, M description, P quantity, Q unit, R lead days, S Remark, T outstanding, V Medication and W FMR/OMED. U duplicates and X/Y discussion fields are excluded. A DO + full material pair identifies an order. Full material identifiers remain unchanged even when the UI shows a short FS product label.
+The lower order table is never read. Remark, DONE/OUT/CANCEL/HOLD, Medication and FMR/OMED there are ignored, even when malformed or missing dates. Baseline cannot create orders, update order status/reservations, or mark an order missing. Full material identity is retained for stock; short FS labels are display only.
 
 With an empty ledger, the initial batch records the first Opening and the reported daily aggregate movements. Closing is checked using exact whole bags or 0.001MT. Discrepancies require an explicit reconciliation reason and adjustment. Historical aggregate production has no fabricated job or per-order attribution. Later imports retain raw reports and only change physical stock through confirmed count adjustments; they never replay an entire day's production and dispatch.
 
-Each report retains immutable order observations. The latest dated projection preserves DONE/OUT, HOLD and CANCEL even when a subsequent SAP export is stale. DONE is production-ready; OUT is collected. Numeric dates and outstanding days do not prove either status. Missing actual timestamps stay unknown. A vanished DONE remark or an order absent from the latest dated report is retained for review. HOLD retains compatible stock reservations; CANCEL and review-blocked missing orders release them. A reasoned manual control action is recorded in the order details. Historical OUT requires confirmation that the baseline already accounts for its stock.
+Previously stored historical observations remain available for audit, but a new Baseline import does not create or project order observations. Actual production and collection remain separate recorded actions.
 
 ### SAP orders
 
-SAP sheets use A:I: Delivery, raw goods movement status, Goods Issue Date, sold-to, ship-to, full Material, Description, Delivery quantity, Sales Unit. At least one recognised bag/bulk sheet must contain valid rows. The as-of date is chosen explicitly. New identities are appended; existing quantities, dates, execution status and manual fields stay intact. Changed rows enter the review queue. Missing orders are never deleted or assumed OUT. A newly seen SAP order already past due at its file date is held for verification before reservations or planning. Existing genuinely overdue demand remains eligible.
+SAP sheets use A:I: Delivery, raw goods movement status, Goods Issue Date, sold-to, ship-to, full Material, Description, Delivery quantity, Sales Unit. Both `bag order` and `bulk order` are read when present. The server supplies Malaysia today and tomorrow; only Goods Issue Date equal to tomorrow is eligible. Old, later and invalid-date rows are counted and excluded before validating unrelated fields. Manual column mapping uses the same rule. No matches means no empty batch is saved.
+
+The preview shows target Issue Date, matching Bags/Bulk rows and earlier/later/invalid exclusions. Dates are read-only. The server revalidates on commit; if midnight changes the day, keep the file and preview again. New identities are appended. Existing quantities, dates, execution status and manual fields remain unchanged, and differences enter the review queue. Missing orders are never deleted or assumed OUT. Each newly accepted order keeps its original batch target date and stable ordinal; a duplicate import never promotes its priority.
 
 Import previews write nothing. Confirmation revalidates the batch under the workspace revision lock. Repeated files and network retries cannot replay inventory. Selected files and draft values stay available after a failed save or conflict.
 
 ## First import and later imports
 
-1. Confirm that the selected mode has its required sheets: a dated daily sheet for Baseline, or bag/bulk order sheets for SAP. Confirm the dated sheet’s `R14` date and review the order and stock counts before saving.
+1. Confirm that the selected mode has its required sheets: a dated daily sheet for Baseline, or bag/bulk order sheets for SAP. Confirm the dated sheet’s `R14` date and review the stock counts or next-day order/exclusion counts before saving.
 2. Choose Baseline import for dated reports or SAP orders for append-only SAP exports; review the comparison.
-3. Verify the dates, historical remarks and count differences. Confirm a reason for any stock adjustment.
+3. Verify the target dates, eligible order counts and stock differences. Confirm a reason for any stock adjustment.
 4. Review **Orders** and **Stock** after the import. Resolve missing bag weights, missing policies, incompatible units, and Medication/FMR mismatches before generating a draft.
 
-Historical DONE/OUT observations describe readiness and collection only. Their raw status never creates an extra production receipt or dispatch.
+Retained historical DONE/OUT describes readiness and collection only. Baseline no longer imports these statuses, and old raw status never creates an extra receipt or dispatch.
 
 Order import recalculates reservations in due-date and status order. Reservation is a planning allocation, not a physical movement: on-hand still includes reserved stock, while available stock excludes it.
 
@@ -103,11 +105,27 @@ Daily stock retains each dated report and its reconciliation diagnostics. Ledger
 Select **Generate planning** from **Orders**. The draft generator is a preview and review workflow, not an automatic commit.
 
 1. The default window starts at the current planning date (never before today) and ends three calendar days later. You may change the start/end dates, subject to the 31-day generation limit.
-2. Overdue orders are included. Earlier due dates are planned first, before MTS safety-stock replenishment. By default, MTO orders with the same due date and exact item/material/unit/bag weight/Medication/FMR compatibility are batched before assigning lines. Capacity may split a batch across lines or days, preserving each order quantity. A later-due order for the same product remains a separate batch. Clear **Combine same-product orders with the same due date** to keep separate order cards. Manual selection may combine compatible orders across delivery dates when the planner chooses to do so.
-3. The planner considers all four lines (**PM1–PM4**), the active production rates, changeovers, the saved working window (default **07:00–19:00**, editable in Settings → Workspace), carry-over, and configured downtime. Overnight shifts and downtime after midnight use the same business-day calendar as the board. After changing hours, regenerate the draft to use the new capacity. Existing non-cancelled tasks remain in place; new tasks append after existing work and never move or rewrite an existing task.
-4. Bag demand is split only into integer bag quantities. Bulk demand remains at 0.001 MT precision. Each proposed card keeps its production purpose (`mto` or `mts`), source order where applicable, compatibility bucket, date, line, and not-before time.
-5. Review and edit the proposed dates, lines and quantities; confirm bins on the board after saving. Review the capacity/late warnings and the unscheduled backlog. A draft may be regenerated after a workspace conflict.
-6. Select **Confirm N cards** only after the preview is acceptable. Nothing is saved by generating or editing the preview; only confirmation appends the reviewed cards. If capacity is insufficient, the remaining demand stays in the backlog for review rather than being silently committed.
+2. The queue is work in progress, unfinished earlier accepted batches, new accepted batches, then MTS replenishment. Within one batch the original import order is stable. Stock reservations, collected quantities and existing unreceived plans determine the remaining shortage; stock-ready orders awaiting collection are not planned again. HOLD, CANCEL and review-blocked orders are excluded. Legacy orders without acceptance metadata do not automatically enter the new-demand queue.
+3. Compatible MTO orders with the same due date may share a batch, preserving per-order allocations. Capacity may split it across dates/PMs. Clear **Combine same-product orders with the same due date** to keep separate cards. Manual combining remains available.
+4. An overdue pending card with no output or locked actual work is proposed as **Carry over** using its original card ID, quantity and order allocations. A started or posted card is **Continue** on its original PM, reserving only remaining production capacity. Continuation reservations are separate from historical locked segments. Receipts, Done or corrections invalidate an old preview and recalculate remaining capacity. Nothing moves merely because midnight passes. Unrelated confirmed future cards stay in place.
+5. The planner uses saved rates, changeovers, working hours (default 07:00-19:00), exact-product PM preferences and downtime. Order priority wins, then earliest possible day, then preferred PM, then other PMs on that same day. Equal preferred PMs choose the earlier finish. Capacity shortage therefore diverts production before waiting another day for a preferred PM. Bags stay integer and Bulk stays 0.001 MT.
+6. Review Continue / Carry over / New, original IDs, remaining quantities, dates, PMs, utilisation, late warnings and backlog. New-card quantities/dates/PMs remain editable. Confirm saves the batch atomically, including carryover-only proposals; a conflict preserves the draft for regeneration. Work that cannot fit remains unplanned.
+
+### Line preferences
+
+Settings -> Production rules -> Line preferences supports enabling/disabling, search, add/edit/delete and the default PMs for unmatched products. These edits share **Save settings** and the unsaved-changes guard. Defaults are:
+
+| Exact FS code | Packaging | Equal preferred PMs |
+| --- | --- | --- |
+| 5220, 5220M | Bags | PM1 |
+| 5220 | Bulk | PM1, PM4 |
+| 5811, 5211 | Bags | PM2 |
+| 5210 | Bags | PM2, PM3 |
+| 5210 | Bulk | PM2 |
+| 5222 | Bags | PM2, PM4 |
+| Unlisted product / packaging | Corresponding packaging | PM3 |
+
+5220M, 5220MER and 5220CCB are distinct complete codes. Preferences never merge stock compatibility buckets or move existing cards. Changed rules apply when generating a fresh draft.
 
 After confirmation, review the Planning board and destination bins. The generated cards remain pending until normal production execution records start, receipts, pauses, and Done.
 
@@ -115,18 +133,25 @@ After confirmation, review the Planning board and destination bins. The generate
 
 ### Portable JSON
 
-The database workspace’s **Settings → Workspace backup** download is schema version 6. It includes:
+The database workspace’s **Settings → Workspace backup** download is schema version 7. It includes:
 
 - planning cards, catalog, settings, activity, and execution history;
 - the source graph: imported workbooks, source orders, immutable source versions, and links to planning cards; and
 - inventory items/policies, baseline reports, exact-bucket orders/statuses, reservations, the complete ledger, posting keys, and corrections;
-- import discrepancy reviews and receipt-based progress samples/reset evidence.
+- import discrepancy reviews and receipt-based progress samples/reset evidence;
+- retained daily history, accepted SAP batches/order ordinals, continuation reservations and exact-product PM preferences.
 
 Restoring JSON is a reviewed **replace**, not a merge. Validation runs before the replacement, and the complete workspace that existed immediately before the replacement remains available as the previous recovery download.
 
-Legacy schema versions **1–3** do not contain the inventory ledger. The restore preview must warn that restoring one clears current inventory and reservations. The previous full recovery copy is retained so the operator can download it before deciding whether to continue. Versions 4–5 inventory backups must be restored in the PostgreSQL workspace; offline localStorage remains planning-only.
+Legacy schema versions **1–3** do not contain the inventory ledger. The restore preview must warn that restoring one clears current inventory and reservations. The previous full recovery copy is retained so the operator can download it before deciding whether to continue. Versions 4-7 inventory backups must be restored in the PostgreSQL workspace; offline localStorage remains planning-only.
 
 Versions 1–4 have no review/progress collections. The restore preview warns before clearing those collections; v4 retains its inventory ledger.
+
+Versions 1-6 remain readable. The preview warns that old backups have no accepted-batch or continuation records; old orders without acceptance metadata do not automatically join the new-demand queue.
+
+### One-time operational reset
+
+Use the private local maintenance procedure only after a full backup and a successful restore rehearsal in a separate database. Clear operational orders, schedules, stock balances and business history; retain catalog, stock-product parameters, safety/extra policies, capacities, working hours and other configuration. No public reset control is added. Do not replay old October files automatically. First import a new stock baseline, then eligible next-day SAP orders; Generate requires the stock baseline.
 
 ### PostgreSQL dump
 

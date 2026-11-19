@@ -8,7 +8,7 @@ const base=process.env.BROWSER_BASE_URL;
 if(!base||!['127.0.0.1','localhost'].includes(new URL(base).hostname)||new URL(base).port==='8080')throw Error('Use an isolated loopback test server.');
 const output=path.resolve('output/playwright/automatic-backup');
 const now=new Date().toISOString(),next=new Date(Date.now()+86400000).toISOString();
-const saved={enabled:true,format:'portable-v5',intervalHours:24,retentionCount:14,state:'idle',lastAttempt:{at:now,result:'success'},lastSuccess:{at:now,fileName:'millplan-auto-v5-20261104T000000000Z.json',bytes:4096},nextAttemptAt:next};
+const saved={enabled:true,format:'portable-v7',intervalHours:24,retentionCount:14,state:'idle',lastAttempt:{at:now,result:'success'},lastSuccess:{at:now,fileName:'millplan-auto-v7-20261104T000000000Z.json',bytes:4096},nextAttemptAt:next};
 (async()=>{
   await fs.mkdir(output,{recursive:true});const browser=await chromium.launch({headless:true,...(!existsSync(chromium.executablePath())?{channel:'chrome'}:{})});
   try{
@@ -25,9 +25,9 @@ const saved={enabled:true,format:'portable-v5',intervalHours:24,retentionCount:1
     response={...saved,state:'degraded',lastAttempt:{at:now,result:'failed',code:'WRITE_FAILED',sanitizedMessage:'The automatic recovery copy could not be saved. Retrying in 15 minutes.'},nextAttemptAt:new Date(Date.now()+900000).toISOString()};await refresh();await panel.getByText('Needs attention',{exact:true}).waitFor();await panel.getByRole('alert').waitFor();
     const download=page.getByRole('button',{name:'Download backup',exact:true}),restore=page.getByRole('button',{name:'Restore JSON backup',exact:true});assert.equal(await download.isEnabled(),true);assert.equal(await restore.isEnabled(),true);
     await page.unroute('**/api/backup/status');await page.route('**/api/backup/status',route=>route.abort());await refresh();await panel.getByRole('alert').filter({hasText:'status is unavailable'}).waitFor();
-    const received=page.waitForEvent('download');await download.click();const file=await received;const stream=await file.createReadStream();const chunks=[];for await(const chunk of stream)chunks.push(chunk);assert.equal(JSON.parse(Buffer.concat(chunks).toString('utf8')).schemaVersion,6);assert.equal(await restore.isEnabled(),true);
+    const received=page.waitForEvent('download');await download.click();const file=await received;const stream=await file.createReadStream();const chunks=[];for await(const chunk of stream)chunks.push(chunk);assert.equal(JSON.parse(Buffer.concat(chunks).toString('utf8')).schemaVersion,7);assert.equal(await restore.isEnabled(),true);
     await page.unroute('**/api/backup/status');await page.route('**/api/backup/status',route=>route.fulfill({json:saved}));await refresh();await panel.getByText('Newest 14 copies · every 24h',{exact:true}).waitFor();assert.equal(await panel.getByRole('alert').count(),0);
     for(const width of[390,320]){await page.setViewportSize({width,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(output,`backup-${width}.png`),fullPage:true});}
-    assert.deepEqual(writes,[]);assert.deepEqual(errors,[]);console.log('PASS Automatic backup status distinguishes disabled/saved/running/degraded/unavailable, retries, keeps manual V5 download/restore usable, and fits390/320px without writes');
+    assert.deepEqual(writes,[]);assert.deepEqual(errors,[]);console.log('PASS Automatic backup status distinguishes disabled/saved/running/degraded/unavailable, retries, keeps manual V7 download/restore usable, and fits390/320px without writes');
   }finally{await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

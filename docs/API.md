@@ -17,7 +17,7 @@ Envelope:
 
 The operations summary captures one MYT date and counts all matching rows, independently of pagination. `counts.overdueToPlan` matches `/api/data?view=needs-production&deliveryTo=<yesterday>`; `dueSoon` matches pending delivery orders between `asOfDate` and `dueSoonThrough` (today + 3, inclusive). `stockShortages` counts standard blank-Medication/FMR MTS products whose available stock is below a non-null safety target; missing standard buckets count as zero stock and other variants cannot offset them. `pendingImportReviews` counts pending review rows. Freshness includes `latestOrderImport: {asOfDate,importedAt} | null`, `newestExcelAsOfDate`, `inventoryBaselineDate` and `lastVerifiedStockCountDate`. A late upload of an older file can therefore have a newer upload time and an older file date. This endpoint writes no records and changes no revision.
 
-Automatic-backup status returns `enabled`, `format: "portable-v6"`, `intervalHours`, `retentionCount`, `state` (`disabled`, `idle`, `running` or `degraded`), `lastAttempt: {at,result,code?,sanitizedMessage?} | null`, `lastSuccess: {at,fileName,bytes} | null` and `nextAttemptAt: string | null`. Attempt results are `success`, `failed` or `success_with_warning`. UTC timestamps are formatted as MYT in Settings. Failure is operational status, not a business-data mutation or a failed database health check. No HTTP trigger, deletion or stored-file listing endpoint is provided; manual export and previewed restore continue through the existing backup flow.
+Automatic-backup status returns `enabled`, `format: "portable-v7"`, `intervalHours`, `retentionCount`, `state` (`disabled`, `idle`, `running` or `degraded`), `lastAttempt: {at,result,code?,sanitizedMessage?} | null`, `lastSuccess: {at,fileName,bytes} | null` and `nextAttemptAt: string | null`. Attempt results are `success`, `failed` or `success_with_warning`. UTC timestamps are formatted as MYT in Settings. Failure is operational status, not a business-data mutation or a failed database health check. No HTTP trigger, deletion or stored-file listing endpoint is provided; manual export and previewed restore continue through the existing backup flow.
 
 ```typescript
 interface WorkspaceEnvelope {
@@ -129,11 +129,12 @@ Do not infer a failed commit from a disconnected response: the database may have
 
 ## Source order data
 
-- `GET /api/data`: `search`, `deliveryFrom`, `deliveryTo`, `unit` (`MT|Bags`), `productionStatus`, `deliveryStatus`, `overdue` (`production|pickup`), `importId`, `page`. Returns 50-row `items`, `page`, `total` and filtered `stats` across all matches. Current lead/pickup days are derived in MYT from the import as-of date.
+- `GET /api/data`: `search`, `deliveryFrom`, `deliveryTo`, `unit` (`MT|Bags`), `productionStatus`, `deliveryStatus`, `overdue` (`production|pickup`), `importId`, `page`. Returns 50-row `items`, `page`, `total` and filtered `stats` across all matches. Current lead/pickup days use the Malaysia calendar and saved Issue Date; raw imported day counts remain available separately.
+- `GET /api/data/import-context`: server-authoritative `{asOfDate,targetIssueDate,timeZone:"Asia/Kuala_Lumpur",revision}`. Dates are Malaysia today and tomorrow; no client date override is accepted.
 - `GET /api/data/imports`: batch options (ID, file name, as-of date, import timestamp and row count).
 - `GET /api/data/:id`: current fields, production/delivery status, linked card ID, deadline counts, review flag and immutable versions.
-- `POST /api/data/preview`: `SourceImportInput` (`fileName`, `sheetName`, `digest`, `asOfDate`, normalized `rows`). Read-only validation/comparison; response has added/changed/unchanged totals and changed field names per row.
-- `GET /api/backup`, `GET /api/backup/previous`: current or recovery portable version 6 backup. Data is fetched on demand, not in the live workspace response or Undo snapshot.
+- `POST /api/data/preview`: `SourceImportInput` (`fileName`, `sheetName`, `digest`, `asOfDate`, normalized `rows`). Read-only validation/comparison; every row must have Goods Issue Date (`deliveryDate`) equal to server tomorrow and `asOfDate` equal to server today. Response includes `asOfDate`, `targetIssueDate`, added/changed/unchanged totals and changed field names. `409 IMPORT_TARGET_DATE_CHANGED` requires reloading context and re-previewing the retained file.
+- `GET /api/backup`, `GET /api/backup/previous`: current or recovery portable version 7 backup. Data is fetched on demand, not in the live workspace response or Undo snapshot.
 
 All source mutations use the existing `POST /api/commands` revision/command-ID envelope:
 
@@ -165,7 +166,7 @@ Create accepts 1–500 unique order shares and derives the product, snapshots an
 
 Draft demand rows may include `sourceAllocationQuantity`: the actual order portion of physical `quantity`. Draft job `sourceAllocations` cannot exceed current unplanned order demand; their sum can be smaller than physical card quantity, with the balance becoming stock. Omit allocations for a pure stock continuation.
 
-`POST /api/inventory/draft` accepts optional boolean `combineSameProduct` (default `true`). Compatible MTO orders are grouped within the same due date before line allocation; each card retains its source allocations, with at most 500 orders per card. Different due dates remain separate batches. `false` keeps separate order cards while retaining due-date priority and normal changeover rules. Generation is read-only and does not alter existing cards.
+`POST /api/inventory/draft` accepts optional boolean `combineSameProduct` (default `true`). Adjacent compatible MTO orders in accepted priority order are grouped within the same due date before line allocation; each card retains its source allocations, with at most 500 orders per card. Grouping never pulls a later order ahead of intervening demand. Different due dates remain separate batches. `false` keeps separate order cards. Queue priority is in-progress continuation, unfinished earlier accepted batches, newly accepted batches, then MTS; batch order is stable. The response includes `carryovers` and `carryoverBacklog` in addition to new `jobs`, demand/backlog, utilisation and late warnings. Generation is read-only; it only proposes changes to eligible existing cards.
 
 
 ## Overview receipt summary and planning previews
@@ -186,16 +187,16 @@ Generated drafts use browser-local storage key `millplan.planning-draft.v1`, wit
 
 Commands `data.applySourceCorrection {reviewId,expectedSourceVersion,selectedFields,reason}` and `data.dismissSourceCorrection {reviewId,expectedSourceVersion,reason}` use the ordinary versioned command envelope. Apply verifies the pending candidate and source version under lock, permits only selected safe fields, recalculates compatible reservations and creates an immutable source version. DO/material/unit identity, protected manual fields and quantity with reservations/execution cannot be replaced. Stock movements, old allocations and card snapshots are not replayed or rewritten. An obsolete review can be dismissed against the current source version. Duplicated semantic imports backfill missing review candidates without replaying inventory.
 
-Portable database backup v5 is `{schemaVersion:5,exportedAt,planning,sourceData:{imports,orders,versions,discrepancies},inventory,productionProgress:{samples,resets}}`. Restore validates the complete reference graph and saves a full recovery copy transactionally. Earlier backup versions normalize missing review/progress collections to empty. Planning `AppState` and offline export stay version 2.
+Portable database backup V7 is `{schemaVersion:7,exportedAt,planning,sourceData,inventory,productionProgress,baselineHistory,dailyPlanning}`. The complete reference graph is validated and the previous workspace is retained transactionally. `dailyPlanning` contains `admissionBatches`, `orderAdmissions` and `continuationReservations`; `planning.settings.linePreferences` stores routing preferences. Planning `AppState` and offline export remain version 2. V1-V6 restore remains supported; missing admission metadata does not silently admit legacy orders into automatic new demand.
 
-## Baseline history and split cards (V6)
+## Stock-only Baseline, next-day SAP and split cards (V7)
 
-`POST /api/inventory/daily-import/preview` accepts `{reports: DailyReportInput[]}` and returns the revision, file/date counts, unique new/existing orders, formula/continuity/count differences, warnings and `requiresReconcile`. It is read-only. `GET /api/data/:id/observations` returns dated raw order observations independently of current execution state.
+`POST /api/inventory/daily-import/preview` accepts `{reports: StockReportInput[]}` and returns revision, file/date/stock counts, formula/continuity/count differences, warnings and `requiresReconcile`. It is read-only and does not inspect or project orders. `GET /api/data/:id/observations` reads retained historical observations; new stock-only imports do not append them.
 
 New revision-checked `/api/commands` variants:
 
 ```typescript
-{type:'inventory.importDailyReports', reports:DailyReportInput[], reconcile:boolean, reason:string}
+{type:'inventory.importStockReports', reports:StockReportInput[], reconcile:boolean, reason:string}
 {type:'data.importBatch', inputs:SourceImportInput[]}
 {type:'data.setPlanningControl', sourceOrderId:string,
  action:'release'|'hold'|'cancel'|'historicalDone'|'historicalOut', reason:string, stockAccounted?:boolean}
@@ -205,8 +206,20 @@ New revision-checked `/api/commands` variants:
 }>}
 ```
 
-A daily report includes fileName, SHA-256 digest, sheetName, asOfDate, stockRows and orderRows. Stock rows carry exact unit/bag-weight/policy and all reported daily movement quantities; order rows use SourceOrderFields and retain raw Remark. Reports in one batch must have unique ascending dates. The initial historical ledger batch and subsequent report/count behavior are described in inventory-workflow.md. Stock discrepancies require explicit reconciliation and a nonblank reason. Historical OUT requires `stockAccounted:true`; actual new collection continues through the existing collection command.
+A stock report includes `fileName`, SHA-256 `digest`, `sheetName`, `asOfDate` and `stockRows` only. Stock rows carry exact unit/bag-weight/policy and all reported daily movements. `orderRows` is excluded from the new command; the legacy daily-report entry only tolerates an empty array and cannot import orders or trigger missing-order checks. Reports in one batch need unique ascending dates. Stock differences require explicit reconciliation and a nonblank reason; existing ledger history is never replayed.
+
+SAP `data.import` and `data.importBatch` enforce next-day dates server-side, including manually mapped files. They reject empty/mixed-date batches. DO + complete material identifies an order; duplicates retain saved quantity/date/status/manual fields, changed candidates enter review, and missing identities are not deleted. New identities record accepted batch target date and ordinal; duplicate retries retain original priority.
 
 A split creates2–500 nonempty pending children with server-owned `derivedFromJobId`. Quantities use whole Bags or0.001MT; every source allocation and unallocated quantity must balance exactly. Dates/lines/bin/remarks may vary, product and saved source facts cannot. The original is cancelled and retained; its actual output/stock is never changed. Unstarted cards with posted output or locks are rejected. Same-order split portions can recombine only with matching saved source version and snapshot. All validation, child persistence, audit, revision and retry receipts commit together.
 
-Database backup exports are V6. `baselineHistory` includes order observations, planning controls and reasons, control events, import mode metadata and report diagnostics. Planning jobs include split lineage. V1–V5 remain readable; omitted newer history is explicitly warned about and the replaced workspace is retained as a full recovery copy. Automatic recovery writes V6 and still discovers validated V5 files.
+Database and automatic backups export V7 and retain validated legacy V5/V6 recovery files. Older restore previews warn about omitted acceptance/continuation history. Historical observations, controls and split lineage remain restorable; a new Baseline never adds order history.
+
+### Reviewed carryovers and PM preferences
+
+`planning.commitDraft` accepts `{type:'planning.commitDraft',previewRevision,jobs:InventoryDraftJob[],carryovers:DraftCarryover[]}`; at least one new job or carryover is required. A carryover contains `jobId`, `kind:'reschedule'|'continuation'`, native `remainingQuantity`, `unit`, original date/line, priority date/ordinal, proposed `date`, `lineId`, `notBefore` and reserved `segments`. All values are revalidated against current stock, actual output and capacity in the same revision-checked transaction. Network retries use the original command ID.
+
+`reschedule` retains the pending card ID, quantity and allocations, and may span several selected days without splitting or cloning the card. `continuation` retains the card's original PM, actual timestamps and locked historical segments; its remaining-capacity reservation is stored separately and cleared/recomputed after actual updates. Zero reservations suppress obsolete unlocked capacity after posted output, including corrected-to-zero receipts; they do not count as new production. Partial capacity leaves a backlog. Other confirmed future cards stay unchanged. Generation at midnight does not itself move cards.
+
+`settings.update` accepts optional `settings.linePreferences = {enabled,defaultPreferredLines,rules:[{fsCode,packaging:'Bags'|'Bulk',preferredLines}]}`. Codes are complete case-normalized FS tokens, never material substrings; rules are unique per code/packaging and each PM list has 1-4 distinct entries. Demand priority wins, followed by earliest day, preferred PM and same-day overflow PM. Equal preferred PMs use earlier completion. See [inventory workflow](inventory-workflow.md#line-preferences) for the default table.
+
+The one-time operational reset is local maintenance only, after backup and restore verification. No HTTP reset endpoint is introduced. Configuration/catalog/item policy survives; new stock must be imported before automatic generation. DataGrip's loopback port remains 5434.

@@ -1,17 +1,53 @@
 import type { SourceImportInput } from '../domain/sourceTypes';
-import { cellText, identifierText, parseDate, type ImportBook } from './excelImport';
+import { IMPORT_FIELDS, cellText, identifierText, parseDate, parseImportRows, type ColumnMapping, type DateOrder, type ImportedRow, type ImportBook } from './excelImport';
 import type { DailyReportInput } from '../domain/dailyImport';
 import { quantityToScaled, scaledToQuantity } from '../domain/inventory';
 
-/** Explicit SAP mode: reads orders only, never the dated report's remarks or stock. */
-export function parseSapOrderWorkbook(book: ImportBook, fileName: string, asOfDate: string): SourceImportInput[] {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOfDate)) throw new Error('Choose the SAP export date.');
+export interface SapNextDayCounts { matched:number; bag:number; bulk:number; old:number; future:number; invalidDate:number }
+export interface SapNextDayWorkbook { inputs:SourceImportInput[]; counts:SapNextDayCounts }
+
+/** Manual column mapping obeys the same date gate before any unrelated cell is read. */
+export function parseMappedSapNextDayWorkbook(book: ImportBook, fileName: string, sheetIndex: number, header: number, mapping: ColumnMapping, dateOrder: DateOrder, asOfDate: string, targetIssueDate: string): SapNextDayWorkbook & { rows: ImportedRow[] } {
+  const sheet = book.sheets[sheetIndex];
+  if (!sheet) throw new Error('Choose a worksheet.');
+  const missing = IMPORT_FIELDS.filter(([key]) => !mapping[key]);
+  if (missing.length) throw new Error('Map every column: ' + missing.map(([, label]) => label).join(', '));
+  if (new Set(Object.values(mapping)).size !== IMPORT_FIELDS.length) throw new Error('Each field needs a different Excel column.');
+  const counts: SapNextDayCounts = { matched: 0, bag: 0, bulk: 0, old: 0, future: 0, invalidDate: 0 }, eligible = new Set<number>();
+  for (let index = header + 1; index <= sheet.rowCount; index++) {
+    const row = sheet.getRow(index);
+    if (!row.hasValues) continue;
+    let date: string;
+    try { date = parseDate(row.getCell(mapping.deliveryDate), dateOrder, book.date1904); } catch { counts.invalidDate++; continue; }
+    if (date < targetIssueDate) { counts.old++; continue; }
+    if (date > targetIssueDate) { counts.future++; continue; }
+    eligible.add(index);
+  }
+  // The existing row validator sees empty rows in place of excluded source rows.
+  const filteredSheet = new Proxy(sheet, { get(target, key) { if (key === 'getRow') return (index: number) => eligible.has(index) || index <= header ? target.getRow(index) : { getCell: () => ({ value: null }) }; return Reflect.get(target, key); } });
+  const rows = eligible.size ? parseImportRows(filteredSheet, header, mapping, dateOrder, book.date1904) : [];
+  counts.matched = rows.length; counts.bag = rows.filter(row => row.data.unit === 'Bags').length; counts.bulk = rows.filter(row => row.data.unit === 'MT').length;
+  return { rows, counts, inputs: rows.length ? [{ fileName, sheetName: sheet.name, digest: book.digest, asOfDate, rows: rows.map(row => row.data) }] : [] };
+}
+
+/** Filter the Issue Date before reading unrelated material/quantity cells. */
+export function parseSapNextDayWorkbook(book: ImportBook, fileName: string, asOfDate: string, targetIssueDate: string): SapNextDayWorkbook {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOfDate) || !/^\d{4}-\d{2}-\d{2}$/.test(targetIssueDate)) throw new Error('The SAP import date could not be confirmed. Refresh the import context.');
   const imports: SourceImportInput[] = [];
-  for (const sheet of book.sheets.filter(sheet => /^(bag|bulk) order$/i.test(sheet.name.trim()))) {
-    const rows: SourceImportInput['rows'] = [], seen = new Set<string>();
+  const sheets=book.sheets.filter(sheet => /^(bag|bulk) order$/i.test(sheet.name.trim()));
+  if(!sheets.length)throw new Error('No SAP bag order or bulk order worksheet found.');
+  const counts:SapNextDayCounts={matched:0,bag:0,bulk:0,old:0,future:0,invalidDate:0},seen=new Set<string>();
+  for (const sheet of sheets) {
+    const rows: SourceImportInput['rows'] = [];
     for (let n = 2; n <= sheet.rowCount; n++) {
-      const row = sheet.getRow(n), doNo = identifierText(row.getCell(1));
-      if (!doNo) continue;
+      const row = sheet.getRow(n);
+      // Empty layout rows are not rejected or counted as invalid orders.
+      if(!row.getCell(1).value)continue;
+      let deliveryDate:string;
+      try{deliveryDate=parseDate(row.getCell(3),'MDY',book.date1904);}catch{counts.invalidDate++;continue;}
+      if(deliveryDate<targetIssueDate){counts.old++;continue;}
+      if(deliveryDate>targetIssueDate){counts.future++;continue;}
+      const doNo=identifierText(row.getCell(1));
       const materialCode = identifierText(row.getCell(6));
       if (!materialCode) throw new Error(`${sheet.name}!${n}: Material is required.`);
       const rawUnit = cellText(row.getCell(9)).toUpperCase();
@@ -21,27 +57,33 @@ export function parseSapOrderWorkbook(book: ImportBook, fileName: string, asOfDa
       const key = `${doNo.toLowerCase()}\0${materialCode.toLowerCase()}`;
       if (seen.has(key)) throw new Error(`${sheet.name}!${n}: duplicate DO + Material.`);
       seen.add(key);
-      rows.push({ doNo, materialCode, deliveryDate: parseDate(row.getCell(3), 'MDY', book.date1904),
+      counts.matched++;if(unit==='Bags')counts.bag++;else counts.bulk++;
+      rows.push({ doNo, materialCode, deliveryDate,
         soldToParty: cellText(row.getCell(4)), shipToParty: cellText(row.getCell(5)), description: cellText(row.getCell(7)), quantity, unit,
         deliveryLeadDays: null, daysOutstanding: null, remark: '', medication: '', fmrOmed: '',
         goodsMovementStatus: cellText(row.getCell(2)), sourceSheet: sheet.name, sourceRow: n });
     }
     if (rows.length) imports.push({fileName, sheetName: sheet.name, digest: book.digest, asOfDate, rows});
   }
-  if (!imports.length) throw new Error('No SAP order rows found in bag order or bulk order.');
-  return imports;
+  return {inputs:imports,counts};
 }
 
-/** Company daily report. Cached values only; numeric outstanding days never infer status. */
-export function parseDailyReportWorkbook(book: ImportBook, fileName: string, sheetName?: string): DailyReportInput {
+/** Compatibility helper follows the same next-day filtering policy. */
+export function parseSapOrderWorkbook(book: ImportBook, fileName: string, asOfDate: string): SourceImportInput[] {
+  const target=new Date(Date.parse(asOfDate+'T12:00:00Z')+86400000).toISOString().slice(0,10);
+  return parseSapNextDayWorkbook(book,fileName,asOfDate,target).inputs;
+}
+
+/** Stock only. Lower dated-sheet order/status cells are deliberately never read. */
+export function parseDailyReportWorkbook(book: ImportBook, fileName: string, sheetName?: string): DailyReportInput & { orderRows: [] } {
   const candidates = book.sheets.filter(sheet => /^\d+(st|nd|rd|th)$/i.test(sheet.name.trim()));
   const daily = sheetName ? candidates.find(sheet => sheet.name === sheetName) : candidates.length === 1 ? candidates[0] : undefined;
   if (!daily) throw new Error(candidates.length > 1 ? 'Choose the dated worksheet to import.' : 'No dated daily-report worksheet found.');
   const asOfDate = parseDate(daily.getCell('R14'), 'MDY', book.date1904);
   if (Number(daily.name.match(/^\d+/)?.[0]) !== Number(asOfDate.slice(-2))) throw new Error(`${daily.name}: worksheet day does not match the report date in R14.`);
-  const stockRows: DailyReportInput['stockRows'] = [], orderRows: DailyReportInput['orderRows'] = [];
-  const seenStock = new Set<string>(), seenOrders = new Set<string>();
-  for (let n = 1; n <= daily.rowCount; n++) {
+  const stockRows: DailyReportInput['stockRows'] = [], orderRows: [] = [];
+  const seenStock = new Set<string>();
+  for (let n = 1; n <= Math.min(130,daily.rowCount); n++) {
     const row = daily.getRow(n);
     const stockMaterial = n <= 130 ? cellText(row.getCell(2)) : '';
     const mode = /^\d+\.\d+$/.test(stockMaterial) ? cellText(row.getCell(6)).toUpperCase() : '';
@@ -57,22 +99,6 @@ export function parseDailyReportWorkbook(book: ImportBook, fileName: string, she
         strategy:numericSafety ? 'mts' : 'mto', targetQuantity:numericSafety ? normalizedQuantity(unit,safety, 'Safety stock') : 0,
         needsReview:!numericSafety && !/^PER\s+ADVICE$/i.test(safety), opening:q(7),production:q(8),received:q(9),salesReturn:q(10),rework:q(11),issue:q(12),closing:q(13),medication:'',fmrOmed:''});
     }
-    if(n<=130)continue;
-    const doText = cellText(row.getCell(3));
-    if(!/^\d+$/.test(doText))continue;
-    const materialText = cellText(row.getCell(12));
-    if (!/^\d+$/.test(doText) || !/^\d+\.\d+$/.test(materialText)) continue;
-    const doNo = identifierText(row.getCell(3)), materialCode = identifierText(row.getCell(12));
-    const key = `${doNo.toLowerCase()}\0${materialCode.toLowerCase()}`;
-    if (seenOrders.has(key)) throw new Error(`${daily.name}!${n}: duplicate DO + Material.`);
-    seenOrders.add(key);
-    const rawUnit = cellText(row.getCell(17)).toUpperCase();
-    if (!['BAG','BAGS','MT'].includes(rawUnit)) throw new Error(`${daily.name}!${n}: unsupported order unit.`);
-    const unit = rawUnit === 'MT' ? 'MT' : 'Bags';
-    const optionalDays = (column:number) => {const text=cellText(row.getCell(column)); if(!text)return null; const value=Number(text); if(!Number.isSafeInteger(value))throw new Error(`${daily.name}!${n}: invalid days value.`);return value;};
-    orderRows.push({doNo,materialCode,deliveryDate:parseDate(row.getCell(4),'MDY',book.date1904),soldToParty:cellText(row.getCell(7)),shipToParty:cellText(row.getCell(10)),
-      description:cellText(row.getCell(13)),quantity:normalizedQuantity(unit,cellText(row.getCell(16)),`${daily.name}!${n}: order quantity`),unit,
-      deliveryLeadDays:optionalDays(18),remark:cellText(row.getCell(19)),daysOutstanding:optionalDays(20),medication:cellText(row.getCell(22)),fmrOmed:cellText(row.getCell(23)),sourceSheet:daily.name,sourceRow:n});
   }
   if (!stockRows.length) throw new Error(`${daily.name}: no finished-goods stock rows found.`);
   return {fileName,digest:book.digest,sheetName:daily.name,asOfDate,stockRows,orderRows};

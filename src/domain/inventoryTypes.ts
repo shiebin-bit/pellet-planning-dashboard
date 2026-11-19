@@ -2,6 +2,7 @@ import type { SourceImportInput } from "./sourceTypes";
 import type { PortableSourceData } from "./sourceTypes";
 import type { AppState } from "./types";
 import type { LineId } from "./types";
+import type { DraftCarryover } from "./dailyPlanning";
 
 export type InventoryUnit = "Bags" | "MT";
 export type InventoryStrategy = "mto" | "mts";
@@ -102,6 +103,9 @@ export interface InventoryPlanningDemandRow extends InventoryBucketKey {
   sourceOrderId: string | null;
   orderNo: string | null;
   dueDate: string;
+  /** Stable SAP-admission priority. It is intentionally independent of later manual due-date edits. */
+  priorityDate?: string;
+  priorityOrdinal?: number;
   /** ISO timestamp; the planner must not place work before this instant. */
   notBefore: string;
   /** Portion of quantity assigned to the source order. Any remainder is deliberate stock output. */
@@ -137,6 +141,8 @@ export interface InventoryDraftPreview {
   backlog: InventoryPlanningDemandRow[];
   utilization: Array<{ date: string; lineId: LineId; hours: number; availableHours: number }>;
   late: Array<{ key: string; dueDate: string; plannedDate: string | null; quantity: number }>;
+  carryovers: DraftCarryover[];
+  carryoverBacklog: Array<Omit<DraftCarryover, "date" | "lineId" | "notBefore" | "segments">>;
 }
 
 export type InventoryCommand =
@@ -150,7 +156,7 @@ export type InventoryCommand =
   | { type: "production.correctJobTotal"; jobId: string; correctedTotalQuantity: number; reason: string; postingKey: string; occurredOn?: string }
   | { type: "delivery.record"; sourceOrderId: string; quantity: number; postingKey: string; occurredOn?: string }
   | { type: "delivery.reverse"; movementId: string; quantity: number; reason: string; postingKey: string; occurredOn?: string }
-  | { type: "planning.commitDraft"; previewRevision: number; jobs: InventoryDraftJob[] }
+  | { type: "planning.commitDraft"; previewRevision: number; jobs: InventoryDraftJob[]; carryovers?: DraftCarryover[] }
   | { type: "data.updateManualFields"; sourceOrderId: string; patch: InventoryManualFieldsPatch };
 
 export interface InventoryBucketSnapshot extends InventoryBucketKey {
@@ -301,9 +307,12 @@ export function parseInventoryCommand(value: unknown): InventoryCommand {
   const type = text(source.type, "command.type", 80);
   switch (type) {
     case "inventory.importBaseline":
-    case "inventory.importWorkbook":
+    case "inventory.importWorkbook": {
       exact(source, ["type", "input"], "command");
-      return { type, input: workbook(source.input, "command.input") };
+      const input=workbook(source.input, "command.input");
+      if(input.orders.some(order=>order.rows.length)||input.annotations.length)throw new Error("command.input orders and annotations are no longer supported. Import stock separately, then import next-day SAP orders.");
+      return { type, input };
+    }
     case "inventory.adjust": {
       exactOptional(source, ["type", "itemId", "medication", "fmrOmed", "quantityDelta", "reason", "postingKey"], ["occurredOn", "countedQuantity"], "command");
       const quantityDelta = finite(source.quantityDelta, "command.quantityDelta");
@@ -349,10 +358,12 @@ export function parseInventoryCommand(value: unknown): InventoryCommand {
       exactOptional(source, ["type", "movementId", "quantity", "reason", "postingKey"], ["occurredOn"], "command");
       return withOccurredOn({ type, movementId: reference(source.movementId, "command.movementId"), quantity: positive(source.quantity, "command.quantity"), reason: trimmed(source.reason, "command.reason", 1_000), postingKey: reference(source.postingKey, "command.postingKey") }, source);
     case "planning.commitDraft": {
-      exact(source, ["type", "previewRevision", "jobs"], "command");
+      exactOptional(source, ["type", "previewRevision", "jobs"], ["carryovers"], "command");
       const jobs = array(source.jobs, "command.jobs", 2_000).map((row, index) => draftJob(row, `command.jobs[${index}]`));
-      if (!jobs.length) throw new Error("command.jobs must contain at least one job.");
-      return { type, previewRevision: integer(source.previewRevision, "command.previewRevision", 0), jobs };
+      const carryovers = has(source, "carryovers") ? array(source.carryovers, "command.carryovers", 2_000).map((row,index)=>draftCarryover(row,`command.carryovers[${index}]`)) : [];
+      if (!jobs.length && !carryovers.length) throw new Error("command.jobs or command.carryovers must contain at least one row.");
+      if(new Set(carryovers.map(row=>row.jobId)).size!==carryovers.length)throw new Error("command.carryovers must contain distinct job ids.");
+      return { type, previewRevision: integer(source.previewRevision, "command.previewRevision", 0), jobs, carryovers };
     }
     case "data.updateManualFields": {
       exact(source, ["type", "sourceOrderId", "patch"], "command");
@@ -437,6 +448,26 @@ function draftJob(value: unknown, path: string): InventoryDraftJob {
   const quantity = positive(source.quantity, `${path}.quantity`);
   if (sourceAllocations && sourceAllocations.reduce((sum, row) => sum + row.plannedQuantity, 0) - quantity > 1e-6) throw new Error(`${path}.sourceAllocations cannot exceed the draft quantity.`);
   return { draftId: reference(source.draftId, `${path}.draftId`), itemId: reference(source.itemId, `${path}.itemId`), sourceOrderId: source.sourceOrderId === null ? null : reference(source.sourceOrderId, `${path}.sourceOrderId`), ...(sourceAllocations ? { sourceAllocations } : {}), orderNo: string(source.orderNo, `${path}.orderNo`, 120), materialCode: trimmed(source.materialCode, `${path}.materialCode`, 120), description: string(source.description, `${path}.description`, 200), unit, bagWeightKg: weight, productionPurpose: strategy(source.productionPurpose, `${path}.productionPurpose`), date: date(source.date, `${path}.date`), lineId: lineId(source.lineId, `${path}.lineId`), quantity, notBefore: timestamp(source.notBefore, `${path}.notBefore`), bin: string(source.bin, `${path}.bin`, 200), remarks: string(source.remarks, `${path}.remarks`, 1_000), ...bucket(source, path) };
+}
+
+function draftCarryover(value:unknown,path:string):DraftCarryover{
+  const source=object(value,path);
+  exact(source,["jobId","kind","remainingQuantity","unit","priorityDate","ordinal","originalDate","originalLineId","date","lineId","notBefore","segments"],path);
+  if(source.kind!=="reschedule"&&source.kind!=="continuation")throw new Error(`${path}.kind must be reschedule or continuation.`);
+  const unit=inventoryUnit(source.unit,`${path}.unit`),remainingQuantity=positive(source.remainingQuantity,`${path}.remainingQuantity`);
+  const scaled=remainingQuantity*(unit==="MT"?1_000:1);
+  if(!Number.isSafeInteger(Math.round(scaled))||Math.abs(scaled-Math.round(scaled))>1e-7)throw new Error(`${path}.remainingQuantity must be whole Bags or MT with at most 3 decimals.`);
+  const parsedSegments=array(source.segments,`${path}.segments`,500).map((entry,index)=>{
+    const segmentPath=`${path}.segments[${index}]`,segment=object(entry,segmentPath);
+    exact(segment,["jobId","lineId","kind","start","end"],segmentPath);
+    if(segment.kind!=="production"&&segment.kind!=="changeover")throw new Error(`${segmentPath}.kind is invalid.`);
+    const start=finite(segment.start,`${segmentPath}.start`),end=finite(segment.end,`${segmentPath}.end`);
+    if(start<0||end<=start)throw new Error(`${segmentPath} must have a positive time range.`);
+    return{jobId:reference(segment.jobId,`${segmentPath}.jobId`),lineId:lineId(segment.lineId,`${segmentPath}.lineId`),kind:segment.kind as "production"|"changeover",start,end};
+  });
+  const jobId=reference(source.jobId,`${path}.jobId`),selectedLine=lineId(source.lineId,`${path}.lineId`);
+  if(parsedSegments.some(segment=>segment.jobId!==jobId||segment.lineId!==selectedLine))throw new Error(`${path}.segments must belong to its job and selected line.`);
+  return{jobId,kind:source.kind,remainingQuantity,unit,priorityDate:date(source.priorityDate,`${path}.priorityDate`),ordinal:integer(source.ordinal,`${path}.ordinal`,0),originalDate:date(source.originalDate,`${path}.originalDate`),originalLineId:lineId(source.originalLineId,`${path}.originalLineId`),date:date(source.date,`${path}.date`),lineId:selectedLine,notBefore:timestamp(source.notBefore,`${path}.notBefore`),segments:parsedSegments};
 }
 
 function extra(value: unknown, path: string): InventoryExtra | null {

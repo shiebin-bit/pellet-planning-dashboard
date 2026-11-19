@@ -1,4 +1,4 @@
-import { getAvailableIntervals, getScheduledJobs, getShiftWindow, getWorkingHoursForDate } from './engine';
+import { getAvailableIntervals, plannedMtInWindow, getScheduledJobs, getShiftWindow, getWorkingHoursForDate } from './engine';
 import { LINE_IDS, type AppState, type LineId } from './types';
 
 const MINUTE = 60_000;
@@ -57,7 +57,7 @@ export function getWeeklyCapacity(state: AppState, selectedDate: string): Weekly
         } else changeoverMinutes += duration;
         for (const interval of available) occupiedAvailable += Math.max(0, Math.min(segment.end, interval.end) - Math.max(segment.start, interval.start)) / MINUTE;
       }
-      if (totalProduction > 0) plannedMt += job.quantityMt * inShiftProduction / totalProduction;
+      if (totalProduction > 0) plannedMt += plannedMtInWindow(job, shift.start, shift.end);
       if (inShiftProduction > 0 && job.date < date) carryInCount++;
       if (job.date <= date && job.plannedEnd !== null && job.plannedEnd > shift.end) {
         if (inShiftProduction > 0) carryOutCount++;

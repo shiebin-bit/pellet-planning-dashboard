@@ -1,3 +1,4 @@
+const { historicalFixtureCommand } = require('./historical-fixture.cjs');
 const {planningAction}=require('./planning-actions.cjs');
 // Fictional fixtures only. Never run mutation checks against production 8080.
 const { chromium } = require('playwright');
@@ -11,7 +12,7 @@ const base = process.env.BROWSER_BASE_URL;
 if (!base || process.env.BROWSER_ALLOW_REPLACE !== '1' || !['localhost','127.0.0.1'].includes(new URL(base).hostname) || new URL(base).port === '8080') throw Error('Use an isolated loopback BROWSER_BASE_URL with BROWSER_ALLOW_REPLACE=1.');
 const output = path.resolve('output/playwright/inventory');
 const json = async route => { const r = await fetch(base + route); const data = await r.json(); assert.equal(r.status, 200, JSON.stringify(data)); return data; };
-const command = async c => { const current = await json('/api/workspace'); const r = await fetch(base + '/api/commands', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ expectedRevision: current.revision, commandId: randomUUID(), command: c }) }); const data = await r.json(); assert.equal(r.status, 200, JSON.stringify(data)); return data; };
+const command = async c => { const fixture = await historicalFixtureCommand(base, c); if (fixture) return fixture;  const current = await json('/api/workspace'); const r = await fetch(base + '/api/commands', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ expectedRevision: current.revision, commandId: randomUUID(), command: c }) }); const data = await r.json(); assert.equal(r.status, 200, JSON.stringify(data)); return data; };
 const today = new Intl.DateTimeFormat('en-CA', { timeZone:'Asia/Kuala_Lumpur' }).format(new Date());
 const tomorrow = new Date(Date.parse(today + 'T12:00:00Z') + 86400000).toISOString().slice(0,10);
 const yesterday = new Date(Date.parse(today + 'T12:00:00Z') - 86400000).toISOString().slice(0,10);
@@ -46,10 +47,16 @@ async function fixture(file) {
   await wait(()=>modal.getByRole('button',{name:'Review baseline import',exact:true}).isEnabled());
   await modal.getByRole('button',{name:'Review baseline import',exact:true}).click();
   await modal.getByRole('checkbox',{name:/I checked/}).check(); await modal.getByRole('button',{name:'Confirm baseline import',exact:true}).click(); await modal.waitFor({state:'hidden'});
+  assert.deepEqual((await json('/api/inventory/orders')).orders,[],'Baseline ignores the lower order table');
+  assert.equal((await json('/api/inventory')).items.find(item=>item.unit==='Bags').totalReserved,0,'Stock-only baseline cannot reserve an order');
+  await page.getByRole('button',{name:'Import Excel',exact:true}).click();
+  await modal.getByRole('button',{name:/SAP orders/}).click();await modal.getByLabel('Excel order file').setInputFiles(file);
+  await wait(()=>modal.getByRole('button',{name:'Review import',exact:true}).isEnabled());await modal.getByRole('button',{name:'Review import',exact:true}).click();
+  await modal.getByRole('checkbox',{name:/I reviewed/}).check();await modal.getByRole('button',{name:'Confirm import',exact:true}).click();await modal.waitFor({state:'hidden'});
   let stock=await json('/api/inventory'); let progress=await json('/api/inventory/orders');
   const bag=stock.items.find(i=>i.unit==='Bags');const order=progress.orders.find(o=>o.unit==='Bags');
   assert.equal(bag.totalOnHand,30); assert.equal(bag.totalReserved,30);assert.equal(order.netToPlan,70);
-  console.log('PASS XLSM import establishes closing stock once, preserves item bag weight and reserves physical stock');
+  console.log('PASS Stock-only baseline creates no orders; separate next-day SAP import reserves closing stock with saved bag weight');
   let releaseStock;const stockGate=new Promise(resolve=>{releaseStock=resolve;});
   await page.route('**/api/inventory',async route=>{await stockGate;await route.continue();});
   await page.getByRole('button',{name:'Stock',exact:true}).click();await page.getByRole('status').filter({hasText:'Loading stock'}).waitFor();
@@ -78,7 +85,7 @@ async function fixture(file) {
   await draft.locator('.draft-edit-table tbody tr').first().waitFor();
   const data=await fetch(base+'/api/inventory/draft',{method:'POST',headers:{'Content-Type':'application/json',Origin:base},body:JSON.stringify({fromDate:tomorrow,toDate:tomorrow})}).then(r=>r.json());
   assert.equal(data.jobs.filter(j=>j.unit==='Bags').reduce((s,j)=>s+j.quantity,0),90);
-  const save=draft.getByRole('button',{name:/Confirm \d+ cards/});await save.click();await draft.waitFor({state:'hidden'});
+  const save=draft.getByRole('button',{name:/Confirm \d+ proposals/});await save.click();await draft.waitFor({state:'hidden'});
   let state=(await json('/api/workspace')).state; const job=state.jobs.find(j=>j.sourceOrderId===order.sourceOrderId||j.sourceAllocations?.some(a=>a.sourceOrderId===order.sourceOrderId));
   assert.equal(job.quantityMt,1.75);assert.equal(job.bagWeightKgSnapshot,25);
   await page.locator(`[data-job-id="${job.id}"] .hplan-card-open`).click();
@@ -117,7 +124,7 @@ async function fixture(file) {
   for(const viewport of [{width:390,height:844},{width:320,height:760}]){await page.setViewportSize(viewport);await manage.click();await stockDetails.waitFor();assert.ok(await stockDetails.evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;}));await page.screenshot({path:path.join(output,'stock-details-'+viewport.width+'.png')});await page.keyboard.press('Escape');await stockDetails.waitFor({state:'hidden'});}
   await page.setViewportSize({width:1440,height:900});
   await page.getByRole('tab',{name:'Daily stock',exact:true}).click();await page.getByLabel('Stock date',{exact:true}).fill(yesterday);await wait(async()=>await page.locator('.source-table tbody tr').count()===2);
-  const after=await json('/api/backup');assert.equal(after.schemaVersion,6);assert.ok(after.inventory.ledger.length>=3);
+  const after=await json('/api/backup');assert.equal(after.schemaVersion,7);assert.ok(after.inventory.ledger.length>=3);
   for(const viewport of [{width:390,height:844},{width:320,height:760}]){await page.setViewportSize(viewport);await page.waitForTimeout(350);assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:path.join(output,`daily-${viewport.width}.png`),fullPage:true});}
   await command({type:'data.import',input:{fileName:'fictional-protected-order.xlsx',sheetName:'bulk order',digest:'f'.repeat(64),asOfDate:yesterday,rows:[{doNo:'QA-PROTECTED',goodsMovementStatus:'A',sourceSheet:'bulk order',sourceRow:2,deliveryDate:tomorrow,soldToParty:'Fictional customer',shipToParty:'Fictional ship-to',materialCode:'7.0000000000000',description:'Fictional feed',quantity:20,unit:'MT',deliveryLeadDays:null,remark:'',daysOutstanding:null,medication:'',fmrOmed:''}]}});
   const protectedId=(await json('/api/data?search=QA-PROTECTED')).items[0].id;await command({type:'data.updateManualFields',sourceOrderId:protectedId,patch:{medication:'QA protected med',fmrOmed:'QA protected FMR'}});
@@ -137,7 +144,7 @@ async function fixture(file) {
   await page.getByLabel('Search order data').fill('9900100');const bagProgress=page.getByLabel('Production progress 9900100',{exact:true});await bagProgress.locator('summary').waitFor();await bagProgress.locator('summary').click();assert.doesNotMatch(await bagProgress.innerText(),/\d\.\d+ Bags/);
   await page.getByRole('button',{name:'Planning board',exact:true}).click();await planningAction(page, 'Plan from Orders');const picker=page.getByRole('dialog',{name:'Choose an order to plan',exact:true});await picker.getByLabel('Search order data').fill('9900020');await picker.getByText('0.001 MT to plan',{exact:true}).waitFor();assert.equal(await picker.locator('thead th').count(),9);assert.match(await picker.getByLabel('Production progress 9900020').innerText(),/19\.999 MT reserved/);await page.keyboard.press('Escape');
   console.log('PASS Readable seven-column orders and full picker preserve 0.001 MT shortages, exact reserved quantities and integer Bags');
-  assert.deepEqual(errors,[]);console.log('PASS stock ledger, daily stock, backup v6, desktop/mobile rendering and browser console');
+  assert.deepEqual(errors,[]);console.log('PASS stock ledger, daily stock, backup v7, desktop/mobile rendering and browser console');
  } catch(e) {if(page)await page.screenshot({path:path.join(output,'failure.png'),fullPage:true}).catch(()=>{});throw e;}
  finally {if(page)await page.unrouteAll({behavior:'ignoreErrors'});if(browser)await browser.close();await command({type:'workspace.restore',backup});}
 })().catch(e=>{console.error(e);process.exitCode=1;});

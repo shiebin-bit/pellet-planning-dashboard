@@ -1,3 +1,4 @@
+const { historicalFixtureCommand } = require('./historical-fixture.cjs');
 // Fictional production only; this replaces and restores a disposable workspace.
 const { chromium } = require('playwright');
 const { existsSync } = require('node:fs');
@@ -11,7 +12,7 @@ const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }
 const yesterday = new Date(Date.parse(today + 'T12:00:00Z') - 86400000).toISOString().slice(0, 10);
 const output = path.resolve('output/playwright/redesign/live-progress');
 const json = async route => { const r = await fetch(base + route); const data = await r.json(); assert.equal(r.status, 200, JSON.stringify(data)); return data; };
-const command = async command => { const ws = await json('/api/workspace'); const r = await fetch(base + '/api/commands', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ expectedRevision: ws.revision, commandId: randomUUID(), command }) }); const data = await r.json(); assert.equal(r.status, 200, JSON.stringify(data)); return data; };
+const command = async command => { const fixture = await historicalFixtureCommand(base, command); if (fixture) return fixture;  const ws = await json('/api/workspace'); const r = await fetch(base + '/api/commands', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ expectedRevision: ws.revision, commandId: randomUUID(), command }) }); const data = await r.json(); assert.equal(r.status, 200, JSON.stringify(data)); return data; };
 const wait = async check => { for (let n = 0; n < 120; n++) { if (await check()) return; await new Promise(resolve => setTimeout(resolve, 100)); } throw Error('Live progress did not arrive.'); };
 const pass = text => console.log('PASS ' + text);
 

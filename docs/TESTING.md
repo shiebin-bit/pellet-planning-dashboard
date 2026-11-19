@@ -30,7 +30,7 @@ The API tests exercise concurrent revisions, invalid-command rollback, duplicate
 
 ## Browser integration
 
-`npm run test:browser` runs twelve scripts covering the base workflow, efficiency, pause/audit, UI, Data, inventory, table UX, Settings preview, list navigation, combined production, editable calendars and planning safety. Mutation suites replace the selected workspace and restore the starting state in `finally`. Use a **separate disposable database/server**, never the real planning service. Create `millplan_browser_test` using the same `createdb` command as above with that database name. Copy `.env` to ignored `.env.browser-test`; change only its DATABASE_URL database path to `/millplan_browser_test`, keep HOST=127.0.0.1 and set PORT=8091. Build `dist` first.
+`npm run test:browser` runs 22 scripts covering the base workflow, efficiency, pause/audit, UI, Data, inventory, table UX, Settings, navigation, combined/split production, calendars, planning safety, live progress, reviews, backups, next-day imports and carryovers. Mutation suites replace the selected workspace and restore the starting state in `finally`. Use a **separate disposable database/server**, never the real planning service. Create `millplan_browser_test` using the same `createdb` command as above with that database name. Copy `.env` to ignored `.env.browser-test`; change only its DATABASE_URL database path to `/millplan_browser_test`, keep HOST=127.0.0.1 and set PORT=8091. Build `dist` first.
 
 ```powershell
 npx playwright install chromium
@@ -42,8 +42,10 @@ In another terminal:
 ```powershell
 $env:BROWSER_BASE_URL='http://127.0.0.1:8091'
 $env:BROWSER_ALLOW_REPLACE='1'
+# Set TEST_DATABASE_URL privately to the exact disposable server database URL.
+# Historical regression fixtures use direct test-only access; they never bypass the public SAP date gate.
 npm run test:browser
-Remove-Item Env:BROWSER_BASE_URL, Env:BROWSER_ALLOW_REPLACE
+Remove-Item Env:BROWSER_BASE_URL, Env:BROWSER_ALLOW_REPLACE, Env:TEST_DATABASE_URL
 ```
 
 Installed Chrome is a fallback if the bundled Chromium is absent. `PLAYWRIGHT_CHANNEL=chrome` can select it explicitly. Each suite closes its browser and saves ignored evidence under `output/playwright/database/`, `output/playwright/redesign/` or `output/playwright/data/`.
@@ -148,7 +150,7 @@ Local release verification on3November2026 passed181 domain tests,1 dependency c
 
 `browser-weekly-list.cjs` verifies independent desktop/mobile Timeline and List choices, complete descriptions and native quantities, detail opening, navigation memory, non-overlapping rows and read-only weekly drill-through. The weekly fixtures cover overtime, closures, overnight downtime, changeovers, backlog and proportional carry-over quantities. Domain checks also cover closed-day queues, historical locked work outside availability, week boundaries and 0.001 MT precision. Overview shift totals use each line's actual working hours.
 
-Automatic-backup tests cover atomic publication, export/write failures, retry, single-flight execution, shutdown, restart catch-up and retention that protects manual or invalid files. Status API tests check strict read-only behavior and sanitized responses. `automatic-backup-db.test.ts` exports a real V5 copy from fictional PostgreSQL data, restores it in the disposable database and compares planning, source history, inventory and production progress. `browser-backup-status.cjs` checks disabled/saved/running/degraded/unavailable states, recovery, usable manual download/restore and 320/390px layouts without posting commands.
+Automatic-backup tests cover atomic publication, export/write failures, retry, single-flight execution, shutdown, restart catch-up and retention that protects manual or invalid files. Status API tests check strict read-only behavior and sanitized responses. `automatic-backup-db.test.ts` exports a current V7 copy from fictional PostgreSQL data, restores it in the disposable database and compares planning, source history, inventory and production progress. `browser-backup-status.cjs` checks disabled/saved/running/degraded/unavailable states, recovery, usable manual download/restore and 320/390px layouts without posting commands.
 
 The 4 November 2026 release includes 342 domain tests, one dependency compatibility test, 11 backup scheduler/status tests, 45 serial PostgreSQL API tests and 18 browser scripts. Runtime dependency audit reports zero vulnerabilities. Production rollout compares all 17 existing tables and the complete portable workspace graph before and after the app-only update; the public repository contains only fictional fixtures.
 
@@ -162,8 +164,21 @@ Card-preview regressions cover late focus-induced scroll events, real page scrol
 
 ## Dated-import and split regression coverage
 
-`tests/daily-import-api.test.ts` covers read-only previews, raw observations, exact anonymous stock history, sticky DONE/OUT/HOLD/CANCEL, absent-order review, stale SAP quarantine, late-file protection, zero-stock baselines, reasoned count-only reconciliation, duplicate no-op behavior and V6 validation. `tests/split-api.test.ts` verifies invalid-batch rollback, stale revisions, retry deduplication, source-quantity conservation, split lineage restore, recombination and rejection after a physical receipt.
+`tests/daily-import-api.test.ts` covers stock-only read-only previews, exact anonymous stock history, reasoned count-only reconciliation and duplicate no-op behavior. Lower dated-sheet orders, status and manual fields are deliberately ignored. Next-day API checks cover authoritative Malaysia dates, mixed/empty dates, duplicate and changed orders, accepted-batch priority, carryover/continuation capacity, V7 restoration and transactional conflicts/retries. `tests/split-api.test.ts` retains quantity-conservation, lineage, rollback, stale-revision and retry coverage.
 
 `tests/browser-baseline-split.cjs` uses fictional multi-file workbooks to exercise the single Baseline/SAP modal, preserved file drafts across mode changes, failed/retried read-only preview, keyboard/focus restoration, scrolling at1366/390/320px, packaging filters and partial-order split/recombine. No mutation suite is allowed against production8080. Real company workbook reconciliation is a separate private staged rehearsal; its files and screenshots must stay outside public Git history.
 
 Verification on 16 November 2026 passed 200 maintained unit tests, one dependency compatibility test, 11 backup scheduler/status tests, 55 PostgreSQL API tests and all 20 browser scripts. Unit discovery is restricted to the actual `src` directory so ignored rollback copies cannot inflate local results. Additional API checks cover duplicate history after later stock activity and manual review, an established zero-stock baseline, and historical DONE/OUT without invented timestamps. The production and Docker builds pass; the runtime dependency audit reports zero vulnerabilities. A private five-day baseline was imported and restored in a separate database, with every latest Closing checked against the ledger. Real records and maintenance payloads are excluded from the public repository.
+
+
+## Next-day import, carryovers and PM preferences
+
+`src/lib/feedWorkbook.test.ts` verifies date-first exclusion of old/future/invalid SAP rows without evaluating their malformed material or quantity cells, full identifiers, manual mapping with the same date gate, duplicate validation only among eligible rows, month/year boundaries and empty matches. The dated-sheet parser ignores malformed lower order cells entirely.
+
+`tests/browser-nextday.cjs` uses fictional `.xlsm` fixtures and an explicitly disposable loopback database (`BROWSER_ALLOW_REPLACE=1`, production 8080 rejected). It exercises stock-only import with no order creation, next-day/exclusion counts, duplicate retention, a simulated midnight context change that preserves the file, zero eligible rows, read-only dates, line-preference search, and single-modal scrolling/focus at 320/390/1366px. Business data is backed up and restored in `finally`; browsers are closed even on failure.
+
+Run new scenarios alongside maintained unit/API/browser regressions in the isolated databases. The local-only reset rehearsal must compare retained catalog, inventory-product policies and Settings, prove a full restore first, and verify empty operational records afterward. Do not import actual company files or include private backups/screenshots in public tests. Release test totals are recorded only after the current verification completes.
+
+`tests/browser-carryover.cjs` verifies a draft containing only Continue / Carry over proposals, browser-local save/resume, confirmation without replacement cards, unchanged original IDs/quantities/actuals/locks, V7 continuation reservations, reload deduplication and 1366/390px modal bounds and focus. It requires the same disposable-database opt-in and restores its original workspace in `finally`.
+
+Verification on 20 November 2026 passed 230 maintained domain tests, one dependency compatibility test, 11 backup scheduler/status tests, 69 PostgreSQL API tests with zero skips, and all 22 browser scripts. App/server typechecks, the production build and Docker image build passed. A private full database dump was restored in an isolated database, migrated, exported as V7 and restored again; jobs, orders, ledger, progress, retained activity, catalog, stock policies and Settings were compared. Zero-continuation regressions include receipt-before-Start, full receipt, correction to zero, reload, Start without resurrecting old capacity, and V7 restoration. No company fixtures or recovery files are published.

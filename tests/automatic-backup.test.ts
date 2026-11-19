@@ -12,7 +12,7 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
 
-describe('automatic portable V6 backups', () => {
+describe('automatic portable V7 backups', () => {
   it('creates the first backup immediately with the exact managed filename and a future interval', async () => {
     const directory = await tempDirectory();
     const clock = fakeClock('2026-11-04T01:02:03.456Z');
@@ -21,7 +21,7 @@ describe('automatic portable V6 backups', () => {
     await service.runDueBackup();
 
     const files = await readdir(directory);
-    assert.deepEqual(files, ['millplan-auto-v6-20261104T010203456Z.json']);
+    assert.deepEqual(files, ['millplan-auto-v7-20261104T010203456Z.json']);
     assert.deepEqual(JSON.parse(await readFile(path.join(directory, files[0]), 'utf8')), { schemaVersion: 5, marker: 'complete' });
     const status = service.getStatus();
     assert.equal(status.state, 'idle');
@@ -86,7 +86,7 @@ describe('automatic portable V6 backups', () => {
     const service = automaticBackup(directory, clock.now, async () => ({ schemaVersion: 5 }));
     await service.start();
     assert.deepEqual(service.getStatus(), {
-      enabled: true, format: 'portable-v6', intervalHours: 24, retentionCount: 14, state: 'degraded',
+      enabled: true, format: 'portable-v7', intervalHours: 24, retentionCount: 14, state: 'degraded',
       lastAttempt: { at: clock.now().toISOString(), result: 'failed', code: 'DIRECTORY_UNAVAILABLE', sanitizedMessage: 'The automatic backup directory is unavailable.' },
       lastSuccess: null, nextAttemptAt: '2026-11-04T03:45:00.000Z',
     });

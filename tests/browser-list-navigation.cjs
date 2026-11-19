@@ -1,3 +1,4 @@
+const { historicalFixtureCommand } = require('./historical-fixture.cjs');
 const {planningAction}=require('./planning-actions.cjs');
 // Fictional fixtures only. The complete isolated workspace is restored in finally.
 const {chromium}=require('playwright');
@@ -11,9 +12,10 @@ const base=process.env.BROWSER_BASE_URL;
 if(!base||process.env.BROWSER_ALLOW_REPLACE!=='1'||!['127.0.0.1','localhost','[::1]'].includes(new URL(base).hostname)||new URL(base).port==='8080')throw Error('Use a disposable loopback BROWSER_BASE_URL, never production8080, with BROWSER_ALLOW_REPLACE=1.');
 const output=path.resolve('output/playwright/list-navigation');
 const json=async route=>{const r=await fetch(base+route);assert.equal(r.status,200);return r.json();};
-const command=async command=>{const w=await json('/api/workspace');const r=await fetch(base+'/api/commands',{method:'POST',headers:{'Content-Type':'application/json',Origin:base},body:JSON.stringify({expectedRevision:w.revision,commandId:randomUUID(),command})});const data=await r.json();assert.equal(r.status,200,JSON.stringify(data));return data;};
+const command=async command=>{ const fixture = await historicalFixtureCommand(base, command); if (fixture) return fixture; const w=await json('/api/workspace');const r=await fetch(base+'/api/commands',{method:'POST',headers:{'Content-Type':'application/json',Origin:base},body:JSON.stringify({expectedRevision:w.revision,commandId:randomUUID(),command})});const data=await r.json();assert.equal(r.status,200,JSON.stringify(data));return data;};
 const wait=async fn=>{for(let i=0;i<100;i++){if(await fn())return;await new Promise(r=>setTimeout(r,100));}assert.fail('Timed out waiting for list state');};
 const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kuala_Lumpur'}).format(new Date());
+const tomorrow=new Date(Date.parse(today+'T12:00:00Z')+86400000).toISOString().slice(0,10);
 const code=i=>'7.8000000'+String(i).padStart(6,'0');
 const digest=text=>createHash('sha256').update(text).digest('hex');
 (async()=>{
@@ -24,7 +26,7 @@ const digest=text=>createHash('sha256').update(text).digest('hex');
   await command({type:'workspace.restore',backup:{...w,jobs:Array.from({length:57},(_,i)=>({...sample,id:'list-job-'+i,orderNo:'LIST-'+i,description:'Navigation fixture',sequence:i+1,lineId:i%2?'PM2':'PM1',date:today})),events:[]}});
   const items=Array.from({length:57},(_,i)=>({materialCode:code(i),description:'Fictional list feed '+i,unit:'Bags',bagWeightKg:50,strategy:'mto',targetQuantity:0,needsReview:false,opening:10,production:0,received:0,salesReturn:0,rework:0,issue:0,closing:10,medication:'',fmrOmed:''}));
   await command({type:'inventory.importBaseline',input:{fileName:'fictional-list-stock.xlsm',digest:digest('list-stock'),asOfDate:today,orders:[],items,annotations:[],packingBinTotal:null,includeBaseline:true}});
-  const rows=items.map((item,i)=>({doNo:'LIST-'+String(i).padStart(3,'0'),deliveryDate:today,soldToParty:'Fictional list customer',shipToParty:'Fictional list farm',materialCode:item.materialCode,description:item.description,quantity:i?100:5,unit:'Bags',deliveryLeadDays:null,remark:'Open',daysOutstanding:null,medication:'',fmrOmed:''}));
+  const rows=items.map((item,i)=>({doNo:'LIST-'+String(i).padStart(3,'0'),deliveryDate:tomorrow,soldToParty:'Fictional list customer',shipToParty:'Fictional list farm',materialCode:item.materialCode,description:item.description,quantity:i?100:5,unit:'Bags',deliveryLeadDays:null,remark:'Open',daysOutstanding:null,medication:'',fmrOmed:''}));
   await command({type:'data.import',input:{fileName:'fictional-list-orders.xlsx',sheetName:'Orders',digest:digest('list-orders'),asOfDate:today,rows}});
   browser=await chromium.launch({headless:true,...(!existsSync(chromium.executablePath())?{channel:'chrome'}:{})});
   page=await browser.newPage({viewport:{width:1024,height:768},timezoneId:'Asia/Kuala_Lumpur'});page.setDefaultTimeout(15000);const errors=[];page.on('pageerror',e=>errors.push(e.message));

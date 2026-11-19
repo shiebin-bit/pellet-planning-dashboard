@@ -51,7 +51,7 @@ The screenshot uses fictional demonstration records. Company workbooks, customer
 
 Supporting workflows include:
 
-- Due-date scheduling that respects stock reservations, unfinished production, line capacity, downtime, and existing cards.
+- Accepted-batch scheduling that continues unfinished production before new demand, with exact-product PM preferences, capacity and downtime.
 - Editable planning drafts with split production across dates and lines, utilisation previews, late-order warnings, and browser-local draft recovery.
 - Same-product order batches with per-order allocations; combine or split unstarted cards by order or partial quantity while preserving every order and extra-stock total.
 - Server-time Start and Done, partial production receipts, pause/resume with reasons, and auditable output corrections.
@@ -61,9 +61,9 @@ Supporting workflows include:
 
 ## Daily Workflow
 
-1. **Choose the import mode.** Use Baseline import for dated company sheets and SAP orders for append-only bag/bulk exports. Review historical remarks and stock reconciliation before saving. **Import orders.** Preview SAP Excel data and confirm new orders. Existing orders stay intact; differences enter a review queue for an explicit, reasoned correction.
+1. **Import stock, then next-day orders.** Baseline reads only the upper stock table of dated company sheets; lower orders and remarks are ignored. SAP orders reads bag/bulk tables and accepts only Goods Issue Date equal to Malaysia today + 1. Review exclusions and stock differences before confirming. Existing orders stay intact; differences enter the review queue.
 2. **Check stock.** Reserve compatible finished goods and identify the remaining order shortage or Make for stock replenishment need.
-3. **Plan production.** Generate a draft or add cards manually. Review quantities, dates, lines, order allocations, and capacity before saving.
+3. **Plan production.** Continue work in progress, then unfinished earlier batches, new batches and MTS replenishment. Review Continue / Carry over / New proposals and preferred/diverted PMs before confirming. Manual cards remain available.
 4. **Record output.** Start at the current server time, post partial quantities as work progresses, and enter the final cumulative output when marking Done.
 5. **Record collection.** Deduct only the quantity actually collected. Review order progress, stock movements, History, or export the required report.
 
@@ -79,9 +79,13 @@ Supporting workflows include:
 | Make for stock | Meet order demand and replenish the configured safety-stock target; extra output is applied once before splitting |
 | Production vs delivery | Done completes production; collection is recorded separately and may be partial |
 | Working calendar | Default 07:00–19:00 in Asia/Kuala_Lumpur; editable hours, overtime, closures, overnight shifts, and carry-over |
+| SAP acceptance | Server-controlled next-day Goods Issue Date, append-only DO + full material identity, stable accepted-batch order |
+| PM preferences | Exact FS code plus Bags/Bulk; editable in Settings, with same-day overflow to other PMs |
 | Historical records | Started/completed work retains its locked plan; imports do not invent production or collection movements |
 
 For example, **30 available Bags against a 100-Bag order leaves 70 Bags to produce**. With a Make for stock target of 20 Bags, the total suggestion becomes **90 Bags** before any configured extra. See the [inventory workflow](docs/inventory-workflow.md) for reservations, daily balances, and workbook rules.
+
+The import date is read-only and rechecked before saving. If midnight changes the eligible day, the file remains selected and a new preview is required. Unfinished cards retain their IDs and actual records; nothing moves automatically at midnight. See the [inventory workflow](docs/inventory-workflow.md#generate-planning-draft) for PM defaults and carryover behavior.
 
 Planned utilisation describes scheduled capacity. Estimated finish uses recorded production samples; it is not a direct machine-sensor feed or measured OEE.
 
@@ -110,7 +114,7 @@ Browser / React dashboard
           v
      PostgreSQL 16
           |
-          +---- Automatic V6 workspace snapshots
+          +---- Automatic V7 workspace snapshots
           +---- Full PostgreSQL dumps for database recovery
 ```
 
@@ -234,11 +238,13 @@ The badge above links to the current workflow status. Deployment is managed sepa
 
 ## Backups and Data
 
-- **Automatic recovery copies:** Docker saves portable V6 JSON snapshots to `backups/automatic/` every 24 hours by default, retaining 14 managed successful files. Settings shows last success, next attempt, and failures.
-- **Manual workspace recovery:** Download or restore JSON in **Settings → Backup & recovery**. V6 includes orders, inventory movements, import reviews, production progress, daily order observations, planning controls, and split-card lineage. Older versions remain readable with warnings about omitted data.
+- **Automatic recovery copies:** Docker saves portable V7 JSON snapshots to `backups/automatic/` every 24 hours by default, retaining 14 managed successful files. Settings shows last success, next attempt, and failures.
+- **Manual workspace recovery:** Download or restore JSON in **Settings → Backup & recovery**. V7 includes orders, inventory movements, import reviews, production progress, retained history, split-card lineage, accepted SAP batches, continuation capacity and line preferences. Versions 1-6 remain readable; old orders without acceptance metadata do not silently enter the new-demand queue. Older versions remain readable with warnings about omitted data.
 - **Full database recovery:** Run `.\scripts\backup.ps1` for a PostgreSQL custom-format dump. Portable JSON does not include all database metadata or command receipts.
 - **Restore behaviour:** Workspace restoration replaces the active workspace after preview and retains the preceding recovery copy. It does not merge records.
 - **Browser drafts:** Saved generated drafts belong to that browser/origin and are outside database backups.
+
+The one-time next-day-workflow reset uses private local maintenance after a full backup and verified restore. It clears operational orders, schedules, balances and history while retaining catalog, stock policies and Settings; no public reset button is added. Start again with a new stock baseline, then next-day SAP orders. Old October files are not replayed automatically. DataGrip stays on loopback port `5434`.
 
 Keep protected copies outside the host disk and verify restores in a separate database. See the [operations guide](docs/OPERATIONS.md) for backup, recovery, update, and troubleshooting procedures.
 

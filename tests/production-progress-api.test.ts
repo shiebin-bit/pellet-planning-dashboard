@@ -1,3 +1,4 @@
+import { executeHistoricalFixture } from './historical-fixture';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import { after, before, beforeEach, describe, it } from 'node:test';
@@ -48,7 +49,7 @@ integration('production progress API', () => {
   });
 
   it('reports authoritative progress, estimates only from live samples, resets after correction and deduplicates retries', async () => {
-    await store.execute(0, 'progress-baseline', { type: 'inventory.importBaseline', input: baselineInput() });
+    await executeHistoricalFixture(pool, 0, 'progress-baseline', { type: 'inventory.importBaseline', input: baselineInput() });
     const order = (await store.getInventoryOrders()).orders[0];
     // Progress must also work outside the planning shift. Manual order planning
     // avoids making this receipt test depend on today's remaining draft capacity.
@@ -112,7 +113,7 @@ integration('production progress API', () => {
     input.fileName = 'progress-bags.xlsx'; input.digest = '7'.repeat(64); input.orders[0].digest = '6'.repeat(64);
     input.orders[0].rows[0] = { ...input.orders[0].rows[0], unit: 'Bags', quantity: 100, materialCode: '7.BAGS', description: 'Progress bag feed' };
     input.items[0] = { ...input.items[0], materialCode: '7.BAGS', description: 'Progress bag feed', unit: 'Bags', bagWeightKg: 50 };
-    await store.execute(0, 'progress-bags-baseline', { type: 'inventory.importBaseline', input });
+    await executeHistoricalFixture(pool, 0, 'progress-bags-baseline', { type: 'inventory.importBaseline', input });
     const order = (await store.getInventoryOrders()).orders[0];
     const planned = await store.execute(1, 'progress-bags-plan', { type: 'job.createFromSources', input: {
       orders: [{ sourceOrderId: order.sourceOrderId, sourceOrderVersion: 1, plannedQuantity: 100 }],

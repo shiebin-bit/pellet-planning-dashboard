@@ -1,3 +1,4 @@
+const { historicalFixtureCommand } = require('./historical-fixture.cjs');
 // Fictional fixtures only; replace and restore a disposable database workspace.
 const { chromium } = require('playwright');
 const { existsSync } = require('node:fs');
@@ -11,7 +12,7 @@ const today = new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kuala_Lumpur'}).fo
 const day = n => new Date(Date.parse(today+'T12:00:00Z')+n*86400000).toISOString().slice(0,10);
 const output = path.resolve('output/playwright/business-priorities');
 const json = async route => { const r=await fetch(base+route); const value=await r.json(); assert.equal(r.status,200,JSON.stringify(value)); return value; };
-const command = async value => { const current=await json('/api/workspace'); const r=await fetch(base+'/api/commands',{method:'POST',headers:{'Content-Type':'application/json',Origin:base},body:JSON.stringify({expectedRevision:current.revision,commandId:randomUUID(),command:value})}); const result=await r.json(); assert.equal(r.status,200,JSON.stringify(result)); return result; };
+const command = async value => { const fixture = await historicalFixtureCommand(base, value); if (fixture) return fixture;  const current=await json('/api/workspace'); const r=await fetch(base+'/api/commands',{method:'POST',headers:{'Content-Type':'application/json',Origin:base},body:JSON.stringify({expectedRevision:current.revision,commandId:randomUUID(),command:value})}); const result=await r.json(); assert.equal(r.status,200,JSON.stringify(result)); return result; };
 const wait = async fn => { for(let n=0;n<140;n++){if(await fn())return;await new Promise(r=>setTimeout(r,100));}throw Error('Business priorities state did not arrive.'); };
 const source = (fileName,letter,asOfDate,rows) => ({fileName,sheetName:'bag order',digest:letter.repeat(64),asOfDate,rows});
 const row = (index,deliveryDate) => ({doNo:`QA-PRIORITY-${index}`,deliveryDate,soldToParty:'Fictional priority buyer',shipToParty:'Fictional destination',materialCode:'QA-MTO-FEED',description:'FS 9901 FICTIONAL FEED 50KG',quantity:100,unit:'Bags',deliveryLeadDays:0,remark:'',daysOutstanding:0,medication:'',fmrOmed:''});
@@ -22,7 +23,7 @@ const item = (materialCode,unit,strategy,targetQuantity,closing,medication='') =
   const backup=await json('/api/backup');
   let browser,page;
   try {
-    await command({type:'workspace.restore',backup:{...backup,planning:{...backup.planning,jobs:[],events:[],catalog:[]},sourceData:{imports:[],orders:[],versions:[],discrepancies:[]},inventory:{items:[],imports:[],baselineReports:[],orders:[],ledger:[],reservations:[]},productionProgress:{samples:[],resets:[]}}});
+    await command({type:'workspace.restore',backup:{...backup,planning:{...backup.planning,jobs:[],events:[],catalog:[]},sourceData:{imports:[],orders:[],versions:[],discrepancies:[]},inventory:{items:[],imports:[],baselineReports:[],orders:[],ledger:[],reservations:[]},productionProgress:{samples:[],resets:[]},baselineHistory:{observations:[],planningControls:[],planningControlEvents:[],sourceImports:[],inventoryImports:[],reportDiagnostics:[]},dailyPlanning:{admissionBatches:[],orderAdmissions:[],continuationReservations:[]}}});
     const rows=[...Array.from({length:51},(_,i)=>row(i,day(-1))),row(51,today),row(52,day(3)),row(53,day(4))];
     await command({type:'inventory.importBaseline',input:{fileName:'fictional-priorities-baseline.xlsx',digest:'a'.repeat(64),asOfDate:day(-1),includeBaseline:true,packingBinTotal:null,orders:[source('fictional-priorities-orders.xlsx','b',day(-1),rows)],items:[item('QA-MTO-FEED','Bags','mto',0,0),item('QA-MTS-BAGS','Bags','mts',10,5),item('QA-MTS-BULK','MT','mts',.001,0)],annotations:[]}});
     const stockItem=(await json('/api/inventory')).items.find(item=>item.materialCode==='QA-MTS-BAGS');

@@ -221,6 +221,22 @@ describe("scheduling", () => {
 });
 
 describe("mutations and frozen plans", () => {
+  it("starts a posted pending card without resurrecting its suppressed future plan", () => {
+    const original = state([job("posted", 1, {
+      continuationPlan: {
+        remainingQuantityMt: 0,
+        plannedAt: "2026-10-14T00:00:00.000Z",
+        segments: [],
+      },
+    })]);
+    expect(scheduled(original, "posted").segments).toEqual([]);
+    const running = startJob(original, "posted", "2026-10-15T01:00:00.000Z");
+    expect(running.jobs[0].status).toBe("running");
+    expect(running.jobs[0].actualStart).toBe("2026-10-15T01:00:00.000Z");
+    expect(running.jobs[0].lockedSegments).toEqual([]);
+    expect(running.jobs[0].continuationPlan).toEqual(original.jobs[0].continuationPlan);
+  });
+
   it("allows only one running job on a physical line across planning dates", () => {
     const original = state([
       job("a", 1),

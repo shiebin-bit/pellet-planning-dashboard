@@ -3,6 +3,7 @@ import type {
   InventoryDraftJob,
   InventoryDraftPreview,
 } from "../domain/inventoryTypes";
+import type { DraftCarryover } from "../domain/dailyPlanning";
 import type { LineId } from "../domain/types";
 
 export const PLANNING_DRAFT_STORAGE_KEY = "millplan.planning-draft.v1";
@@ -23,6 +24,7 @@ export interface PreparedPlanningDraftCommit {
     type: "planning.commitDraft";
     previewRevision: number;
     jobs: InventoryDraftJob[];
+    carryovers: DraftCarryover[];
   };
 }
 
@@ -185,6 +187,7 @@ export function preparePlanningDraftCommit(
       type: "planning.commitDraft",
       previewRevision: draft.baseRevision,
       jobs: clone(draft.jobs),
+      carryovers: clone(draft.preview.carryovers ?? []),
     },
   };
   let prepared: SavedPlanningDraft;
@@ -315,12 +318,13 @@ function pendingCommit(value: unknown, draft: SavedPlanningDraft): PreparedPlann
   if (canonicalJson(parsed.jobs) !== canonicalJson(draft.jobs)) {
     throw new Error("draft.pendingCommit jobs must exactly match draft.jobs.");
   }
-  return { expectedRevision, commandId, command: parsed };
+  if (canonicalJson(parsed.carryovers ?? []) !== canonicalJson(draft.preview.carryovers ?? [])) throw new Error("draft.pendingCommit carryovers must exactly match the preview.");
+  return { expectedRevision, commandId, command: { ...parsed, carryovers: parsed.carryovers ?? [] } };
 }
 
 function previewValue(value: unknown, path: string): InventoryDraftPreview {
   const source = record(value, path);
-  exact(source, ["revision", "generatedAt", "request", "demand", "jobs", "backlog", "utilization", "late"], path);
+  exactOptional(source, ["revision", "generatedAt", "request", "demand", "jobs", "backlog", "utilization", "late"], ["carryovers", "carryoverBacklog"], path);
   const request = requestValue(source.request, `${path}.request`);
   const demand = list(source.demand, `${path}.demand`, 10_000).map((row, index) => demandRow(row, `${path}.demand[${index}]`));
   const jobs = list(source.jobs, `${path}.jobs`, 2_000).map((job, index) => draftJob(job, `${path}.jobs[${index}]`));
@@ -344,6 +348,14 @@ function previewValue(value: unknown, path: string): InventoryDraftPreview {
     revision: integer(source.revision, `${path}.revision`, 0),
     generatedAt: isoTimestamp(source.generatedAt, `${path}.generatedAt`),
     request, demand, jobs, backlog, utilization, late,
+    carryovers: parseCarryovers(source.carryovers ?? []),
+    carryoverBacklog: list(source.carryoverBacklog ?? [], `${path}.carryoverBacklog`, 2_000).map((row, index) => {
+      const item = record(row, `${path}.carryoverBacklog[${index}]`);
+      exact(item, ["jobId", "kind", "remainingQuantity", "unit", "priorityDate", "ordinal", "originalDate", "originalLineId"], path);
+      const parsed = parseCarryovers([{ ...item, date: item.originalDate, lineId: item.originalLineId, notBefore: "2000-01-01T00:00:00.000Z", segments: [] }])[0];
+      const { date: _d, lineId: _l, notBefore: _n, segments: _s, ...candidate } = parsed;
+      return candidate;
+    }),
   };
   validateJobReferences(result, jobs);
   return result;
@@ -365,7 +377,7 @@ function requestValue(value: unknown, path: string): InventoryDraftPreview["requ
 
 function demandRow(value: unknown, path: string): InventoryDraftPreview["demand"][number] {
   const source = record(value, path);
-  exactOptional(source, ["key", "itemId", "materialCode", "description", "unit", "bagWeightKg", "strategy", "purpose", "sourceOrderId", "orderNo", "dueDate", "notBefore", "quantity", "medication", "fmrOmed"], ["sourceAllocationQuantity"], path);
+  exactOptional(source, ["key", "itemId", "materialCode", "description", "unit", "bagWeightKg", "strategy", "purpose", "sourceOrderId", "orderNo", "dueDate", "notBefore", "quantity", "medication", "fmrOmed"], ["sourceAllocationQuantity", "priorityDate", "priorityOrdinal"], path);
   const unit = inventoryUnit(source.unit, `${path}.unit`);
   const bagWeightKg = bagWeight(source.bagWeightKg, `${path}.bagWeightKg`);
   assertWeightMatches(unit, bagWeightKg, path);
@@ -378,6 +390,8 @@ function demandRow(value: unknown, path: string): InventoryDraftPreview["demand"
     notBefore: isoTimestamp(source.notBefore, `${path}.notBefore`), quantity: positiveQuantity(source.quantity, unit, `${path}.quantity`),
     medication: boundedText(source.medication, `${path}.medication`, 200, false), fmrOmed: boundedText(source.fmrOmed, `${path}.fmrOmed`, 200, false),
   };
+  if (has(source, "priorityDate")) result.priorityDate = date(source.priorityDate, `${path}.priorityDate`);
+  if (has(source, "priorityOrdinal")) result.priorityOrdinal = integer(source.priorityOrdinal, `${path}.priorityOrdinal`, 0);
   if (has(source, "sourceAllocationQuantity")) result.sourceAllocationQuantity = quantityValue(source.sourceAllocationQuantity, unit, `${path}.sourceAllocationQuantity`, true);
   return result;
 }
@@ -506,3 +520,11 @@ function newUuid(): string { return globalThis.crypto.randomUUID(); }
 function message(error: unknown): string { return error instanceof Error ? error.message : "Planning draft validation failed."; }
 function success<T>(value: T): PlanningDraftStorageResult<T> { return { ok: true, value }; }
 function failure(code: PlanningDraftStorageFailureCode, error: string): PlanningDraftStorageResult<never> { return { ok: false, code, error }; }
+
+function parseCarryovers(rows: unknown): DraftCarryover[] {
+  const values = list(rows, "draft.carryovers", 2_000);
+  if (!values.length) return [];
+  const parsed = parseCommand({type:"planning.commitDraft",previewRevision:0,jobs:[],carryovers:values});
+  if (parsed.type !== "planning.commitDraft") throw new Error("Invalid carryovers.");
+  return parsed.carryovers ?? [];
+}

@@ -1,3 +1,4 @@
+import { historicalFixturePreview, historicalFixtureResponse, isHistoricalFixtureCommand } from './historical-fixture';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import { after, before, beforeEach, describe, it } from 'node:test';
@@ -81,7 +82,7 @@ integration('source import review API',()=>{
     const source=(await get<any>('/api/data')).items[0];
     assert.equal(source.version,1);assert.equal(source.needsReview,false);
     assert.equal((await get<SourceImportReviewPage>('/api/data/reviews?status=pending&page=1')).total,0);
-    const previewResponse=await fetch(`${baseUrl}/api/data/preview`,{method:'POST',headers:{'Content-Type':'application/json',Origin:baseUrl},body:JSON.stringify(daily)});
+    const previewResponse=await historicalFixturePreview(pool, daily);
     assert.equal(previewResponse.status,200);const preview=await previewResponse.json();
     assert.equal(preview.changed,0);assert.equal(preview.rows[0].importAction,'skip-unchanged');assert.deepEqual(preview.rows[0].changedFields,[]);
     await ok(await command(2,'daily-counters-repeat',{type:'data.import',input:daily}));
@@ -98,19 +99,19 @@ integration('source import review API',()=>{
     const restored=(await get<any>('/api/data')).items[0];assert.equal(restored.needsReview,true);
   });
 
-  it('exports and restores v5 discrepancy provenance without replaying inventory',async()=>{
+  it('exports and restores V7 discrepancy provenance without replaying inventory',async()=>{
     await ok(await command(0,'review-v5-initial',{type:'data.import',input:sourceInput('v5-initial.xlsx','1'.repeat(64),{})}));
     await ok(await command(1,'review-v5-change',{type:'data.import',input:sourceInput('v5-change.xlsx','2'.repeat(64),{remark:'Needs review'})}));
     const backup=await get<any>('/api/backup');
-    assert.equal(backup.schemaVersion,6);assert.equal(backup.sourceData.discrepancies.length,1);assert.deepEqual(backup.productionProgress,{samples:[],resets:[]});
+    assert.equal(backup.schemaVersion,7);assert.equal(backup.sourceData.discrepancies.length,1);assert.deepEqual(backup.productionProgress,{samples:[],resets:[]});
     await ok(await command(2,'review-v5-reset',{type:'workspace.resetDemo',date:'2026-11-03'}));
-    const previous=await get<any>('/api/backup/previous');assert.equal(previous.schemaVersion,6);assert.equal(previous.sourceData.discrepancies.length,1);
+    const previous=await get<any>('/api/backup/previous');assert.equal(previous.schemaVersion,7);assert.equal(previous.sourceData.discrepancies.length,1);
     await ok(await command(3,'review-v5-restore',{type:'workspace.restore',backup}));
     const restored=await get<SourceImportReviewPage>('/api/data/reviews?status=pending&page=1');assert.equal(restored.total,1);assert.equal(restored.items[0].candidateFields.remark,'Needs review');
     assert.equal((await get<any>('/api/data')).items[0].needsReview,true,'Pending review visibility is derived even when the base legacy flag is false.');
   });
 
-  async function command(revision:number,commandId:string,commandBody:unknown){return fetch(`${baseUrl}/api/commands`,{method:'POST',headers:{'Content-Type':'application/json',Origin:baseUrl},body:JSON.stringify({expectedRevision:revision,commandId,command:commandBody})});}
+  async function command(revision:number,commandId:string,commandBody:unknown){if(isHistoricalFixtureCommand(commandBody))return historicalFixtureResponse(pool,revision,commandId,commandBody);return fetch(`${baseUrl}/api/commands`,{method:'POST',headers:{'Content-Type':'application/json',Origin:baseUrl},body:JSON.stringify({expectedRevision:revision,commandId,command:commandBody})});}
   async function get<T>(path:string):Promise<T>{const response=await fetch(baseUrl+path);assert.equal(response.status,200,await response.clone().text());return response.json() as Promise<T>;}
   async function ok(response:Response){assert.equal(response.status,200,await response.clone().text());return response.json();}
 });

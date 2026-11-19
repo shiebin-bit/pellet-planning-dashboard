@@ -1,3 +1,4 @@
+import { historicalFixtureResponse, isHistoricalFixtureCommand } from './historical-fixture';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {createServer,type Server} from 'node:http';
@@ -25,7 +26,7 @@ const url=process.env.TEST_DATABASE_URL;
  async function get(path:string){const response=await fetch(base+path);assert.equal(response.status,200);return response.json();}
  async function post(command:Command,expectedRevision?:number,commandId=randomUUID()){
   const revision=expectedRevision??(await get('/api/workspace')).revision;
-  const response=await fetch(base+'/api/commands',{method:'POST',headers:{'content-type':'application/json',origin:base},body:JSON.stringify({command,expectedRevision:revision,commandId})});
+  const response=isHistoricalFixtureCommand(command)?await historicalFixtureResponse(pool,revision,commandId,command):await fetch(base+'/api/commands',{method:'POST',headers:{'content-type':'application/json',origin:base},body:JSON.stringify({command,expectedRevision:revision,commandId})});
   return {status:response.status,body:await response.json()};
  }
  async function ok(command:Command){const result=await post(command);assert.equal(result.status,200,JSON.stringify(result.body));return result.body;}

@@ -1,4 +1,5 @@
 import type { AppState, Settings } from "./types";
+import { createDefaultLinePreferences } from './linePreferences';
 
 export function createDefaultSettings(): Settings {
   return {
@@ -11,6 +12,7 @@ export function createDefaultSettings(): Settings {
     rates: { PM1: 8.5, PM2: 7.5, PM3: 6.5, PM4: 7 },
     slowProductPrefixes: ["6811", "6542"],
     slowRatePM2: 6.5,
+    linePreferences: createDefaultLinePreferences(),
     downtime: [],
   };
 }

@@ -1,3 +1,4 @@
+const { historicalFixtureCommand } = require('./historical-fixture.cjs');
 // Fictional fixtures only; mutations are guarded and restored in a disposable database.
 const {chromium}=require('playwright');
 const {existsSync}=require('node:fs');
@@ -10,7 +11,7 @@ const base=process.env.BROWSER_BASE_URL;
 if(!base||process.env.BROWSER_ALLOW_REPLACE!=='1'||!['localhost','127.0.0.1'].includes(new URL(base).hostname)||new URL(base).port==='8080')throw Error('Use an isolated loopback test database and explicit replacement opt-in.');
 const output=path.resolve('output/playwright/workbench-ux');
 const json=async route=>{const r=await fetch(base+route);assert.equal(r.status,200);return r.json();};
-const command=async command=>{const w=await json('/api/workspace');const r=await fetch(base+'/api/commands',{method:'POST',headers:{'Content-Type':'application/json',Origin:base},body:JSON.stringify({expectedRevision:w.revision,commandId:randomUUID(),command})});assert.equal(r.status,200,await r.text());};
+const command=async command=>{ const fixture = await historicalFixtureCommand(base, command); if (fixture) return fixture; const w=await json('/api/workspace');const r=await fetch(base+'/api/commands',{method:'POST',headers:{'Content-Type':'application/json',Origin:base},body:JSON.stringify({expectedRevision:w.revision,commandId:randomUUID(),command})});assert.equal(r.status,200,await r.text());};
 const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kuala_Lumpur'}).format(new Date());
 async function bounds(locator,viewport){const b=await locator.boundingBox();assert.ok(b&&b.x>=0&&b.y>=0&&b.x+b.width<=viewport.width+1&&b.y+b.height<=viewport.height+1,JSON.stringify(b));}
 (async()=>{

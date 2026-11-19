@@ -1,3 +1,4 @@
+const { historicalFixtureCommand } = require('./historical-fixture.cjs');
 // Fictional fixtures only. Planning-safety mutation tests must use the disposable test workspace.
 const { chromium } = require('playwright');
 const { existsSync } = require('node:fs');
@@ -15,7 +16,7 @@ const draftKey = 'millplan.planning-draft.v1';
 const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kuala_Lumpur' }).format(new Date());
 const addDay = n => new Date(Date.parse(`${today}T12:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 const json = async route => { const response = await fetch(base + route); const data = await response.json(); assert.equal(response.status, 200, JSON.stringify(data)); return data; };
-const command = async value => { const current = await json('/api/workspace'); const response = await fetch(base + '/api/commands', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ expectedRevision: current.revision, commandId: randomUUID(), command: value }) }); const data = await response.json(); assert.equal(response.status, 200, JSON.stringify(data)); return data; };
+const command = async value => { const fixture = await historicalFixtureCommand(base, value); if (fixture) return fixture;  const current = await json('/api/workspace'); const response = await fetch(base + '/api/commands', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ expectedRevision: current.revision, commandId: randomUUID(), command: value }) }); const data = await response.json(); assert.equal(response.status, 200, JSON.stringify(data)); return data; };
 const wait = async fn => { for (let index = 0; index < 120; index += 1) { if (await fn()) return; await new Promise(resolve => setTimeout(resolve, 100)); } throw Error('Planning safety state did not arrive.'); };
 const pass = message => console.log('PASS ' + message);
 const jobByOrder = async orderNo => (await json('/api/workspace')).state.jobs.find(job => job.orderNo === orderNo);
@@ -112,7 +113,7 @@ function manualInput(orderNo, date, lineId, quantityMt) {
     await draft.getByRole('button', { name: 'Save draft to this browser', exact: true }).click(); await draft.getByRole('status').filter({ hasText: 'Saved in this browser only' }).waitFor();
     const savedDraftRaw = await page.evaluate(key => localStorage.getItem(key), draftKey); assert.ok(savedDraftRaw);
     await draft.getByRole('button', { name: 'Cancel', exact: true }).click(); await page.reload(); draft = await openDraft(); await draft.getByRole('button', { name: 'Resume saved draft', exact: true }).click();
-    quantity = draft.locator('input[aria-label^="Quantity draft-"]').first(); assert.equal(Number(await quantity.inputValue()), edited); assert.equal(await draft.getByRole('button', { name: /Confirm \d+ cards/ }).isEnabled(), true);
+    quantity = draft.locator('input[aria-label^="Quantity draft-"]').first(); assert.equal(Number(await quantity.inputValue()), edited); assert.equal(await draft.getByRole('button', { name: /Confirm \d+ proposals/ }).isEnabled(), true);
     await quantity.fill(String(Math.max(.001, edited - 1))); page.once('dialog', dialog => dialog.accept()); await page.keyboard.press('Escape'); await draft.waitFor({ state: 'hidden' });
     draft = await openDraft(); await draft.getByRole('button', { name: 'Resume saved draft', exact: true }).click(); quantity = draft.locator('input[aria-label^="Quantity draft-"]').first(); assert.equal(Number(await quantity.inputValue()), edited);
     const second = await context.newPage(); await second.goto(base); await second.evaluate(key => { const value = JSON.parse(localStorage.getItem(key)); value.savedAt = new Date(Date.parse(value.savedAt) + 1000).toISOString(); localStorage.setItem(key, JSON.stringify(value)); }, draftKey); await second.close();
@@ -122,13 +123,14 @@ function manualInput(orderNo, date, lineId, quantityMt) {
 
     await command({ type: 'job.create', input: manualInput('QA-STALE', addDay(2), 'PM1', 1) });
     await page.reload(); draft = await openDraft(); await draft.getByRole('button', { name: 'Resume saved draft', exact: true }).click();
-    await draft.getByRole('alert').filter({ hasText: 'workspace changed' }).waitFor(); assert.equal(await draft.getByRole('button', { name: /Confirm \d+ cards/ }).isDisabled(), true);
-    await draft.getByRole('button', { name: 'Regenerate draft', exact: true }).click(); await wait(async () => await draft.getByRole('button', { name: /Confirm \d+ cards/ }).isEnabled());
+    await draft.getByRole('alert').filter({ hasText: 'workspace changed' }).waitFor(); assert.equal(await draft.getByRole('button', { name: /Confirm \d+ proposals/ }).isDisabled(), true);
+    await draft.getByRole('button', { name: 'Regenerate draft', exact: true }).click(); await wait(async () => await draft.getByRole('button', { name: /Confirm \d+ proposals/ }).isEnabled());
 
     const beforeCommit = (await json('/api/workspace')).state.jobs.length;
-    const cardCount = await draft.locator('.draft-edit-table tbody tr').count(); const requestIds = []; let lostAttempts = 0, allowExplicitRetry = false;
+    // Continuation proposals update an existing ID; only editable new rows create cards.
+    const cardCount = await draft.locator('input[aria-label^="Quantity draft-"]').count(); const requestIds = []; let lostAttempts = 0, allowExplicitRetry = false;
     const lost = async route => { const body = route.request().postDataJSON(); if (body.command?.type === 'planning.commitDraft') { requestIds.push(body.commandId); if (!allowExplicitRetry) { if (lostAttempts++ === 0) await route.fetch(); await route.abort(); return; } } await route.continue(); };
-    await page.route('**/api/commands', lost); await draft.getByRole('button', { name: /Confirm \d+ cards/ }).click();
+    await page.route('**/api/commands', lost); await draft.getByRole('button', { name: /Confirm \d+ proposals/ }).click();
     await draft.getByRole('alert').filter({ hasText: 'previous save needs confirmation' }).waitFor(); await page.getByRole('button', { name: 'Retry connection', exact: true }).waitFor(); await wait(async () => (await json('/api/workspace')).state.jobs.length === beforeCommit + cardCount);
     const pendingDraftRaw = await page.evaluate(key => localStorage.getItem(key), draftKey); assert.ok(JSON.parse(pendingDraftRaw).pendingCommit?.commandId);
     allowExplicitRetry = true;

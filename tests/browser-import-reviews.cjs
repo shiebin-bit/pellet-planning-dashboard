@@ -1,3 +1,4 @@
+const { historicalFixtureCommand } = require('./historical-fixture.cjs');
 // All fixtures are fictional. This test replaces data only on an explicitly isolated loopback server.
 const { chromium } = require('playwright');
 const { existsSync } = require('node:fs');
@@ -13,7 +14,7 @@ if (!base || process.env.BROWSER_ALLOW_REPLACE !== '1' || !['127.0.0.1', 'localh
 const output = path.resolve('output/playwright/import-reviews');
 const json = async route => { const response = await fetch(base + route); assert.equal(response.status, 200, await response.clone().text()); return response.json(); };
 const workspace = () => json('/api/workspace');
-const command = async body => {
+const command = async body => { const fixture = await historicalFixtureCommand(base, body); if (fixture) return fixture;
   const current = await workspace();
   const response = await fetch(base + '/api/commands', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ expectedRevision: current.revision, commandId: randomUUID(), command: body }) });
   const value = await response.json(); assert.equal(response.status, 200, JSON.stringify(value)); return value;
@@ -107,7 +108,7 @@ const source = (fileName, digestCharacter, rows) => ({ fileName, sheetName: 'Ord
       const box = await mobileDialog.boundingBox(); assert.ok(box && box.x >= 0 && box.x + box.width <= viewport.width + 1 && box.y >= 0 && box.y + box.height <= viewport.height + 1, JSON.stringify(box));
       await page.screenshot({ path: path.join(output, 'review-' + viewport.width + '.png') }); await page.keyboard.press('Escape'); await mobileDialog.waitFor({ state: 'hidden' });
     }
-    const portable = await json('/api/backup'); assert.equal(portable.schemaVersion,6); assert.ok(portable.sourceData.discrepancies.length >= 51);
+    const portable = await json('/api/backup'); assert.equal(portable.schemaVersion,7); assert.ok(portable.sourceData.discrepancies.length >= 51);
     assert.deepEqual(errors, []);
     console.log('PASS import review queue preserves active orders, protects reserved quantity, supports selected corrections/dismissal/pagination, traps focus and fits mobile');
   } finally {

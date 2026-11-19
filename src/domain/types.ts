@@ -76,6 +76,12 @@ export interface Job {
   createdAt: string;
   updatedAt: string;
   lockedSegments?: ScheduleSegment[];
+  /** Server projection of separately persisted future continuation capacity. */
+  continuationPlan?: {
+    remainingQuantityMt: number;
+    plannedAt: string;
+    segments: ScheduleSegment[];
+  };
   issue?: {
     reason: string;
     reportedAt: string;
@@ -137,6 +143,7 @@ export interface DateLineWorkingHoursOverride {
 }
 
 export interface Settings {
+  linePreferences?: import('./linePreferences').LinePreferences;
   siteName: string;
   timeZone: string;
   dayStart: string;

@@ -46,7 +46,7 @@ function preview(): InventoryDraftPreview {
       strategy: "mto", purpose: "mto", sourceOrderId: "source-1", orderNo: "DO-1", dueDate: "2026-11-05",
       notBefore: "2026-11-01T00:00:00.000Z", sourceAllocationQuantity: 2, quantity: 2, medication: "", fmrOmed: "",
     }],
-    jobs: [draftJob], backlog: [],
+    jobs: [draftJob], backlog: [], carryovers: [], carryoverBacklog: [],
     utilization: [{ date: "2026-11-01", lineId: "PM1", hours: 0.25, availableHours: 12 }],
     late: [],
   };
@@ -62,6 +62,21 @@ function saved() {
 }
 
 describe("browser planning draft storage", () => {
+  it("retains a carryover-only commit and its exact retry body after reload", () => {
+    const draft = saved(), storage = new MemoryStorage();
+    draft.jobs = []; draft.preview.jobs = []; draft.preview.demand = [];
+    draft.preview.carryovers = [{ jobId: 'original-card', kind: 'continuation', remainingQuantity: 3, unit: 'MT', priorityDate: '2026-10-30', ordinal: 0, originalDate: '2026-10-30', originalLineId: 'PM1', date: '2026-11-01', lineId: 'PM1', notBefore: '2026-11-01T00:00:00.000Z', segments: [{ jobId: 'original-card', lineId: 'PM1', kind: 'production', start: Date.parse('2026-11-01T00:00:00.000Z'), end: Date.parse('2026-11-01T01:00:00.000Z') }] }];
+    expect(savePlanningDraft(storage,draft).ok).toBe(true);
+    const prepared = preparePlanningDraftCommit(storage, draft, 'carry-retry-id');
+    expect(prepared.ok).toBe(true);
+    const restored = readPlanningDraft(storage, { revision: 6, updatedAt: UPDATED });
+    expect(restored).toMatchObject({ ok: true, value: { canRetryPendingCommit: true, draft: { pendingCommit: { commandId: 'carry-retry-id', command: { jobs: [], carryovers: draft.preview.carryovers } } } } });
+    if (!prepared.ok) return;
+    const tampered = structuredClone(prepared.value.draft);
+    tampered.pendingCommit!.command.carryovers[0].remainingQuantity = 4;
+    expect(() => parsePlanningDraft(JSON.stringify(tampered))).toThrow(/exactly match/);
+  });
+
   it("round trips one strict v1 draft and reports workspace staleness without rebasing", () => {
     const storage = new MemoryStorage(); const draft = saved();
     expect(savePlanningDraft(storage, draft, { draftInstanceId: null }).ok).toBe(true);

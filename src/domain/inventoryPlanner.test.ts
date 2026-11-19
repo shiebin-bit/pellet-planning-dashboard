@@ -108,7 +108,7 @@ describe('inventory draft scheduling', () => {
     const state = createEmptyState();
     const result = planInventoryDraft(state, [demand(), demand({ key: 'order-2', sourceOrderId: 'order-2', orderNo: 'DO2', quantity: 50 })], { fromDate: FROM, toDate: FROM }, 3, NOW);
     expect(result.jobs).toHaveLength(1);
-    expect(result.jobs[0]).toMatchObject({ sourceOrderId: null, lineId: 'PM1', quantity: 150 });
+    expect(result.jobs[0]).toMatchObject({ sourceOrderId: null, lineId: 'PM3', quantity: 150 });
     expect(result.jobs[0].sourceAllocations).toEqual([
       { sourceOrderId: 'order-1', plannedQuantity: 100 },
       { sourceOrderId: 'order-2', plannedQuantity: 50 },
@@ -140,7 +140,7 @@ describe('inventory draft scheduling', () => {
     ], { fromDate: FROM, toDate: FROM, combineSameProduct: false }, 3, NOW);
     expect(result.jobs).toHaveLength(2);
     expect(result.jobs.map(job => job.orderNo)).toEqual(['A1', 'A2']);
-    expect(result.jobs.map(job => job.lineId)).toEqual(['PM1', 'PM2']);
+    expect(result.jobs.map(job => job.lineId)).toEqual(['PM3', 'PM3']);
   });
   it('caps a combined physical card at 500 distinct source orders', () => {
     const orders = Array.from({ length: 501 }, (_, index) => demand({

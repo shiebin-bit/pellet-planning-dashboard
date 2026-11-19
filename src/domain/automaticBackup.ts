@@ -16,7 +16,7 @@ export interface AutomaticBackupSuccess {
 
 export interface AutomaticBackupStatus {
   enabled: boolean;
-  format: 'portable-v5' | 'portable-v6';
+  format: 'portable-v5' | 'portable-v6' | 'portable-v7';
   intervalHours: number;
   retentionCount: number;
   state: AutomaticBackupState;

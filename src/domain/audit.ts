@@ -54,6 +54,7 @@ export function getSettingsHistoryChanges(before: Settings, after: Settings): Hi
   addChange(changes, "settings.availableHours", before.availableHours, after.availableHours);
   addChange(changes, "settings.changeoverMinutes", before.changeoverMinutes, after.changeoverMinutes);
   addChange(changes, "settings.bagWeightKg", before.bagWeightKg, after.bagWeightKg);
+  addChange(changes, "settings.linePreferences", compactList(before.linePreferences ? [before.linePreferences] : []), compactList(after.linePreferences ? [after.linePreferences] : []));
   for (const lineId of ["PM1", "PM2", "PM3", "PM4"] as const) {
     addChange(changes, `settings.rates.${lineId}`, before.rates[lineId], after.rates[lineId]);
   }

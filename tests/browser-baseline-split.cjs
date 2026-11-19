@@ -28,8 +28,11 @@ async function workbook(file,date) {
     const unit=index===0?'Bags':'MT',quantity=index===0?100:index===1?10:index===2?20:1,material=index===0?bagMaterial:bulkMaterial;
     for(const [column,value] of [[3,String(8800001+index)],[4,new Date(planDate+'T00:00:00Z')],[7,'Fictional customer '+index],[10,'Fictional farm '+index],[12,material],[13,unit==='Bags'?'FS 5220CCB FICTIONAL FEED 25KG':'FS 5220MER FICTIONAL FEED IN BULK'],[16,quantity],[17,unit],[18,3],[19,''],[20,null]]) daily.getCell(131+index,column).value=value;
   }
-  for(const [name,unit,material,quantity,doNo] of [['bag order','BAG',bagMaterial,100,'8800001'],['bulk order','MT',bulkMaterial,10,'8800002']]) {
-    const sheet=book.addWorksheet(name);sheet.addRow(['Delivery','Goods movement stat.','Goods Issue Date','Name of sold-to party','Name of the ship-to party','Material','Description','Delivery quantity','Sales Unit']);sheet.addRow([doNo,'A',new Date(planDate+'T00:00:00Z'),'Fictional SAP customer','Fictional SAP farm',material,'FS 5220MER FICTIONAL FEED',quantity,unit]);
+  const sapHeaders=['Delivery','Goods movement stat.','Goods Issue Date','Name of sold-to party','Name of the ship-to party','Material','Description','Delivery quantity','Sales Unit'];
+  const bag=book.addWorksheet('bag order'),bulk=book.addWorksheet('bulk order');bag.addRow(sapHeaders);bulk.addRow(sapHeaders);
+  for(let index=0;index<62;index++){
+    const bags=index===0,quantity=bags?100:index===1?10:index===2?20:1;
+    (bags?bag:bulk).addRow([String(8800001+index),'A',new Date(planDate+'T00:00:00Z'),'Fictional SAP customer '+index,'Fictional SAP farm '+index,bags?bagMaterial:bulkMaterial,bags?'FS 5220CCB FICTIONAL FEED 25KG':'FS 5220MER FICTIONAL FEED IN BULK',quantity,bags?'BAG':'MT']);
   }
   await book.xlsx.writeFile(file);
 }
@@ -56,6 +59,13 @@ const fits = async locator => assert.ok(await locator.evaluate(element=>{const b
     await page.keyboard.press('Escape');await modal.waitFor({state:'hidden'});assert.notEqual(await page.evaluate(()=>document.body.style.overflow),'hidden');assert.equal(await trigger.evaluate(element=>element===document.activeElement),true);
     await page.setViewportSize({width:1366,height:900});await trigger.click();await modal.getByLabel('Baseline Excel files').setInputFiles([last,first]);await wait(()=>modal.getByRole('button',{name:'Review baseline import',exact:true}).isEnabled());await modal.getByRole('button',{name:'Review baseline import',exact:true}).click();await modal.getByRole('checkbox',{name:/I checked/}).check();await modal.getByRole('button',{name:'Confirm baseline import',exact:true}).click();await modal.waitFor({state:'hidden'});assert.notEqual(await page.evaluate(()=>document.body.style.overflow),'hidden');await page.unroute('**/api/inventory/daily-import/preview');
     console.log('PASS Baseline/SAP single modal, chronological multi-file draft, read-only failed/retry preview, scroll, focus and narrow layout');
+    assert.deepEqual((await json('/api/inventory/orders')).orders,[],'Neither dated baseline projects its 62 lower-table orders');
+    assert.equal((await json('/api/data')).total,0);assert.equal((await json('/api/backup')).baselineHistory.observations.length,0);
+    await trigger.click();await modal.getByRole('button',{name:/SAP orders/}).click();await modal.getByLabel('Excel order file').setInputFiles(last);
+    await wait(()=>modal.getByRole('button',{name:'Review import',exact:true}).isEnabled());await modal.getByRole('button',{name:'Review import',exact:true}).click();
+    await modal.getByRole('checkbox',{name:/I reviewed/}).check();await modal.getByRole('button',{name:'Confirm import',exact:true}).click();await modal.waitFor({state:'hidden'});
+    assert.equal((await json('/api/data')).total,62,'Only the separate next-day SAP tables admit orders');
+
     await page.getByRole('navigation',{name:'Main navigation'}).getByRole('button',{name:'Stock',exact:true}).click();const packaging=page.getByLabel('Stock packaging',{exact:true});await packaging.selectOption('Bags');await wait(async()=>await page.getByRole('button',{name:'Manage stock',exact:true}).count()===1);assert.match(await page.locator('.product-identity-title').innerText(),/5220CCB/);await packaging.selectOption('MT');await wait(async()=>await page.getByRole('button',{name:'Manage stock',exact:true}).count()===1);assert.match(await page.locator('.product-identity-title').innerText(),/5220MER/);await packaging.selectOption('');await wait(async()=>await page.getByRole('button',{name:'Manage stock',exact:true}).count()===2);
     await page.getByRole('tab',{name:'Daily stock',exact:true}).click();await page.getByLabel('Stock date',{exact:true}).fill(firstDate);await page.getByLabel('Daily stock packaging',{exact:true}).selectOption('Bags');await wait(async()=>await page.locator('.daily-stock-browser tbody tr').count()===1);assert.match(await page.locator('.daily-stock-browser tbody tr').innerText(),/Bags/);
     console.log('PASS Stock and Daily stock packaging filters and complete FS suffix labels');

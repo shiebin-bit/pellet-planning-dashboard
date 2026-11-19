@@ -16,6 +16,7 @@ import {
   type ScheduledJob,
   type Settings,
 } from "./types";
+import { validateLinePreferences } from './linePreferences';
 import {
   getCatalogHistoryChanges,
   getJobHistoryChanges,
@@ -132,7 +133,7 @@ export function getBoard(state: AppState, date: string): Board {
         availableMinutes > 0
           ? productionMinutes / availableMinutes
           : null,
-      plannedMt: datedJobs.reduce((sum, job) => sum + job.quantityMt, 0),
+      plannedMt: datedJobs.reduce((sum, job) => sum + job.quantityMt, 0) + jobs.filter(job => job.date !== date && job.continuationPlan).reduce((sum, job) => sum + plannedMtInWindow(job, start, end), 0),
       totalProductionMinutes: datedJobs.reduce(
         (sum, job) => sum + job.durationMinutes,
         0,
@@ -171,6 +172,21 @@ export function getScheduledJobs(state: AppState): ScheduledJob[] {
   validateSettings(state.settings);
   const scheduled = scheduleState(state);
   return LINE_IDS.flatMap((lineId) => scheduled.byLine[lineId]);
+}
+
+/** Quantity represented inside a time window, keeping historical and continuation quantities separate. */
+export function plannedMtInWindow(job: ScheduledJob, start: number, end: number): number {
+  const minutes = (segments: ScheduleSegment[], clip: boolean) => segments.filter(segment => segment.kind === 'production').reduce((sum, segment) => sum + Math.max(0, (clip ? Math.min(end, segment.end) - Math.max(start, segment.start) : segment.end - segment.start)), 0);
+  const continuation = job.continuationPlan;
+  if (!continuation) {
+    const total = minutes(job.segments, false);
+    return total > 0 ? job.quantityMt * minutes(job.segments, true) / total : 0;
+  }
+  const isFuture = (segment: ScheduleSegment) => continuation.segments.some(future => future.start === segment.start && future.end === segment.end && future.kind === segment.kind);
+  const history = job.segments.filter(segment => !isFuture(segment));
+  const originalTotal = minutes(history, false), futureTotal = minutes(continuation.segments, false);
+  return (originalTotal > 0 ? job.quantityMt * minutes(history, true) / originalTotal : 0)
+    + (futureTotal > 0 ? continuation.remainingQuantityMt * minutes(continuation.segments, true) / futureTotal : 0);
 }
 
 export function createJob(state: AppState, input: JobInput): AppState {
@@ -333,7 +349,10 @@ export function startJob(
     throw new Error("A job must have a positive quantity before it can start.");
   }
   const scheduled = scheduleState(state).byId.get(id);
-  if (!scheduled || scheduled.segments.length === 0) {
+  const isSuppressedPostedPlan =
+    current.continuationPlan?.remainingQuantityMt === 0 &&
+    current.continuationPlan.segments.length === 0;
+  if ((!scheduled || scheduled.segments.length === 0) && !isSuppressedPostedPlan) {
     throw new Error("The job cannot start because no production capacity is available.");
   }
   const now = startedAt;
@@ -344,7 +363,7 @@ export function startJob(
           status: "running" as const,
           actualStart: startedAt,
           actualEnd: null,
-          lockedSegments: scheduled.segments.map((segment) => ({ ...segment })),
+          lockedSegments: isSuppressedPostedPlan ? [] : scheduled!.segments.filter(segment => !job.continuationPlan?.segments.some(future => future.start === segment.start && future.end === segment.end && future.kind === segment.kind)).map((segment) => ({ ...segment })),
           updatedAt: now,
         }
       : job,
@@ -400,7 +419,7 @@ export function completeJob(
   const priorIssueReason = current.issue?.reason;
   const jobs = state.jobs.map((job) => {
     if (job.id !== id) return job;
-    const { issue: _issue, completionNote: _completionNote, ...withoutIssue } = job;
+    const { issue: _issue, completionNote: _completionNote, continuationPlan: _continuationPlan, ...withoutIssue } = job;
     return {
       ...withoutIssue,
       status: "completed" as const,
@@ -490,7 +509,7 @@ export function cancelJob(state: AppState, id: string): AppState {
   const now = new Date().toISOString();
   const jobs = state.jobs.map((job) => {
     if (job.id !== id) return job;
-    const { issue: _issue, ...withoutIssue } = job;
+    const { issue: _issue, continuationPlan: _continuationPlan, ...withoutIssue } = job;
     return { ...withoutIssue, status: "cancelled" as const, updatedAt: now };
   });
   return withEvent(
@@ -1169,7 +1188,7 @@ function scheduleState(state: AppState): ScheduleResult {
       )
       .sort(compareJobs);
     const fixed = jobs
-      .flatMap((job) => job.lockedSegments ?? [])
+      .flatMap((job) => [...(job.lockedSegments ?? []), ...(job.continuationPlan?.segments ?? [])])
       .filter((segment) => segment.lineId === lineId)
       .map((segment) => ({ start: segment.start, end: segment.end }))
       .sort(compareIntervals);
@@ -1233,9 +1252,19 @@ function scheduleState(state: AppState): ScheduleResult {
         if (production) segments.push(...production);
       }
 
+      // Continuation capacity is mutable future work, never part of the historical lock.
+      // Only the original timeline advances the original card sequence cursor.
+      if (job.continuationPlan && !job.lockedSegments?.length) {
+        const cutoff = Date.parse(job.continuationPlan.plannedAt);
+        segments = segments.filter(segment => segment.start < cutoff)
+          .map(segment => ({ ...segment, end: Math.min(segment.end, cutoff) }));
+      }
+      const originalEnd = maxOrNull(segments.map(segment => segment.end));
+      if (originalEnd !== null) cursor = Math.max(cursor ?? originalEnd, originalEnd);
+      if (job.continuationPlan) segments.push(...job.continuationPlan.segments.map(segment => ({ ...segment, jobId: job.id })));
+      segments.sort(compareSegments);
       const plannedStart = minOrNull(segments.map((segment) => segment.start));
       const plannedEnd = maxOrNull(segments.map((segment) => segment.end));
-      if (plannedEnd !== null) cursor = Math.max(cursor ?? plannedEnd, plannedEnd);
       const jobCalendar = getWorkingHoursForDate(state.settings, job.date, lineId);
       const businessEnd = businessDayStart(job.date, jobCalendar.dayStart) + jobCalendar.availableHours * 60 * MINUTE_MS;
       const scheduledJob: ScheduledJob = {
@@ -1465,6 +1494,7 @@ function normalizeInput(input: JobInput, settings: Settings): JobInput {
 }
 
 function validateSettings(settings: Settings, allowCalendarProjectionChange = false): void {
+  if (settings.linePreferences) validateLinePreferences(settings.linePreferences);
   requiredText(settings.siteName, "Site name");
   requiredText(settings.timeZone, "Time zone");
   timeToMinutes(settings.dayStart, "Day start");
@@ -1640,6 +1670,7 @@ function cloneJob(job: Job): Job {
   return {
     ...job,
     lockedSegments: job.lockedSegments?.map((segment) => ({ ...segment })),
+    ...(job.continuationPlan ? { continuationPlan: { ...job.continuationPlan, segments: job.continuationPlan.segments.map(segment => ({ ...segment })) } } : {}),
     ...(job.issue ? { issue: { ...job.issue } } : {}),
     ...(job.pauseIntervals ? { pauseIntervals: job.pauseIntervals.map((pause) => ({ ...pause })) } : {}),
     ...(job.sourceSnapshot ? { sourceSnapshot: { ...job.sourceSnapshot } } : {}),
@@ -1651,6 +1682,7 @@ function cloneSettings(settings: Settings): Settings {
   return {
     ...settings,
     rates: { ...settings.rates },
+    ...(settings.linePreferences ? { linePreferences: { ...settings.linePreferences, defaultPreferredLines: [...settings.linePreferences.defaultPreferredLines], rules: settings.linePreferences.rules.map(rule => ({ ...rule, preferredLines: [...rule.preferredLines] })) } } : {}),
     slowProductPrefixes: [...settings.slowProductPrefixes],
     downtime: settings.downtime.map((item) => ({ ...item })),
     ...(settings.workingHoursOverrides ? { workingHoursOverrides: settings.workingHoursOverrides.map(row => ({ ...row })) } : {}),

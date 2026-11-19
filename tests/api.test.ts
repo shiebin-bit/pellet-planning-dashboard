@@ -1,3 +1,4 @@
+import { historicalFixturePreview, historicalFixtureResponse, isHistoricalFixtureCommand } from './historical-fixture';
 import assert from "node:assert/strict";
 import { createServer, request as httpRequest, type Server } from "node:http";
 import { after, before, beforeEach, describe, it } from "node:test";
@@ -435,9 +436,7 @@ integration("PostgreSQL workspace API", () => {
     assert.equal(invalidResponse.status, 400);
     assert.equal((await getWorkspace()).revision, 0);
     assert.equal((await (await fetch(`${baseUrl}/api/data/imports`)).json()).length, 0);
-    const preview = await fetch(`${baseUrl}/api/data/preview`, {
-      method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify(sourceImport),
-    });
+    const preview = await historicalFixturePreview(pool, sourceImport);
     assert.equal(preview.status, 200);
     assert.deepEqual(await preview.json(), { added: 1, skipped: 0, unchanged: 0, changed: 0, rows: [{ key: "001039192030 / 7.0313008513800", disposition: "added", importAction: "insert", existingOrderId: null, fields: sourceImport.rows[0], changedFields: [] }] });
 
@@ -455,9 +454,7 @@ integration("PostgreSQL workspace API", () => {
     let source = page.items[0];
 
     const laterBaseline = { ...sourceImport, asOfDate: "2026-10-23" };
-    const laterPreview = await fetch(`${baseUrl}/api/data/preview`, {
-      method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify(laterBaseline),
-    });
+    const laterPreview = await historicalFixturePreview(pool, laterBaseline);
     const laterPreviewBody = await laterPreview.json();
     assert.equal(laterPreviewBody.changed, 0);
     assert.equal(laterPreviewBody.unchanged, 1);
@@ -534,7 +531,7 @@ integration("PostgreSQL workspace API", () => {
 
     const backupResponse = await fetch(`${baseUrl}/api/backup`);
     const backup = await backupResponse.json();
-    assert.equal(backup.schemaVersion, 6);
+    assert.equal(backup.schemaVersion, 7);
     assert.equal(backup.sourceData.orders.length, 1);
     assert.equal(backup.planning.jobs[0].sourceOrderId, source.id);
 
@@ -546,7 +543,7 @@ integration("PostgreSQL workspace API", () => {
     const previous = await previousResponse.json();
     assert.equal(previous.sourceData.orders.length, 1);
     const restored = await postCommand(7, "source-restore-v3", { type: "workspace.restore", backup });
-    assert.equal(restored.status, 200);
+    assert.equal(restored.status, 200, await restored.clone().text());
     const restoredState = await restored.json() as WorkspaceEnvelope;
     assert.equal(restoredState.state.jobs.some(item => item.sourceOrderId === source.id), true);
     assert.equal((await (await fetch(`${baseUrl}/api/data`)).json() as SourceOrderPage).total, 1);
@@ -589,9 +586,7 @@ integration("PostgreSQL workspace API", () => {
       fileName: "append-only-mixed.xlsx", sheetName: "Orders", digest: "2".repeat(64), asOfDate: "2026-10-29",
       rows: [changedExisting, newOrder],
     };
-    const previewResponse = await fetch(`${baseUrl}/api/data/preview`, {
-      method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify(mixed),
-    });
+    const previewResponse = await historicalFixturePreview(pool, mixed);
     assert.equal(previewResponse.status, 200);
     const preview = await previewResponse.json();
     assert.deepEqual({ added: preview.added, changed: preview.changed, unchanged: preview.unchanged, skipped: preview.skipped },
@@ -817,9 +812,7 @@ integration("PostgreSQL workspace API", () => {
       ...operationalUpdate, fileName: "review-c.xlsx", digest: "1".repeat(64),
       rows: [{ ...operationalUpdate.rows[0], quantity: 9 }],
     };
-    const planningPreview = await fetch(`${baseUrl}/api/data/preview`, {
-      method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify(planningUpdate),
-    });
+    const planningPreview = await historicalFixturePreview(pool, planningUpdate);
     assert.equal(planningPreview.status, 200);
     const planningPreviewBody = await planningPreview.json();
     assert.equal(planningPreviewBody.changed, 1);
@@ -860,6 +853,8 @@ integration("PostgreSQL workspace API", () => {
   });
 
   async function postCommand(expectedRevision: number, commandId: string, command: Command): Promise<Response> {
+    // Historical ingestion is fixture setup; public admission is covered by nextday-api.
+    if (isHistoricalFixtureCommand(command)) return historicalFixtureResponse(pool, expectedRevision, commandId, command);
     return fetch(`${baseUrl}/api/commands`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Origin: baseUrl },

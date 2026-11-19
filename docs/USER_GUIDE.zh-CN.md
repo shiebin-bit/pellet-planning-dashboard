@@ -81,7 +81,7 @@ Daily stock 的 **Enter physical count** 会立即打开盘点弹窗，载入所
 
 Settings → **Backup & recovery** → Download backup 下载整个 workspace JSON。Restore JSON backup 会先预览，再由 Replace workspace 确认替换；它不会合并资料。替换或数据库版 Reset demo 前的一份 workspace 可以下载恢复，但只保留最近一次。
 
-数据库新版备份为 version 6，包含排产、Orders、库存和完整流水；离线版为 version 2，包含排产及产品清单。旧版 version 1 仍能读取，但没有产品清单，恢复后清单为空；预览会明确提醒。恢复前应下载当前备份。
+数据库新版备份为 version 7，包含排产、Orders、库存、完整流水、接收批次、续做计划及产线偏好；离线版为 version 2。旧版仍能读取，恢复预览会提示缺少的资料；旧订单没有接收批次时不会自动加入新需求队列。恢复前下载当前备份。
 
 旧离线资料：在原本浏览器、原本 HTML 路径打开 → 下载 JSON → 在数据库版导入。不会自动迁移。
 
@@ -90,9 +90,9 @@ Docker 数据库版会在服务端每24小时自动保存一份 version5 JSON，
 
 ## 从 Excel 导入订单（Orders）
 
-1. 打开 Orders → Import Excel，选择 `.xlsx` 文件（最多 5 MB、2,000 行）。
-2. 确认工作表、表头行和 13 个栏位的对应关系。文本日期可选 MM/DD/YYYY、DD/MM/YYYY 或 YYYY/MM/DD；请核对 Excel 实际格式。
-3. 填写 Excel as-of date（这些剩余天数是哪一天的数据），默认今天。
+1. 打开 Orders → Import Excel → SAP orders，选择 `.xlsx`／`.xlsm` 文件（最多 5 MB、2,000 行）。
+2. 系统读取 bag order 和 bulk order，只接收 **Goods Issue Date＝马来西亚今天＋1 天**。例如今天 19 号，只接收 20 号；更早、较远及无效日期会分别显示排除数量。先筛日期，再检查符合订单的其他栏位，因此旧单的错误数量不会阻挡本次导入。
+3. 日期由服务器决定，只能查看，不能自选。若使用手动列映射，日期栏必须对应 Goods Issue Date，同样只接收隔天。跨过午夜后需要重新预览，已选择的文件会保留。没有符合订单时不会保存空批次。
 4. 预览新订单和会跳过的已有订单。差异列出 Saved · retained（保留）与 Excel · skipped（跳过），只供核对，不会覆盖旧值。0、空白（Empty）和未提供（Not provided）分开显示。错误须全部修正才可保存；确认后只添加新订单，不自动排产。
 5. 在 Orders 搜寻 DO、客户、物料或描述。快捷视图为 All orders（全部）、Needs production（扣除预留库存及已有未完成排程后仍有缺口）、Ready for pickup（预留现货已覆盖剩余未取数量）及 Needs review（待核对）。没有库存基准的旧订单按关联卡片及生产状态判断。Advanced filters 可展开交期、单位、生产状态、交货状态、逾期及导入批次；快捷视图、搜索和高级筛选同时生效，Clear filters 全部清除。每页 50 条，顶部统计包含所有匹配订单。点击 DO 编号会弹出订单详情，关闭后回到原来的列表位置。主列表分为七栏，将交货日和生产期限放在一起，生产缺口单独突出，取货天数放在状态下。按 Breakdown 展开现货预留、累计生产、已取货及已排未入库数量。Bags 显示整数，MT 保留三位小数，避免小缺口被四舍五入隐藏。主列表会按栏宽换行；窄屏可用表格上方的 Left／Right 按钮左右查看，操作栏固定在右侧。
 6. 点 DO 查看完整字段、原始天数、来源版本、Medication、FMR / OMED 和导入历史。
@@ -118,7 +118,7 @@ Orders 表格右侧的 Plan（完整操作名称为 Plan production）或 Planni
 
 四条线默认每天 07:00–19:00。Settings → Workspace 可修改 Planning day starts 和 Daily available hours，画面会预览结束时间，跨午夜时显示 +1 day。按 Save settings 后，从服务器当前马来西亚日期开始采用新工时，重算今天及之后未开始的排程；当天排不下的生产延到下一个工作时段。较早排产日期的计划沿用旧班次，已开始、暂停、完成的计划及实际时间保留。保存工时不会增删卡片或改变数量。Day 显示当班，Full plan 显示跨日分段。排产日期不会因队列延后而被改写，请同时查看计算后的开始日期。
 
-数据库 Download backup 生成版本 6，包含排产、Orders 订单、导入批次、原始版本、库存及完整流水。旧版仍可读取；恢复前会提示缺少的订单、产品清单或库存资料，并保留上一份工作区供下载。含订单或库存的备份须在数据库版恢复。
+数据库 Download backup 生成版本 7，包含排产、Orders、导入版本、库存流水、接收批次及续做资料。旧版仍可读取，恢复前提示缺少的资料并保留上一份工作区。含订单或库存的备份须在数据库版恢复。
 
 每次导入都应核对文件日期、数量／单位及变更预览，确认后才保存。公开仓库和自动测试只使用虚构工作簿。
 
@@ -137,7 +137,7 @@ Orders、Stock 和 Daily stock 的产品主标题统一为 **5220 · 25kg Bags**
 
 Stock 的标准 Make for stock 库存低于目标时，在 Available 下显示 **Short X Bags／MT**，缺口按「安全库存 − 可用库存」计算。药物／FMR 版本不会混入标准补库存缺口。首次载入显示 Loading，失败时可按 Retry loading stock；刷新期间显示上次成功读取的余额及更新提示，不会把尚未载入的资料当成零或未建立基准。
 
-Daily stock 可选日期查看 Opening、Production、Received、Return、Rework、Issue、Adjustment、Closing，并按 Enter physical count 输入盘点数量及原因，预览差异后确认。SAP orders 只添加新订单；Baseline import 会保存日期表原始 Remark 和每日库存。盘点差异须勾选确认并填写原因，生成调整而不覆盖原流水。
+Daily stock 可选日期查看 Opening、Production、Received、Return、Rework、Issue、Adjustment、Closing，并按 Enter physical count 输入盘点数量及原因，预览差异后确认。SAP orders 只添加符合隔天日期的新订单；Baseline import 只保存上方库存及每日变动，不读取下方订单或 Remark。盘点差异须勾选确认并填写原因，生成调整而不覆盖原流水。
 
 切换 Daily stock 日期时，先隐藏旧日期资料，等待新日期完成载入；读取失败可直接重试。若只是产品说明无法读取，日报数量仍按完整 material code 显示，可用 Retry product details 重新取得说明。
 
@@ -147,15 +147,19 @@ Daily stock 可选日期查看 Opening、Production、Received、Return、Rework
 
 打开生产卡片后，顶部 **Orders in this batch** 显示订单数、批次总量，以及每张订单的 DO、计划数量、客户、交期和已生产数量。未开始的卡片若有可合并对象，会显示 **Combine with other cards**；当前卡片已勾选，再选择其他卡片，核对交期和总量后确认。一次最多 500 张订单，原卡片保留在 History。旧卡片未保存客户或交期时，从已保存订单补充显示，卡片原数量与来源快照保持不变。
 
-在 Orders 或 Planning board 按 Generate planning，选择日期范围并生成草稿。系统先用兼容现货、扣除已有未完成排程，再按交货日期安排订单缺口，最后补安全库存。四条产线均可用，沿用 Settings 保存的开工时间、每日工时、产能、换料和停机设置。修改工时后重新生成草稿，系统会按新容量调整分批数量与日期；已保存的卡片不会被自动增删。大订单可拆到不同日期／产线，袋数为整数；未排数量会保留。负责人可修改草稿数量、日期和产线，确认后才整批保存，原有卡片不移动。
+在 Orders 或 Planning board 按 Generate planning，先建立库存基准，再选择排程范围并生成草稿。顺序是：**在制续做 → 较早接收批次的未完成需求 → 新批次需求 → MTS 补库存**，同批次保留首次导入顺序。系统根据兼容现货预留、已取货及已排未入库数量计算缺口；已备齐但还没取货的订单不重复排产，HOLD／CANCEL／待核对订单不自动安排。缺少接收批次的旧订单不会自动混入新需求。
+
+草稿分为 **Continue（续做）／Carry over（结转）／New（新增）**。过期、未开始且未入账的卡片提出原卡改期，保留 ID、数量和订单分配；已开始或有实际产量的卡片保留原 PM 和实际时间，只预约剩余产量所需容量，历史锁定时段不重写。确认后才整批保存，午夜不会自行移动卡片，未涉及的未来卡片保持原位。容量不足的部分列在待排缺口，只有结转而没有新卡也能确认。
+
+四条产线都可生产，沿用 Settings 保存的工时、产能、换料、停机及 Line preferences。需求优先级先于产线偏好；先找最早日期，再选惯用 PM，同日不够便分流到其他 PM，同等惯用 PM 选预计较早完成的。修改规则后重新生成草稿，已确认卡片不自动搬动。新增卡片仍可修改数量、日期和产线；袋数保持整数。
 
 开始后，在卡片内 Record production quantity 填本次新增产量及日期，可分次入库。Done 填最终累计产量，包括已入账部分，系统只补差额。订单内 Record collection 填本次取货数量；全部取完才 OUT。Stock 的流水可 Correct output 或 Reverse collection，必须填写原因，原记录保留。
 
-数据库备份现为版本 4，包含订单、库存和完整流水。恢复旧版本前会提示不含库存；恢复前会保留完整副本。原有示范卡片不会自动产生真实库存流水。页面的最近盘点日期仅是库存核对边界，之后实际发生的生产、取货及调整仍须录入。
+数据库备份现为版本 7。恢复旧版本会提示其缺少的库存、接收批次或续做资料，并保留完整副本。原有示范卡片不会自动产生真实库存流水。最近盘点日期仅是库存核对边界，之后实际发生的生产、取货及调整仍须录入。
 
 ## Settings 标签与卡片预览
 
-Settings 分为 Workspace、Production rules、Unavailable periods、Products、Stock policies（数据库版）及 Backup & recovery。切换这些标签保留输入草稿，页面上方会固定显示 Save settings 和未保存提示。MT/hr 决定一批货需要多少生产时间；每日工时决定一天可以排多少生产。例如每小时 10 MT，8 小时最多安排 80 MT，12 小时最多安排 120 MT，换料及停机另行扣除。Save settings 只保存工作区、产能及停机列表；产品清单和库存政策各自保存，互不覆盖。如果其他标签有无效栏位，保存会自动打开对应标签并聚焦栏位。离开 Settings 页面前，如工作时间、产能或停机列表尚未保存，会询问是否放弃；取消可继续编辑，确认才离开。刷新或关闭浏览器也会使用浏览器的未保存提醒。产品及库存表单仍各自保存。
+Settings 分为 Workspace、Production rules、Unavailable periods、Products、Stock policies（数据库版）及 Backup & recovery。切换这些标签保留输入草稿，页面上方会固定显示 Save settings 和未保存提示。MT/hr 决定一批货需要多少生产时间；每日工时决定一天可以排多少生产。例如每小时 10 MT，8 小时最多安排 80 MT，12 小时最多安排 120 MT，换料及停机另行扣除。Save settings 保存工作区、产能、产线偏好及停机列表；产品清单和库存政策各自保存，互不覆盖。如果其他标签有无效栏位，保存会自动打开对应标签并聚焦栏位。离开 Settings 页面前，如工作时间、产能或停机列表尚未保存，会询问是否放弃；取消可继续编辑，确认才离开。刷新或关闭浏览器也会使用浏览器的未保存提醒。产品及库存表单仍各自保存。
 
 排程卡片太窄时，鼠标悬停或用 Tab 聚焦可预览完整产品编号、说明、数量、订单、完整计划起止日期、状态及 bin。Escape 收起预览，Enter／点击打开完整详情；Space 开始键盘移动，方向键移动，Escape 取消移动。触屏继续点击查看详情，长按拖动。
 
@@ -183,16 +187,16 @@ Planning 的 Now 线表示当前马来西亚时间，只在所查看的时间范
 
 Excel 重复订单仍不会自动覆盖。差异保存于 Orders → **Import review queue**：打开记录，对照 Current 与 Imported candidate，勾选已核对字段，填写原因，再 Apply selected fields；不采用的差异可填写原因后 Dismiss review。DO、完整 Material code、单位和受保护字段不可覆盖。已有预留／排程／实际生产／取货时，不允许直接改订单数量。审核更正新增来源版本，历史卡片及库存流水保留原记录。
 
-数据库完整备份现在为 version 6，包含审核记录与实时进度样本；旧版本仍可恢复，但缺少的审核／进度记录会清空，恢复前会提醒并保留上一份完整工作区。离线备份仍为 version 2。
+数据库完整备份现在为 version 7，包含审核、实时进度、接收批次及续做记录；旧版本仍可恢复，缺少的资料在恢复前会提醒，并保留上一份完整工作区。离线备份仍为 version 2。
 
-## 两种 Excel 导入与历史状态
+## 两种 Excel 导入与历史衔接
 
 按 Import Excel 后先选来源，切换来源不会清掉尚未保存的文件和草稿。弹窗内容独立滚动，底部确认按钮保持可见；Cancel／Escape 关闭后回到原清单。
 
-- **Baseline import**：选择自制的26th、27th等日期表，可一次选多份文件，按日期先后预览。保留每一天的库存栏与每张订单的原始Remark。空台账的首批记录Opening和每日汇总变动；已有台账时保存原日报，确认盘点差异及原因后才生成调整，不重新加一次全天产量或扣一次全天出货。
-- **SAP orders**：读取bag order／bulk order或原有手动列映射。只添加新DO＋完整Material组合；旧单的数量、日期、人工字段、生产和交货状态保留。新出现且在文件日期前已经过期的单会先暂停排产，需核对后释放。
+- **Baseline import**：选择自制的 26th、27th 等日期表，可多份按日期预览。**只读取上方库存和每日变动**，完全忽略下方订单、Remark、Medication 和 FMR／OMED；不会建单、改状态、改预留或判断订单缺失。下方 DONE／CANCEL 即使没有日期，也不会影响库存导入。空台账首批记录 Opening 和每日汇总变动；已有台账时只保存原日报，确认差异及原因后才调整余额，不重放全天生产或出货。
+- **SAP orders**：读取 bag order／bulk order，只接收服务器马来西亚日期的隔天 Goods Issue Date。只添加新 DO＋完整 Material 组合；旧单数量、日期、人工字段及执行状态保留，差异进入审核。首次接收的批次日期和顺序固定，重复导入不会把旧单提升成新优先级。文件没有某张单，不代表删除、取消或 OUT。
 
-DONE是已经备齐，OUT是已取走，CANCEL是取消，HOLD是暂缓。日期、Delivery lead和Days outstanding即使仍有数字，也不能把DONE／CANCEL变回待生产。DONE后来变空白，或旧单在最新日期表消失，都会保留并标记待核对；不会直接删除或视作已出货。HOLD保留兼容库存预留，CANCEL和缺失待核对单释放预留。订单详情的Planning control可填写原因后处理，并查看Daily report history。未知实际生产／取货时间保持未知。Historical OUT须确认库存基准已经计入；新发生的取货继续用Record collection扣库存。
+DONE 是已备齐，OUT 是已取走，CANCEL 是取消，HOLD 是暂缓。现有历史及人工控制仍保留，但新 Baseline 不再导入或推断这些订单状态，也不因日期表缺单而改成待核对。订单详情的 Planning control 可填写原因后处理；实际取货继续用 Record collection 扣库存，未知实际时间保持未知。
 
 Stock、Daily stock和Stock policies都有All packaging／Bags／Bulk筛选，切换筛选回第一页。产品简称保留FS后完整数字及字母后缀，例如5220CCB；完整SAP Material仍可展开查看，也继续用于库存和订单匹配。
 
@@ -202,4 +206,24 @@ Stock、Daily stock和Stock policies都有All packaging／Bags／Bulk筛选，�
 
 保存后原卡片保留为取消，子卡片记录来源；拆卡不会入库。已有实际产量、已开始或锁定的卡片不能拆。拆后的同订单部分可在同日同线、完整产品／包装／药物版本一致时重新Combine，数量合回同一订单明细。旧卡片资料版本不同则需先核对。操作失败或冲突保留草稿，按现有Retry connection流程重试。
 
-V6数据库备份新增每日订单观察、Planning control历史及拆卡来源。旧V1–V5备份仍可读取，恢复前会提醒缺少的新资料；务必先下载完整备份。
+V7 数据库备份包含保留的历史、拆卡来源、SAP 接收批次及顺序、续做容量和产线偏好。旧 V1–V6 仍可读取；恢复前会提示没有接收／续做资料，旧订单不会自动加入新需求队列。恢复前下载完整备份。
+
+## 设置惯用 PM
+
+Settings → Production rules → **Line preferences** 可搜索、新增、修改、删除产品规则，选择多个同等优先的 PM，调整未列产品的默认 PM，或关闭偏好。修改与产能设置一起按 **Save settings**，离开前仍有未保存提示。
+
+| 完整简称 | 包装 | 同等优先 PM |
+| --- | --- | --- |
+| 5220、5220M | Bags | PM1 |
+| 5220 | Bulk | PM1、PM4 |
+| 5811、5211 | Bags | PM2 |
+| 5210 | Bags | PM2、PM3 |
+| 5210 | Bulk | PM2 |
+| 5222 | Bags | PM2、PM4 |
+| 其他产品／包装 | 对应包装 | PM3 |
+
+5220M、5220MER、5220CCB 精确区分，不按前缀混用，也不改变袋重、Medication／FMR 的库存隔离。草稿会显示惯用 PM 或容量分流，负责人仍可调整新增卡片的产线。
+
+## 本次重新开始
+
+本次清空由本机维护流程完成，不提供公开清空按钮。先做完整备份并在独立数据库验证恢复，再清空订单、排程、库存余额和业务历史；产品清单、库存参数、安全库存／超产、工时、产能及其他设置保留。不自动重放旧 October 文件。清空后先导入新的库存，再导入隔天 SAP 订单；没有库存基准时 Generate 会提示先导入库存。DataGrip 的本机端口保持 **5434**。

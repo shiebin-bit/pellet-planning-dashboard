@@ -1,3 +1,4 @@
+import { historicalFixturePreview, historicalFixtureResponse, isHistoricalFixtureCommand } from './historical-fixture';
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import { after, before, beforeEach, describe, it } from "node:test";
@@ -89,13 +90,13 @@ integration("inventory API", () => {
     assert.equal((await get<any[]>("/api/inventory/ledger")).filter(row => row.movementType === "baseline").length, 1);
 
     const backup = await get<any>("/api/backup");
-    assert.equal(backup.schemaVersion, 6);
+    assert.equal(backup.schemaVersion, 7);
     assert.equal(backup.inventory.items.length, 1);
     assert.equal(backup.inventory.ledger.length, 1);
     await ok(await command(2, "reset-after-backup", { type: "workspace.resetDemo", date: malaysiaToday() }));
     assert.equal((await get<InventorySnapshot>("/api/inventory")).items.length, 0);
     const previous = await get<any>("/api/backup/previous");
-    assert.equal(previous.schemaVersion, 6);
+    assert.equal(previous.schemaVersion, 7);
     assert.equal(previous.inventory.ledger.length, 1);
     await ok(await command(3, "restore-v4", { type: "workspace.restore", backup }));
     const restored = await get<InventorySnapshot>("/api/inventory");
@@ -198,26 +199,24 @@ integration("inventory API", () => {
     assert.equal(workspace.state.jobs.reduce((sum: number, row: any) => sum + row.quantityMt, 0), 480);
   });
 
-  it("previews first-baseline annotations against pre-existing orders and preserves manual buckets",async()=>{
+  it("imports first stock without projecting lower-table annotations onto existing manual orders",async()=>{
     const pre=baselineInput();pre.includeBaseline=false;
     pre.orders[0].rows.push({...pre.orders[0].rows[0],doNo:"DO-200",soldToParty:"Second customer",shipToParty:"Second farm"});
     await ok(await command(0,"pre-baseline-orders",{type:"inventory.importWorkbook",input:pre}));
-    let orders=(await get<InventoryOrderProgressSnapshot>("/api/inventory/orders")).orders;
+    const orders=(await get<InventoryOrderProgressSnapshot>("/api/inventory/orders")).orders;
     const manual=orders.find(row=>row.doNo==="DO-200")!;
     await ok(await command(1,"pre-baseline-manual",{type:"data.updateManualFields",sourceOrderId:manual.sourceOrderId,patch:{medication:"MANUAL-MED",fmrOmed:"MANUAL-REF"}}));
-    const baseline={...pre,includeBaseline:true,digest:"9".repeat(64),annotations:[
-      {doNo:"DO-100",materialCode:"7.100",remark:"",medication:"ANN-MED",fmrOmed:"ANN-REF"},
-      {doNo:"DO-200",materialCode:"7.100",remark:"",medication:"SHOULD-NOT-WIN",fmrOmed:"SHOULD-NOT-WIN"},
-    ]};
-    const response=await fetch(`${baseUrl}/api/data/preview`,{method:"POST",headers:{"Content-Type":"application/json",Origin:baseUrl},body:JSON.stringify({input:baseline.orders[0],context:{includeBaseline:true,annotations:baseline.annotations}})});assert.equal(response.status,200);
-    const preview=await response.json();assert.equal(preview.changed,0);assert.equal(preview.unchanged,2);assert.equal(preview.skipped,2);assert.equal(preview.operationalChanged,1);
-    const annotated=preview.rows.find((row:any)=>row.fields.doNo==="DO-100"),protectedRow=preview.rows.find((row:any)=>row.fields.doNo==="DO-200");
-    assert.equal(annotated.disposition,"unchanged");assert.equal(annotated.importAction,"skip-unchanged");assert.deepEqual(annotated.changedFields.sort(),["fmrOmed","medication"]);assert.equal(annotated.operationalChanged,true);assert.equal(annotated.fields.medication,"ANN-MED");assert.equal(annotated.fields.fmrOmed,"ANN-REF");
-    assert.equal(protectedRow.operationalChanged,false);assert.deepEqual(protectedRow.changedFields,[]);assert.equal(protectedRow.fields.medication,"MANUAL-MED");assert.equal(protectedRow.fields.fmrOmed,"MANUAL-REF");
-    await ok(await command(2,"first-baseline-after-orders",{type:"inventory.importBaseline",input:baseline}));
-    orders=(await get<InventoryOrderProgressSnapshot>("/api/inventory/orders")).orders;
-    assert.equal(orders.find(row=>row.doNo==="DO-100")!.medication,"ANN-MED");assert.equal(orders.find(row=>row.doNo==="DO-100")!.fmrOmed,"ANN-REF");
-    assert.equal(orders.find(row=>row.doNo==="DO-200")!.medication,"MANUAL-MED");assert.equal(orders.find(row=>row.doNo==="DO-200")!.fmrOmed,"MANUAL-REF");
+    const before=await get<any>("/api/backup");
+    const baseline={...pre,includeBaseline:true,digest:"9".repeat(64),orders:[],annotations:[]};
+    await ok(await command(2,"first-stock-after-orders",{type:"inventory.importBaseline",input:baseline}));
+    const after=await get<any>("/api/backup");
+    assert.deepEqual(after.sourceData,before.sourceData);
+    assert.deepEqual(after.inventory.orders,before.inventory.orders);
+    const updated=(await get<InventoryOrderProgressSnapshot>("/api/inventory/orders")).orders;
+    assert.equal(updated.find(row=>row.doNo==="DO-100")!.medication,"");
+    assert.equal(updated.find(row=>row.doNo==="DO-200")!.medication,"MANUAL-MED");
+    assert.equal(updated.find(row=>row.doNo==="DO-200")!.fmrOmed,"MANUAL-REF");
+    assert.equal((await get<InventorySnapshot>("/api/inventory")).items[0].totalOnHand,30);
   });
 
   it("supports multiple production receipts, partial dispatch, reversals, and free overproduction", async () => {
@@ -337,7 +336,7 @@ integration("inventory API", () => {
     const review = await get<any>("/api/data?view=needs-review");
     assert.equal(review.total,1);assert.equal(review.items[0].id,progress.sourceOrderId);
     const nonManual={...input,includeBaseline:false,digest:"1".repeat(64),annotations:[],orders:input.orders.map(batch=>({...batch,digest:"2".repeat(64),rows:batch.rows.map(row=>({...row,medication:"SAP-B",fmrOmed:"SAP-REF-B"}))}))};
-    const nonManualPreviewResponse=await fetch(`${baseUrl}/api/data/preview`,{method:"POST",headers:{"Content-Type":"application/json",Origin:baseUrl},body:JSON.stringify(nonManual.orders[0])});assert.equal(nonManualPreviewResponse.status,200);
+    const nonManualPreviewResponse=await historicalFixturePreview(pool, nonManual.orders[0]);assert.equal(nonManualPreviewResponse.status,200);
     const nonManualPreview=await nonManualPreviewResponse.json();assert.equal(nonManualPreview.changed,1);assert.equal(nonManualPreview.skipped,1);assert.equal(nonManualPreview.rows[0].importAction,"queue-review");assert.deepEqual(nonManualPreview.rows[0].changedFields,[]);assert.equal(nonManualPreview.rows[0].fields.medication,"BASE-MED");assert.equal(nonManualPreview.rows[0].fields.fmrOmed,"BASE-REF");
     await ok(await command(1,"nonmanual-bucket-workbook",{type:"inventory.importWorkbook",input:nonManual}));
     progress=(await get<InventoryOrderProgressSnapshot>("/api/inventory/orders")).orders[0];assert.equal(progress.medication,"BASE-MED");assert.equal(progress.fmrOmed,"BASE-REF");
@@ -349,7 +348,7 @@ integration("inventory API", () => {
     await ok(await command(3,"manual-med",{type:"data.updateManualFields",sourceOrderId:progress.sourceOrderId,patch:{medication:"MED-A",fmrOmed:"REF-1",dueDate:manualDueDate}}));
     const protectedRawDate=addDays(malaysiaToday(),12);
     const protectedOnly={...input,includeBaseline:false,digest:"c".repeat(64),annotations:[],orders:input.orders.map(batch=>({...batch,digest:"d".repeat(64),rows:batch.rows.map(row=>({...row,deliveryDate:protectedRawDate,medication:"SAP-MED",fmrOmed:"SAP-FMR"}))}))};
-    const protectedPreviewResponse = await fetch(`${baseUrl}/api/data/preview`, { method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify(protectedOnly.orders[0]) });
+    const protectedPreviewResponse = await historicalFixturePreview(pool, protectedOnly.orders[0]);
     assert.equal(protectedPreviewResponse.status,200);
     const protectedPreview=await protectedPreviewResponse.json();
     assert.equal(protectedPreview.changed,1);assert.equal(protectedPreview.rows[0].disposition,"changed");assert.deepEqual(protectedPreview.rows[0].changedFields,[]);
@@ -361,7 +360,7 @@ integration("inventory API", () => {
     const effectiveDetail=await get<any>(`/api/data/${encodeURIComponent(progress.sourceOrderId)}`);assert.equal(effectiveDetail.deliveryDate,manualDueDate);assert.equal(effectiveDetail.medication,"MED-A");assert.equal(effectiveDetail.fmrOmed,"REF-1");
     assert.equal(effectiveDetail.versionTotal,1);assert.equal(effectiveDetail.versions[0].fields.deliveryDate,input.orders[0].rows[0].deliveryDate);assert.equal(effectiveDetail.versions[0].fields.medication,input.orders[0].rows[0].medication);assert.equal(effectiveDetail.versions[0].fields.fmrOmed,input.orders[0].rows[0].fmrOmed);
     const later={...input,includeBaseline:false,digest:"e".repeat(64),annotations:[],orders:input.orders.map(batch=>({...batch,digest:"f".repeat(64),rows:batch.rows.map(row=>({...row,remark:"OUT"}))}))};
-    const previewResponse = await fetch(`${baseUrl}/api/data/preview`, { method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify(later.orders[0]) });
+    const previewResponse = await historicalFixturePreview(pool, later.orders[0]);
     assert.equal(previewResponse.status, 200);
     const preview = await previewResponse.json();
     assert.equal(preview.rows[0].fields.medication, "MED-A");
@@ -429,7 +428,7 @@ integration("inventory API", () => {
     summary=await get<InventoryProductionSummary>(`/api/inventory/production-summary?date=${malaysiaToday()}`);assert.equal(summary.netQuantityMt,30);assert.equal(summary.jobCount,1);
     assert.deepEqual(production.orderTotals.filter((row:any)=>row.total>0).map((row:any)=>[row.sourceOrderId,row.total]),[[source[0].id,30]]);
     const ledger=(await get<any[]>("/api/inventory/ledger")).filter(row=>row.jobId===job.id);assert.equal(ledger.reduce((sum,row)=>sum+row.quantityDelta,0),30);
-    const backup=await get<any>("/api/backup");assert.equal(backup.schemaVersion,6);assert.equal(backup.planning.jobs[0].sourceAllocations.length,2);
+    const backup=await get<any>("/api/backup");assert.equal(backup.schemaVersion,7);assert.equal(backup.planning.jobs[0].sourceAllocations.length,2);
   });
 
   it("rejects an edited draft that overbooks an order across multiple cards atomically",async()=>{
@@ -471,6 +470,7 @@ integration("inventory API", () => {
 
   async function postDraft():Promise<any>{const response=await fetch(`${baseUrl}/api/inventory/draft`,{method:"POST",headers:{"Content-Type":"application/json",Origin:baseUrl},body:JSON.stringify({fromDate:addDays(malaysiaToday(),1),toDate:addDays(malaysiaToday(),3)})});return json(response);}
   async function command(expectedRevision: number, commandId: string, value: unknown): Promise<Response> {
+    if (isHistoricalFixtureCommand(value)) return historicalFixtureResponse(pool, expectedRevision, commandId, value);
     return fetch(`${baseUrl}/api/commands`, { method: "POST", headers: { "Content-Type": "application/json", Origin: baseUrl }, body: JSON.stringify({ expectedRevision, commandId, command: value }) });
   }
   async function get<T>(path: string): Promise<T> { const response = await fetch(`${baseUrl}${path}`); assert.equal(response.status, 200); return response.json() as Promise<T>; }

@@ -115,7 +115,7 @@ export function createApp(options: AppOptions): express.Express {
   }));
 
   app.get("/api/backup", asyncRoute(async (_request, response) => {
-    response.setHeader("Content-Disposition", `attachment; filename="millplan-backup-v6.json"`);
+    response.setHeader("Content-Disposition", `attachment; filename="millplan-backup-v7.json"`);
     response.json(await options.store.getPortableBackup());
   }));
 
@@ -143,6 +143,10 @@ export function createApp(options: AppOptions): express.Express {
     const review = await options.store.getSourceImportReview(id);
     if (!review) throw new ApiError(404, "SOURCE_REVIEW_NOT_FOUND", "Import review item not found.");
     response.json(review);
+  }));
+
+  app.get('/api/data/import-context',asyncRoute(async(_request,response)=>{
+    response.json(await options.store.getSapImportContext());
   }));
 
   app.get("/api/data/:id", asyncRoute(async (request, response) => {
@@ -208,7 +212,7 @@ export function createApp(options: AppOptions): express.Express {
 function disabledAutomaticBackupStatus(): AutomaticBackupStatus {
   return {
     enabled: false,
-    format: "portable-v6",
+    format: "portable-v7",
     intervalHours: 24,
     retentionCount: 14,
     state: "disabled",

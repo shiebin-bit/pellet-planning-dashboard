@@ -242,6 +242,19 @@ describe("workspace backup validation", () => {
     noCapacity.settings.availableHours = 0;
     expect(() => validateWorkspaceBackup(noCapacity)).not.toThrow();
 
+    const suppressed = rawBackup();
+    const postedPending = pendingJob(suppressed);
+    postedPending.continuationPlan = {
+      remainingQuantityMt: 0,
+      plannedAt: "2026-10-14T00:00:00.000Z",
+      segments: [],
+    };
+    expect(() => validateWorkspaceBackup(suppressed)).not.toThrow();
+    const suppressedSchedule = getScheduledJobs(validateWorkspaceBackup(suppressed))
+      .find((job) => job.id === postedPending.id);
+    expect(suppressedSchedule?.plannedStart).toBeNull();
+    expect(suppressedSchedule?.plannedEnd).toBeNull();
+
     const infiniteDuration = rawBackup();
     infiniteDuration.settings.availableHours = 0;
     const unbounded = pendingJob(infiniteDuration);
