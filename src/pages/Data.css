@@ -4,7 +4,7 @@
 .data-stats>div { padding: 18px 20px; border-right: 1px solid var(--border); }
 .data-stats>div:first-child { padding-left: 0; }.data-stats>div:last-child { border: 0; }
 .data-stats span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 7px; }
-.data-stats strong { font-size: 25px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.data-stats strong { font-size: 25px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
 .data-stats em { color: var(--red); font-style: normal; }
 .data-filters { padding: 18px; display: flex; gap: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--border); align-items: center; }
 .data-search { display: flex; gap: 9px; align-items: center; flex: 1; min-width: 200px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 4px; }
