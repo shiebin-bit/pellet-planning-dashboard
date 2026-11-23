@@ -5,6 +5,7 @@ import { previewInventoryDraft } from './inventoryApi';
 import { useWorkspace } from './workspace';
 import { localDate } from './format';
 import { useCurrentTime } from './useCurrentTime';
+import {draftConfirmationDeadline,isDraftStartPassed} from '../domain/draftTiming';
 import { clearLeaveGuard, confirmLeave, useLeaveGuard } from './leaveGuard';
 import { PLANNING_DRAFT_STORAGE_KEY, clearPlanningDraft, createPlanningDraft, isPlanningDraftStale, planningDraftFingerprint, preparePlanningDraftCommit, readPlanningDraft, savePlanningDraft } from './planningDraftStorage';
 import type { PlanningDraftUiState, SavedPlanningDraft } from './planningDraftStorage';
@@ -14,7 +15,7 @@ const content = (draft: SavedPlanningDraft) => JSON.stringify({ preview: draft.p
 
 /** A local draft is separate from production. Its exact pending request survives a reload. */
 export function usePlanningDraft(onClose: () => void) {
-  const { date, revision, workspaceUpdatedAt, refresh, resolveConflict, commitPrepared, confirmedRetry, mutationLocked, setDate, navigate, notify } = useWorkspace();
+  const { date, revision, workspaceUpdatedAt, refresh, resolveConflict, commitPrepared, confirmedRetry, rejectedRetry, mutationLocked, setDate, navigate, notify } = useWorkspace();
   const [initial] = useState(() => readPlanningDraft(storage));
   const initialSaved = initial.ok ? initial.value.draft : null;
   const start = date < localDate() ? localDate() : date;
@@ -37,7 +38,10 @@ export function usePlanningDraft(onClose: () => void) {
   useLeaveGuard('planning-draft', dirty, 'Your planning draft has changes that are not saved in this browser.');
   const now = useCurrentTime(!!preview);
   const datePassed = [...jobs, ...(preview?.carryovers ?? [])].some(job => job.date < localDate(new Date(now)));
-  const stale = !!preview && (datePassed || isPlanningDraftStale({ baseRevision: preview.revision, baseUpdatedAt } as SavedPlanningDraft, { revision, updatedAt: workspaceUpdatedAt }));
+  const timedRows = [...jobs, ...(preview?.carryovers ?? [])];
+  const confirmationDeadline = draftConfirmationDeadline(timedRows);
+  const startPassed = !!preview && isDraftStartPassed(timedRows,now);
+  const stale = !!preview && (datePassed || startPassed || isPlanningDraftStale({ baseRevision: preview.revision, baseUpdatedAt } as SavedPlanningDraft, { revision, updatedAt: workspaceUpdatedAt }));
   useEffect(() => {
     const changed = (event: StorageEvent) => { if (event.key === PLANNING_DRAFT_STORAGE_KEY || event.key === null) { setCrossTab(true); setLocalStatus(''); } };
     window.addEventListener('storage', changed); return () => window.removeEventListener('storage', changed);
@@ -90,12 +94,29 @@ export function usePlanningDraft(onClose: () => void) {
     const draft = storedRef.current;
     if (confirmedRetry && confirmedRetry.nonce > retryAtMount.current && confirmedRetry.type === 'planning.commitDraft' && draft?.pendingCommit) finish(draft);
   }, [confirmedRetry?.nonce]);
+  const rejectionAtMount = useRef(rejectedRetry?.nonce ?? 0);
+  useEffect(() => {
+    const draft = storedRef.current;
+    if (!rejectedRetry || rejectedRetry.nonce <= rejectionAtMount.current) return;
+    rejectionAtMount.current = rejectedRetry.nonce;
+    if (rejectedRetry.type !== 'planning.commitDraft' || !draft?.pendingCommit || draft.pendingCommit.commandId !== rejectedRetry.commandId) return;
+    const { pendingCommit: _pending, ...retained } = draft;
+    const saved = savePlanningDraft(storage, retained, { draftInstanceId: draft.draftInstanceId, pendingCommandId: draft.pendingCommit.commandId, savedAt: draft.savedAt, draftFingerprint: planningDraftFingerprint(draft) });
+    if (!saved.ok) {
+      setCrossTab(saved.code === 'conflict');
+      setError(`${rejectedRetry.error}${rejectedRetry.code ? ` (${rejectedRetry.code})` : ''} The request was rejected, but its pending marker could not be cleared: ${saved.error} Reload the saved draft before continuing.`);
+      return;
+    }
+    setStored(saved.value); setSavedContent(content(saved.value)); setLocalStatus('');
+    setError(`${rejectedRetry.error}${rejectedRetry.code ? ` (${rejectedRetry.code})` : ''} No new cards were saved. Your draft is preserved.`);
+  }, [rejectedRetry?.nonce]);
   async function submit() {
     if (busy || crossTab || mutationLocked) return;
     setBusy(true); setError('');
     try {
       let draft = stored;
       if (!pending) {
+        if (isDraftStartPassed(timedRows,Date.now())) throw new Error('The first proposed start has passed. Your draft is preserved; regenerate it using the remaining capacity.');
         if (stale) throw new Error('The workspace changed. Regenerate the draft before confirming.');
         const saved = savePlanningDraft(storage, snapshot(), expectation());
         if (!saved.ok) throw new Error(saved.error);
@@ -110,7 +131,7 @@ export function usePlanningDraft(onClose: () => void) {
         const { pendingCommit: _pending, ...retained } = draft;
         const saved = savePlanningDraft(storage, retained, { draftInstanceId: draft.draftInstanceId, pendingCommandId: draft.pendingCommit.commandId, savedAt: draft.savedAt, draftFingerprint: planningDraftFingerprint(draft) });
         if (saved.ok) { setStored(saved.value); setSavedContent(content(saved.value)); }
-        setError('The request was rejected; no new cards were saved. Review the latest workspace and regenerate the draft.');
+        setError(`${result.error || 'The request was rejected.'}${result.code ? ` (${result.code})` : ''} No new cards were saved. Your draft is preserved.`);
       }
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Planning could not be confirmed.'); }
     finally { setBusy(false); }
@@ -133,5 +154,5 @@ export function usePlanningDraft(onClose: () => void) {
     if (preview && !confirmLeave('planning-draft')) return;
     setUi(previous => ({ ...previous, ...patch })); setPreview(null); setJobs([]); setLocalStatus(''); clearLeaveGuard('planning-draft');
   }
-  return { ui, changeUi, preview, jobs, setJobs, error, busy, stored, pending, stale, datePassed, invalidSaved, crossTab, localStatus, dirty, saveLocal, resume, discard, generate, submit, close };
+  return { ui, changeUi, preview, jobs, setJobs, error, busy, stored, pending, stale, datePassed, startPassed, confirmationDeadline, invalidSaved, crossTab, localStatus, dirty, saveLocal, resume, discard, generate, submit, close };
 }

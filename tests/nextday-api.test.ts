@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import pg from 'pg';
 import {createApp} from '../server/app';
 import {runMigrations} from '../server/migrate';
-import {WorkspaceStore} from '../server/store';
+import {WorkspaceStore,draftPlanningFloor} from '../server/store';
 import {createDefaultSettings} from '../src/domain/defaults';
 import {createJob,getRate,getScheduledJobs} from '../src/domain/engine';
 import {applyAndPersistDraftCarryovers,buildCarryoverPlanningContext} from '../server/dailyPlanning';
@@ -80,6 +80,42 @@ integration('next-day SAP admission and stock-only baseline',()=>{
     assert.deepEqual(orders.map((entry:any)=>entry.orderNo),['PRIORITY-A','PRIORITY-B','PRIORITY-C']);assert.deepEqual(orders.map((entry:any)=>entry.priorityOrdinal),[0,1,2]);
   });
 
+  it('reports a newly admitted order covered by stock as stock-ready rather than completed',async()=>{
+    let response=await command(0,'ready-stock',{type:'inventory.importStockReports',reports:[stockReport()],reconcile:false,reason:''});
+    assert.equal(response.status,200,await response.text());
+    const context=await json(await fetch(`${baseUrl}/api/data/import-context`));
+    response=await command(1,'ready-order',{type:'data.importBatch',inputs:[source('READY-FROM-STOCK',context.targetIssueDate,context.asOfDate)]});
+    assert.equal(response.status,200,await response.text());
+    const page=await json(await fetch(`${baseUrl}/api/data?search=READY-FROM-STOCK`));
+    assert.equal(page.items[0].productionStatus,'stock-ready');
+    assert.equal(page.items[0].netToPlan,0);
+    assert.equal(page.stats.stockReady,1);
+    assert.equal(page.stats.completed,0);
+    const filtered=await json(await fetch(`${baseUrl}/api/data?productionStatus=stock-ready`));
+    assert.equal(filtered.total,1);
+    const draft=await json(await draftRequest(context.asOfDate,addDays(context.asOfDate,2)));
+    assert.equal(draft.demand.some((entry:any)=>entry.orderNo==='READY-FROM-STOCK'),false);
+  });
+
+  it('gives current-day drafts a rounded review window and rejects an expired proposal explicitly',async()=>{
+    assert.equal(draftPlanningFloor('2026-11-23T04:01:00.000Z'),'2026-11-23T04:10:00.000Z');
+    assert.equal(draftPlanningFloor('2026-11-23T04:05:01.000Z'),'2026-11-23T04:15:00.000Z');
+    const zero={...stockReport(),digest:hash('expiry-zero-stock'),stockRows:stockReport().stockRows.map(item=>({...item,opening:0,closing:0}))};
+    let response=await command(0,'expiry-stock',{type:'inventory.importStockReports',reports:[zero],reconcile:false,reason:''});
+    assert.equal(response.status,200,await response.text());
+    const context=await json(await fetch(`${baseUrl}/api/data/import-context`));
+    response=await command(1,'expiry-order',{type:'data.importBatch',inputs:[source('EXPIRING-DRAFT',context.targetIssueDate,context.asOfDate)]});
+    assert.equal(response.status,200,await response.text());
+    let draft=await json(await draftRequest(context.asOfDate,addDays(context.asOfDate,2)));
+    assert.ok(draft.jobs.length);
+    const expired=draft.jobs.map((job:any,index:number)=>index?job:{...job,notBefore:new Date(Date.parse(draft.generatedAt)-1).toISOString()});
+    response=await command(2,'expired-draft',{type:'planning.commitDraft',previewRevision:draft.revision,jobs:expired,carryovers:draft.carryovers});
+    assert.equal(response.status,409);assert.equal((await response.json()).error.code,'DRAFT_EXPIRED');
+    draft=await json(await draftRequest(context.asOfDate,addDays(context.asOfDate,2)));
+    response=await command(2,'fresh-after-expiry',{type:'planning.commitDraft',previewRevision:draft.revision,jobs:draft.jobs,carryovers:draft.carryovers});
+    assert.equal(response.status,200,await response.text());
+  });
+
   it('excludes legacy non-admitted orders from reservation and generated demand',async()=>{
     const report=stockReport();let response=await command(0,'stock',{type:'inventory.importStockReports',reports:[report],reconcile:false,reason:''});assert.equal(response.status,200,await response.text());
     const item=await pool.query(`SELECT id FROM inventory_items LIMIT 1`),now=new Date().toISOString();
@@ -91,6 +127,24 @@ integration('next-day SAP admission and stock-only baseline',()=>{
     assert.equal(Number((await pool.query(`SELECT quantity_scaled FROM inventory_reservations WHERE source_order_id='legacy-order'`)).rows[0].quantity_scaled),0);
     response=await fetch(`${baseUrl}/api/inventory/draft`,{method:'POST',headers:{'content-type':'application/json',origin:baseUrl},body:JSON.stringify({fromDate:contextDate(),toDate:addDays(contextDate(),2),demandThrough:addDays(contextDate(),3)})});
     assert.equal(response.status,200,await response.clone().text());const draft=await response.json();assert.equal(draft.demand.some((entry:any)=>entry.sourceOrderId==='legacy-order'),false);
+  });
+
+  it('confirms a full-capacity draft after two minutes of review and deduplicates its retry after expiry',async(t)=>{
+    t.mock.timers.enable({apis:['Date'],now:Date.parse('2026-11-23T04:00:00Z')});
+    const zero={...stockReport(),digest:hash('review-delay-zero'),stockRows:stockReport().stockRows.map(item=>({...item,opening:0,closing:0}))};
+    let response=await command(0,'delay-stock',{type:'inventory.importStockReports',reports:[zero],reconcile:false,reason:''});assert.equal(response.status,200,await response.text());
+    const context=await json(await fetch(`${baseUrl}/api/data/import-context`));
+    const input=source('DELAYED-CONFIRM',context.targetIssueDate,context.asOfDate);input.rows[0].quantity=4000;
+    response=await command(1,'delay-order',{type:'data.importBatch',inputs:[input]});assert.equal(response.status,200,await response.text());
+    const draft=await json(await draftRequest(context.asOfDate,addDays(context.asOfDate,2)));
+    assert.ok(draft.jobs.length>1,'Large demand fills and splits line capacity');
+    const body={type:'planning.commitDraft',previewRevision:draft.revision,jobs:draft.jobs,carryovers:draft.carryovers};
+    t.mock.timers.tick(120_000);
+    response=await command(2,'delayed-confirm-once',body);assert.equal(response.status,200,await response.text());
+    const count=(await store.getWorkspace()).state.jobs.length;assert.equal(count,draft.jobs.length);
+    t.mock.timers.tick(20*60_000);
+    response=await command(2,'delayed-confirm-once',body);assert.equal(response.status,200,await response.text());
+    assert.equal((await store.getWorkspace()).state.jobs.length,count);
   });
 
   it('carries existing manual work while keeping bag candidates integral and rejects past capacity',async()=>{

@@ -53,6 +53,7 @@ Supporting workflows include:
 
 - Accepted-batch scheduling that continues unfinished production before new demand, with exact-product PM preferences, capacity and downtime.
 - Editable planning drafts with split production across dates and lines, utilisation previews, late-order warnings, and browser-local draft recovery.
+- Separate stock-ready and production-complete order states, with visible draft confirmation deadlines and specific save-rejection reasons.
 - Same-product order batches with per-order allocations; combine or split unstarted cards by order or partial quantity while preserving every order and extra-stock total.
 - Server-time Start and Done, partial production receipts, pause/resume with reasons, and auditable output corrections.
 - Recorded-output progress and estimated finish when enough recent, reliable samples are available.

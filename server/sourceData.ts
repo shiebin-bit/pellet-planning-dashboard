@@ -440,6 +440,7 @@ export async function listSourceOrders(
        SELECT count(*)::integer AS total,
          count(*) FILTER (WHERE production_status = 'pending')::integer AS planned,
          count(*) FILTER (WHERE production_status = 'running')::integer AS running,
+         count(*) FILTER (WHERE production_status = 'stock-ready')::integer AS stock_ready,
          count(*) FILTER (WHERE production_status IN ('completed', 'external-complete'))::integer AS completed,
          count(*) FILTER (WHERE delivery_status = 'delivered')::integer AS delivered,
          count(*) FILTER (WHERE delivery_status <> 'delivered' AND current_days_outstanding > 0)::integer AS overdue
@@ -461,7 +462,7 @@ export async function listSourceOrders(
   const items = row.items.map(item => toSummary(item, today));
   return {
     items, page: row.page, pageSize: 50, total: row.total,
-    stats: { total: row.total, planned: row.planned, running: row.running, completed: row.completed, delivered: row.delivered, overdue: row.overdue },
+    stats: { total: row.total, planned: row.planned, running: row.running, stockReady: row.stock_ready, completed: row.completed, delivered: row.delivered, overdue: row.overdue },
   };
 }
 
@@ -515,7 +516,7 @@ function sourceListFilters(query: URLSearchParams): {
   if (productionStatus) { values.push(productionStatus); dynamicWhere.push(`production_status = $${values.length}`); }
   const overdue = query.get("overdue");
   const pickupOverdue = "delivery_status <> 'delivered' AND current_days_outstanding > 0";
-  const productionOverdue = "production_status NOT IN ('completed', 'external-complete') AND current_delivery_lead_days < 0";
+  const productionOverdue = "production_status NOT IN ('completed', 'external-complete', 'stock-ready') AND current_delivery_lead_days < 0";
   if (overdue === "true" || overdue === "pickup") dynamicWhere.push(`(${pickupOverdue})`);
   if (overdue === "production") dynamicWhere.push(`(${productionOverdue})`);
   if (overdue === "false") dynamicWhere.push(`NOT (COALESCE((${pickupOverdue}), false) OR COALESCE((${productionOverdue}), false))`);
@@ -626,7 +627,7 @@ interface SourceDbView {
 }
 
 interface SourceListResult {
-  total: number; planned: number; running: number; completed: number; delivered: number; overdue: number;
+  total: number; planned: number; running: number; stock_ready: number; completed: number; delivered: number; overdue: number;
   page: number; items: SourceDbView[];
 }
 
@@ -656,10 +657,13 @@ function sourceViewSql(where: string): string {
 
 
 function productionStatusSql():string {
+  const stockCovered=`EXISTS(SELECT 1 FROM inventory_orders io LEFT JOIN inventory_reservations ir ON ir.source_order_id=io.source_order_id WHERE io.source_order_id=o.id AND io.ordered_quantity_scaled>0 AND io.ordered_quantity_scaled<=COALESCE(ir.quantity_scaled,0)+COALESCE((SELECT sum(-l.quantity_delta_scaled) FROM inventory_ledger l WHERE l.source_order_id=o.id AND (l.movement_type='dispatch' OR (l.movement_type='reversal' AND l.reverses_movement_id IN (SELECT id FROM inventory_ledger WHERE movement_type='dispatch')))),0))`;
   return `CASE WHEN EXISTS(SELECT 1 FROM inventory_orders io WHERE io.source_order_id=o.id AND EXISTS(SELECT 1 FROM inventory_imports WHERE included_baseline)) THEN
-    CASE WHEN o.delivery_status='delivered' OR EXISTS(SELECT 1 FROM inventory_orders io LEFT JOIN inventory_reservations ir ON ir.source_order_id=io.source_order_id WHERE io.source_order_id=o.id AND (io.historical_status IN ('done','out') OR io.ordered_quantity_scaled<=COALESCE(ir.quantity_scaled,0)+COALESCE((SELECT sum(-l.quantity_delta_scaled) FROM inventory_ledger l WHERE l.source_order_id=o.id AND (l.movement_type='dispatch' OR (l.movement_type='reversal' AND l.reverses_movement_id IN (SELECT id FROM inventory_ledger WHERE movement_type='dispatch')))),0))) THEN 'external-complete'
+    CASE WHEN o.delivery_status='delivered' OR EXISTS(SELECT 1 FROM inventory_orders io WHERE io.source_order_id=o.id AND io.historical_status IN ('done','out')) THEN 'external-complete'
       WHEN EXISTS(SELECT 1 FROM job_source_allocations a JOIN jobs active ON active.id=a.job_id WHERE a.source_order_id=o.id AND active.status='running') THEN 'running'
-      WHEN EXISTS(SELECT 1 FROM job_source_allocations a JOIN jobs active ON active.id=a.job_id WHERE a.source_order_id=o.id AND active.status='pending') THEN 'pending' ELSE 'unplanned' END
+      WHEN EXISTS(SELECT 1 FROM job_source_allocations a JOIN jobs active ON active.id=a.job_id WHERE a.source_order_id=o.id AND active.status='pending') THEN 'pending'
+      WHEN COALESCE(sp.has_completed,false) AND ${stockCovered} THEN 'completed'
+      WHEN ${stockCovered} THEN 'stock-ready' ELSE 'unplanned' END
     ELSE CASE
       WHEN COALESCE(sp.has_running,false) THEN 'running'
       WHEN COALESCE(sp.has_pending,false) THEN 'pending'
@@ -945,7 +949,7 @@ function validateSourceListQuery(query: URLSearchParams): void {
     if (value !== null && !validDate(value)) throw new ApiError(400, "INVALID_DATA_FILTER", `${name} must be a valid YYYY-MM-DD date.`);
   }
   enumFilter(single("unit"), new Set(["MT", "Bags"]), "unit");
-  enumFilter(single("productionStatus"), new Set(["unplanned", "external-complete", "pending", "running", "paused", "completed", "cancelled"]), "productionStatus");
+  enumFilter(single("productionStatus"), new Set(["unplanned", "stock-ready", "external-complete", "pending", "running", "paused", "completed", "cancelled"]), "productionStatus");
   enumFilter(single("deliveryStatus"), new Set(["pending", "delivered"]), "deliveryStatus");
   enumFilter(single("overdue"), new Set(["true", "false", "production", "pickup"]), "overdue");
   enumFilter(single("view"), new Set(["all", "needs-production", "ready-pickup", "needs-review"]), "view");

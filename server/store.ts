@@ -1,4 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
+import {draftPlanningFloor} from '../src/domain/draftTiming';
+export {draftPlanningFloor} from '../src/domain/draftTiming';
 import type pg from "pg";
 import { validateWorkspaceBackup } from "../src/domain/backup";
 import { createMoveUndoEvent } from "../src/domain/audit";
@@ -169,9 +171,12 @@ export class WorkspaceStore {
       const nowIso = new Date().toISOString();
       const demand = await buildPlanningDemand(client, loaded.state, input, nowIso);
       const carryover = await buildCarryoverPlanningContext(client,loaded.state,nowIso);
-      const preview = planInventoryDraft(loaded.state, demand, input, loaded.revision, nowIso,carryover);
+      // Leave a short, rounded review window before current-day work starts.
+      // The commit path rejects drafts after that start instead of silently
+      // shifting a full line beyond the end of its working day.
+      const preview = planInventoryDraft(loaded.state, demand, input, loaded.revision, draftPlanningFloor(nowIso),carryover);
       await client.query("COMMIT");
-      return preview;
+      return { ...preview, generatedAt: nowIso };
     } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);
       throw error;

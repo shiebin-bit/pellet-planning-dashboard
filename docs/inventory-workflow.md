@@ -73,6 +73,8 @@ Existing manual planning cards are retained. Importing the workbook does not cre
 
 ## Stock ledger and order progress
 
+An order covered by compatible reserved inventory is **Stock ready**, not production completed. It remains uncollected until a collection is recorded, and creates no new production demand. The order summary and production filter distinguish Stock ready from actual or historically completed production. Reservations do not create production receipts.
+
 Use the order detail panel and the Stock movement form for auditable postings:
 
 | Action | Ledger effect |
@@ -110,6 +112,8 @@ Select **Generate planning** from **Orders**. The draft generator is a preview a
 4. An overdue pending card with no output or locked actual work is proposed as **Carry over** using its original card ID, quantity and order allocations. A started or posted card is **Continue** on its original PM, reserving only remaining production capacity. Continuation reservations are separate from historical locked segments. Receipts, Done or corrections invalidate an old preview and recalculate remaining capacity. Nothing moves merely because midnight passes. Unrelated confirmed future cards stay in place.
 5. The planner uses saved rates, changeovers, working hours (default 07:00-19:00), exact-product PM preferences and downtime. Order priority wins, then earliest possible day, then preferred PM, then other PMs on that same day. Equal preferred PMs choose the earlier finish. Capacity shortage therefore diverts production before waiting another day for a preferred PM. Bags stay integer and Bulk stays 0.001 MT.
 6. Review Continue / Carry over / New, original IDs, remaining quantities, dates, PMs, utilisation, late warnings and backlog. New-card quantities/dates/PMs remain editable. Confirm saves the batch atomically, including carryover-only proposals; a conflict preserves the draft for regeneration. Work that cannot fit remains unplanned.
+
+Current-day drafts leave a rounded **5–10 minute review window** before their first available production start. Confirm before the displayed first proposed start. Once it passes, regenerate the retained draft using the remaining capacity; saving never silently moves a full-line card past its reviewed end time. Future-day proposals remain valid until their first proposed start unless the workspace changes. A definitive save rejection displays its server reason and keeps the draft. An uncertain network response must still be checked with its original request ID, even after the start time passes.
 
 ### Line preferences
 

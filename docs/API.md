@@ -130,6 +130,8 @@ Do not infer a failed commit from a disconnected response: the database may have
 ## Source order data
 
 - `GET /api/data`: `search`, `deliveryFrom`, `deliveryTo`, `unit` (`MT|Bags`), `productionStatus`, `deliveryStatus`, `overdue` (`production|pickup`), `importId`, `page`. Returns 50-row `items`, `page`, `total` and filtered `stats` across all matches. Current lead/pickup days use the Malaysia calendar and saved Issue Date; raw imported day counts remain available separately.
+
+`productionStatus=stock-ready` selects orders whose remaining collection quantity is covered by compatible inventory reservations. `stats.stockReady` counts these separately from `stats.completed`; reserving stock does not record production or delivery. Historical completion remains `external-complete`.
 - `GET /api/data/import-context`: server-authoritative `{asOfDate,targetIssueDate,timeZone:"Asia/Kuala_Lumpur",revision}`. Dates are Malaysia today and tomorrow; no client date override is accepted.
 - `GET /api/data/imports`: batch options (ID, file name, as-of date, import timestamp and row count).
 - `GET /api/data/:id`: current fields, production/delivery status, linked card ID, deadline counts, review flag and immutable versions.
@@ -168,6 +170,8 @@ Draft demand rows may include `sourceAllocationQuantity`: the actual order porti
 
 `POST /api/inventory/draft` accepts optional boolean `combineSameProduct` (default `true`). Adjacent compatible MTO orders in accepted priority order are grouped within the same due date before line allocation; each card retains its source allocations, with at most 500 orders per card. Grouping never pulls a later order ahead of intervening demand. Different due dates remain separate batches. `false` keeps separate order cards. Queue priority is in-progress continuation, unfinished earlier accepted batches, newly accepted batches, then MTS; batch order is stable. The response includes `carryovers` and `carryoverBacklog` in addition to new `jobs`, demand/backlog, utilisation and late warnings. Generation is read-only; it only proposes changes to eligible existing cards.
 
+
+Current-day preview capacity begins at a five-minute boundary at least five minutes after generation. `generatedAt` remains the actual generation timestamp. Confirm before the earliest proposed `notBefore` (including carryover segment starts); `planning.commitDraft` returns `409 DRAFT_EXPIRED` after that time instead of silently shifting release times. Revision, inventory and capacity validation still apply. A previously recorded command receipt is resolved before expiry checks, so retries of an uncertain committed request remain safe.
 
 ## Overview receipt summary and planning previews
 

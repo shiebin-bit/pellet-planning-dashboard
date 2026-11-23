@@ -113,7 +113,7 @@ export interface SourceImportPreview {
 
 export type DeliveryStatus = "pending" | "delivered";
 export type DeliverySource = "import" | "manual" | null;
-export type SourceProductionStatus = JobStatus | "unplanned" | "external-complete";
+export type SourceProductionStatus = JobStatus | "unplanned" | "stock-ready" | "external-complete";
 
 export interface SourceOrderSummary extends SourceOrderFields {
   netToPlan?: number;
@@ -158,6 +158,7 @@ export interface SourceOrderPage {
     total: number;
     planned: number;
     running: number;
+    stockReady: number;
     completed: number;
     delivered: number;
     overdue: number;

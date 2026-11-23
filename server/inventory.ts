@@ -474,6 +474,9 @@ async function updateManualFields(client: pg.PoolClient, state: AppState, comman
 async function commitDraft(client: pg.PoolClient, state: AppState, previewRevision: number, rows: InventoryDraftJob[], carryovers:DraftCarryover[], nowIso: string): Promise<AppState> {
   // WorkspaceStore has already locked and verified expectedRevision. This second token rejects stale preview UI state.
   if (!Number.isSafeInteger(previewRevision) || previewRevision < 0) throw new ApiError(400, "INVALID_DRAFT_REVISION", "Draft revision is invalid.");
+  const proposedStarts=[...rows.map(row=>Date.parse(row.notBefore)),...carryovers.flatMap(row=>[Date.parse(row.notBefore),...row.segments.map(segment=>segment.start)])];
+  const earliestStart=proposedStarts.length?Math.min(...proposedStarts):Number.POSITIVE_INFINITY;
+  if(earliestStart<=Date.parse(nowIso))throw new ApiError(409,"DRAFT_EXPIRED","The planning draft has reached its first proposed start time. Generate it again using current capacity.");
   const requestedByOrder = new Map<string, { requested: number; itemId: string; medication: string; fmrOmed: string }>();
   for (const row of rows) {
     const allocations = row.sourceAllocations ?? (row.sourceOrderId ? [{ sourceOrderId: row.sourceOrderId, plannedQuantity: row.quantity }] : []);
@@ -526,7 +529,6 @@ async function commitDraft(client: pg.PoolClient, state: AppState, previewRevisi
       if(delivered>=numeric(order.ordered_quantity_scaled))throw new ApiError(409,"ORDER_ALREADY_DELIVERED","This order has already been collected.");
     }
     if(row.date<malaysiaDateAt(nowIso))throw new ApiError(409,"DRAFT_DATE_PASSED","Draft production cannot be scheduled on a past date.");
-    row={...row,notBefore:new Date(Math.max(Date.parse(row.notBefore),Date.parse(scheduleFloor(state.settings,row.date,nowIso)))).toISOString()};
     const quantityMt = row.unit === "Bags" ? row.quantity * (row.bagWeightKg ?? 0) / 1_000 : row.quantity;
     if (row.unit === "Bags" && !row.bagWeightKg) throw new ApiError(400, "BAG_WEIGHT_REQUIRED", `Bag weight is required for ${row.materialCode}.`);
     next = createJob(next, {

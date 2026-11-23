@@ -53,7 +53,7 @@ interface Workspace {
   copyDialog: { id: string; targetDate: string } | null;
   openCopy: () => void; closeCopy: () => void;
   commit: (command: Command, message: string, undoable?: boolean) => Promise<boolean>;
-  commitPrepared: (request: CommandRequest, message: string) => Promise<{ confirmed: boolean; uncertain: boolean }>;
+  commitPrepared: (request: CommandRequest, message: string) => Promise<{ confirmed: boolean; uncertain: boolean; error?: string; code?: string }>;
   undo: () => Promise<void>; canUndo: boolean; toast: { message: string; error: boolean } | null;
   notify: (message: string, error?: boolean) => void;
   resetDemo: () => Promise<boolean>; isDemo: boolean; savedAt: string | null; storageWarning: string;
@@ -61,6 +61,7 @@ interface Workspace {
   storageMode: 'database' | 'offline'; busy: boolean; refresh: () => Promise<void>;
   hasConflict: boolean; resolveConflict: () => void; mutationLocked: boolean;
   confirmedRetry: { nonce: number; type: Command['type'] } | null;
+  rejectedRetry: { nonce: number; type: Command['type']; commandId: string; error: string; code?: string } | null;
 }
 const WorkspaceContext = createContext<Workspace | null>(null);
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
@@ -83,6 +84,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [canUndo, setCanUndo] = useState(false);
   const [busy, setBusy] = useState(false);
   const saving = useRef(false);
+  const commandFailure = useRef<{error: string; code?: string} | null>(null);
   const reading = useRef(false);
   const remote = useRef<WorkspaceEnvelope | null>(null);
   const uncertain = useRef<CommandRequest | null>(null);
@@ -92,7 +94,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const conflict = useRef(false);
   const [hasConflict, setHasConflict] = useState(false);
   const [confirmedRetry, setConfirmedRetry] = useState<Workspace['confirmedRetry']>(null);
+  const [rejectedRetry, setRejectedRetry] = useState<Workspace['rejectedRetry']>(null);
   const confirmationNonce = useRef(0);
+  const rejectionNonce = useRef(0);
   const [loaded, setLoaded] = useState(!databaseMode);
   const [loadError, setLoadError] = useState('');
   const interaction = useRef(false);
@@ -125,9 +129,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async (force = true) => {
     if (!databaseMode || saving.current || reading.current || (!force && interaction.current && remote.current)) return;
     reading.current = true;
+    const retrying = uncertain.current;
     try {
-      if (uncertain.current) {
-        const pending = uncertain.current;
+      if (retrying) {
+        const pending = retrying;
         const source = uncertainSource.current;
         const result = await sendCommand(pending);
         clearUncertain(); acceptRemote(result);
@@ -152,6 +157,14 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         } else if (changed) notify('Workspace updated from PostgreSQL.');
       }
     } catch (error) {
+      if (retrying && error instanceof ApiError && error.code !== 'DATABASE_UNAVAILABLE') {
+        clearUncertain();
+        if (error.workspace) { acceptRemote(error.workspace); registerConflict(); }
+        setRejectedRetry({ nonce: ++rejectionNonce.current, type: retrying.command.type, commandId: retrying.commandId, error: error.message, ...(error.code ? { code: error.code } : {}) });
+        setStorageWarning('');
+        notify(`${error.message}${error.code ? ` (${error.code})` : ''}`, true);
+        return;
+      }
       if (error instanceof ApiError && error.workspace) {
         clearUncertain(); acceptRemote(error.workspace); registerConflict();
         notify('Another planner updated the workspace. The last action was not applied; review the latest plan and try again.', true);
@@ -232,6 +245,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     stateRef.current = next; setState(next); setSavedAt(new Date().toISOString()); setStorageWarning('');
   };
   const commit = async (command: Command, message: string, undoable = false, prepared?: CommandRequest): Promise<boolean> => {
+    commandFailure.current = null;
     if (saving.current) { notify('A change is still being saved. Please wait.', true); return false; }
     if (conflict.current && !prepared) { notify('Reload the latest data before applying another change.', true); return false; }
     if (databaseMode && (!remote.current || uncertain.current)) {
@@ -276,6 +290,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       }
       notify(message); return true;
     } catch (error) {
+      commandFailure.current = {error: error instanceof Error ? error.message : 'The change could not be saved.', ...(error instanceof ApiError ? {code:error.code} : {})};
       if (error instanceof ApiError) {
         if (error.code !== 'DATABASE_UNAVAILABLE') clearUncertain();
         if (error.workspace) {
@@ -324,7 +339,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   return <WorkspaceContext.Provider value={{
     state, board, date, setDate: changeDate, page, navigate, selectedId, selectedJob,
     revision: remote.current?.revision ?? null, workspaceUpdatedAt: remote.current?.updatedAt ?? null,
-    commitPrepared: async (request, message) => ({ confirmed: await commit(request.command, message, false, request), uncertain: uncertain.current !== null }),
+    commitPrepared: async (request, message) => ({ confirmed: await commit(request.command, message, false, request), uncertain: uncertain.current !== null, ...commandFailure.current }),
     openJob: (id, goToPlanning = false) => { if (locked()) { blocked(); return; } if (goToPlanning && !navigate('planning')) return; setCopyDialog(null); setEditor(null); setSelectedId(id); },
     closeJob: () => { if (locked()) { blocked(); return; } setSelectedId(null); }, editor,
     openInput: (lineId = 'PM1') => { if (locked()) { blocked(); return; } if (conflict.current) { notify('Reload the latest data before adding another task.', true); return; } setCopyDialog(null); setSelectedId(null); setEditor({ jobId: null, lineId }); },
@@ -337,7 +352,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     editJob: id => { if (locked()) { blocked(); return; } if (conflict.current) { notify('Reload the latest data before editing another task.', true); return; } const job = stateRef.current.jobs.find(item => item.id === id); if (job) { setSelectedId(null); setEditor({ jobId: id, lineId: job.lineId }); } },
     commit, undo, canUndo: canUndo && !busy, toast, notify, resetDemo, isDemo, savedAt, storageWarning, restoreBackup, previousBackup,
     storageMode: databaseMode ? 'database' : 'offline', busy, refresh,
-    hasConflict, resolveConflict, mutationLocked: busy || awaiting, confirmedRetry,
+    hasConflict, resolveConflict, mutationLocked: busy || awaiting, confirmedRetry, rejectedRetry,
   }}>
     {databaseMode && !loaded ? <main className="connection-screen"><div className="panel"><span className="eyebrow">MILLPLAN · POSTGRESQL</span><h1>{loadError ? 'Database connection needed' : 'Opening your workspace…'}</h1><p role={loadError ? 'alert' : 'status'}>{loadError || 'Loading the saved production plan.'}</p>{loadError && <button className="button primary" onClick={() => { setLoadError(''); void refresh(); }}>Retry connection</button>}</div></main> : children}
   </WorkspaceContext.Provider>;
