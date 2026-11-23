@@ -23,7 +23,7 @@ async function command(value){const ws=await json('/api/workspace');const r=awai
   const errors=[];page.on('pageerror',error=>errors.push(error.message));await page.clock.install({time:new Date()});await page.goto(base+'/#/data');
   const ready=page.locator('.source-table tbody tr').filter({hasText:'FICTION-STOCK-READY'});await ready.getByText('Stock ready',{exact:true}).first().waitFor();
   assert.match(await ready.innerText(),/Covered by stock/);assert.doesNotMatch(await ready.innerText(),/External complete|Already processed/);
-  assert.match(await page.getByLabel('Filtered order summary').innerText(),/Stock ready \/ production complete\s+1 \/ 0/);
+  assert.match(await page.getByLabel('Filtered order summary').innerText(),/Stock ready \/ completed\s+1 \/ 0/);
   await page.getByRole('button',{name:'Advanced filters',exact:true}).click();await page.getByRole('combobox',{name:/^Production/}).selectOption('stock-ready');
   await page.waitForFunction(()=>document.querySelectorAll('.source-table tbody tr').length===1);
   await page.getByRole('button',{name:'Clear filters',exact:true}).click();
