@@ -5,7 +5,8 @@
 <h1 align="center">Millplan</h1>
 
 <p align="center">
-  A pellet production planning dashboard that connects SAP Excel orders, finished-goods stock, and daily schedules across four pelleting lines.
+  Stock-aware pellet production planning for PM1–PM4.<br>
+  Import Excel orders, review production capacity, record output and track customer collection in one workspace.
 </p>
 
 <p align="center">
@@ -18,142 +19,124 @@
 </p>
 
 <p align="center">
-  <a href="#dashboard-preview">Preview</a> ·
+  <a href="#preview">Preview</a> ·
+  <a href="#features">Features</a> ·
   <a href="#quick-start">Quick Start</a> ·
   <a href="docs/USER_MANUAL.md">User Manual</a> ·
-  <a href="#architecture">Architecture</a> ·
   <a href="#documentation">Documentation</a>
 </p>
 
-## Why This Project Exists
+## About
 
-Daily pellet planning starts with customer orders exported from SAP, stock balances in Excel, and a decision about what each line should produce. Keeping those records in separate spreadsheets makes it harder to see capacity, follow an order across several production days, or distinguish completed production from collected goods.
+Millplan connects the daily work that otherwise lives across SAP exports, stock spreadsheets and a manually maintained production schedule. Planners can see what is already available, what still needs production and how that work fits across four pelleting lines. Supervisors can record actual output and stops, while order progress continues through partial customer collection.
 
-Millplan brings those steps into one shared PostgreSQL workspace. Planners can import orders, check available stock, arrange production cards, record actual output, and follow each order through collection. Manual production entry remains available alongside stock-aware planning suggestions.
+The current application runs in a browser, backed by Node.js and PostgreSQL. Windows launchers start the local Docker installation and open the dashboard. A new database starts empty; demonstration data is loaded only through an explicit action.
 
-## Dashboard Preview
+**Reviewed against the implementation: 26 November 2026.** For step-by-step operating instructions, see the **[English User Manual](docs/USER_MANUAL.md)**.
 
-![Millplan planning board with four horizontal production lines and fictional sample records](docs/assets/planning-board.png)
+## Preview
 
-The desktop board shows PM1 to PM4 on one timeline. Card length follows planned duration, colours indicate status, and compatible orders can share one card with separate order quantities in its details. On phones, the board defaults to a per-line list; Timeline remains available.
+![Four-line planning board with fictional demonstration records](docs/assets/planning-board.png)
 
-The screenshot uses fictional demonstration records. Company workbooks, customer details, reports, backups, and credentials are excluded from this repository.
+The desktop board offers Timeline and List views. Timeline card length follows planned duration; grey, blue, yellow, green and red distinguish unstarted, running, paused, completed and issue states. On phones, planning defaults to a per-line list.
 
-## What It Covers
+The image uses fictional demonstration records. This repository contains source code and test fixtures; company workbooks, customer records, backups and credentials are excluded.
 
-| Workspace | Main responsibility |
+## Features
+
+| Page | Current capabilities |
 | --- | --- |
-| **Overview** | Daily planned quantity, within-shift plan, received stock, utilisation, order/stock priorities, and weekly line capacity |
-| **Planning board** | Four-line Timeline/List, manual production, reviewed drag-and-drop movement, generated drafts, copy planning, optional multi-order batches, and quantity-preserving card splits |
-| **Orders** | Excel import previews, search and filters, order progress, partial collection, and a review queue for changed SAP records |
-| **Stock** | Bags/bulk balances, reservations, available stock, safety-stock policies, daily movements, and physical-count adjustments |
-| **History** | Production records and activity, combined filters, totals across all matching results, and 50-row pagination |
-| **Settings** | Working calendar, line rates, changeover, unavailable periods, product catalog, stock policies, and backup/recovery |
+| **Overview** | Daily planned quantity, within-shift plan, received stock, planned utilisation, daily line timeline, weekly capacity, priorities and recorded stops |
+| **Planning board** | PM1–PM4 Timeline/List, manual production, stock-aware drafts, reviewed drag-and-drop moves, multi-order batches, combine/split, copy planning and browser draft recovery |
+| **Orders** | Separate stock/SAP import modes, next-day order acceptance, search and filters, per-order production/collection journals, planning controls and import difference reviews |
+| **Stock** | Separate Bags/Bulk balances, reservations and available quantities, MTO/MTS policies, safety stock, extra output, variant filters, Daily stock and physical-count adjustments |
+| **History** | Production records and activity logs, date/PM/status/search filters, statistics across all matching records and 50-entry pagination |
+| **Settings** | Working calendar, line rates and changeover, exact-product PM preferences, downtime and dated shift exceptions, product catalog, stock policies and backup/recovery |
 
-Supporting workflows include:
+### Planning cards and production records
 
-- Accepted-batch scheduling that continues unfinished production before new demand, with exact-product PM preferences, capacity and downtime.
-- Editable planning drafts with split production across dates and lines, utilisation previews, late-order warnings, and browser-local draft recovery.
-- Separate stock-ready and production-complete order states, with visible draft confirmation deadlines and specific save-rejection reasons.
-- Same-product order batches with per-order allocations; combine or split unstarted cards by order or partial quantity while preserving every order and extra-stock total.
-- Server-time Start and Done, partial production receipts, pause/resume with reasons, and auditable output corrections.
-- Recorded-output progress and estimated finish when enough recent, reliable samples are available.
-- Daily or date-range Excel reports and landscape print/Save as PDF, independent of list pagination.
-- Revision-checked transactions, retry deduplication, retained drafts on conflicts, and before/after activity records.
+- Plan an individual order or compatible same-product orders together, with a separate DO/customer/due-date/quantity breakdown inside the card.
+- Optionally group same-product orders with the same due date during draft generation; later demand can remain in a separate batch.
+- Move unstarted work after reviewing the affected schedule, utilisation, bin assignment and delivery risk.
+- Combine compatible unstarted cards on the same date and PM, or split orders/partial quantities across new cards while preserving every allocation and extra-stock total.
+- Copy eligible manual cards to another date with new order references. Linked Excel-order cards are excluded to avoid duplicate demand.
+- Start and finish at the current server time. Record incremental production receipts, pauses with reasons, issues and auditable corrections.
+- Show recorded output and an estimated finish when enough recent, reliable samples exist. Progress is based on entered output; it is not a machine-sensor feed or measured OEE.
+
+### Reports
+
+Export the selected planning day to Excel or browser Print / Save as PDF. Date-range reports support up to 31 days and a selected PM or all four lines. Report scope is selected explicitly: History search/status filters and pagination do not restrict exports.
 
 ## Daily Workflow
 
-1. **Import stock, then next-day orders.** Baseline reads only the upper stock table of dated company sheets; lower orders and remarks are ignored. SAP orders reads bag/bulk tables and accepts only Goods Issue Date equal to Malaysia today + 1. Review exclusions and stock differences before confirming. Existing orders stay intact; differences enter the review queue.
-2. **Check stock.** Reserve compatible finished goods and identify the remaining order shortage or Make for stock replenishment need.
-3. **Plan production.** Continue work in progress, then unfinished earlier batches, new batches and MTS replenishment. Review Continue / Carry over / New proposals and preferred/diverted PMs before confirming. Manual cards remain available.
-4. **Record output.** Start at the current server time, post partial quantities as work progresses, and enter the final cumulative output when marking Done.
-5. **Record collection.** Deduct only the quantity actually collected. Review order progress, stock movements, History, or export the required report.
+1. **Establish or reconcile stock.** Review the latest dated stock report, or maintain the ledger through actual movements. The last count date is visible so old balances are not mistaken for a current physical count.
+2. **Import tomorrow's SAP orders.** Review the eligible date, packaging counts, exclusions and duplicates before confirming.
+3. **Review demand.** Check reservations, shortages, held/cancelled orders and any import differences requiring attention.
+4. **Prepare a plan.** Generate a reviewed draft or select orders manually. Continue unfinished work before new demand, then replenish applicable MTS targets.
+5. **Record production.** Start the card, enter new receipts as output occurs and complete it with the final cumulative actual quantity.
+6. **Record collection.** Deduct only what the customer actually takes, including partial collections. Review History or export the required report.
 
-### Business Rules
+### Two Excel Import Modes
+
+| | Baseline import | SAP orders |
+| --- | --- | --- |
+| Workbook source | Upper stock table on dated sheets such as 26th or 27th | `bag order` and `bulk order` |
+| Purpose | Establish stock, retain daily stock reports and reconcile Closing differences | Accept new customer orders for the next production demand queue |
+| Date rule | Detected stock-report date, reviewed before confirmation | **Goods Issue Date = server Malaysia today + 1 day** |
+| Existing records | Existing ledger movements remain; approved differences become adjustments | DO + complete Material code identifies duplicates; existing values remain unchanged |
+| Excluded data | Lower order table, order Remark, Medication and FMR / OMED fields | Older, farther-future and invalid/missing Issue Dates |
+
+Re-imports do not automatically overwrite order quantities, dates, statuses or manual fields. Changed candidates enter the **Import review queue** for permitted, reasoned corrections. A row missing from a later workbook does not delete an order or mark it collected. If a preview crosses midnight, the server requires a new preview against the new eligible day.
+
+Excel import reads saved data and cached formula results. It does not execute macros or recalculate workbooks. Recalculate and save edited formulas in Excel before importing.
+
+### Stock and Order Rules
 
 | Rule | Behaviour |
 | --- | --- |
-| Order identity | DO number + complete SAP material code; repeated imports add only unseen identities |
-| Product display | A description such as `FS 5220 BROILER...` displays as `5220`; the complete material code remains the stored identity |
-| Stock compatibility | Bags/bulk, bag weight, Medication, and FMR / OMED remain separate compatibility buckets |
-| Quantity precision | Whole Bags with saved 25 kg/50 kg weights; bulk stock and allocations to 0.001 MT |
-| Make for order | Produce the order shortage after compatible stock and unfinished production are considered |
-| Make for stock | Meet order demand and replenish the configured safety-stock target; extra output is applied once before splitting |
-| Production vs delivery | Done completes production; collection is recorded separately and may be partial |
-| Working calendar | Default 07:00–19:00 in Asia/Kuala_Lumpur; editable hours, overtime, closures, overnight shifts, and carry-over |
-| SAP acceptance | Server-controlled next-day Goods Issue Date, append-only DO + full material identity, stable accepted-batch order |
-| PM preferences | Exact FS code plus Bags/Bulk; editable in Settings, with same-day overflow to other PMs |
-| Historical records | Started/completed work retains its locked plan; imports do not invent production or collection movements |
+| Product identity | Complete SAP Material code remains the matching identity; the readable short label comes from the FS description and retains suffixes such as 5220M or 5220CCB |
+| Stock compatibility | Bags/Bulk, saved bag weight and Medication / FMR / OMED variants are kept separate |
+| Precision | Whole Bags; bulk inventory and order allocations to 0.001 MT; saved bag weight supports MT conversion |
+| Available stock | On hand minus reserved stock |
+| MTO | Produce the remaining order shortage after compatible stock and existing unreceived plans |
+| MTS | Meet demand and replenish a numeric safety-stock target; PER ADVICE means MTO, and blank policies require confirmation |
+| Extra output | Fixed or percentage extra is configured per stock product and applied once before splitting |
+| Stock ready | Existing compatible stock covers the outstanding requirement; no new production is implied |
+| Production complete | Production completion is recorded separately from customer collection |
+| Collection | Each actual collection deducts stock once; full collection marks the order Delivered/OUT |
+| Corrections | Original production, collection and adjustment records are retained with correction/reversal reasons |
 
-For example, **30 available Bags against a 100-Bag order leaves 70 Bags to produce**. With a Make for stock target of 20 Bags, the total suggestion becomes **90 Bags** before any configured extra. See the [inventory workflow](docs/inventory-workflow.md) for reservations, daily balances, and workbook rules.
+**Example:** with 30 available Bags against a 100-Bag order, the production shortage is **70 Bags**. With a 20-Bag MTS target, the total suggestion is **90 Bags** before any additional configured extra.
 
-The import date is read-only and rechecked before saving. If midnight changes the eligible day, the file remains selected and a new preview is required. Unfinished cards retain their IDs and actual records; nothing moves automatically at midnight. See the [inventory workflow](docs/inventory-workflow.md#generate-planning-draft) for PM defaults and carryover behavior.
+Incremental production receipts use the card's native Bags/MT unit. **Mark as done** takes the final cumulative total in MT, including output already received; inventory-linked cards post only the difference. See the [manual's worked example](docs/USER_MANUAL.md#14-worked-example-and-glossary).
 
-Planned utilisation describes scheduled capacity. Estimated finish uses recorded production samples; it is not a direct machine-sensor feed or measured OEE.
+### Automatic Planning and PM Preferences
 
-## Stack
+The default demand order is **work in progress → unfinished earlier accepted batches → new accepted batches → MTS replenishment**. Within a batch, the original acceptance order is retained. Stock-ready demand and quantities already covered by unfinished plans are not generated again. Held, cancelled and review-blocked orders are excluded.
 
-| Layer | Technology |
-| --- | --- |
-| Frontend | React 19, TypeScript, Vite, Lucide icons, dnd-kit |
-| Backend | Node.js 24, Express 5, shared TypeScript business rules |
-| Database | PostgreSQL 16, SQL migrations, transactional commands |
-| Import and reports | ExcelJS, browser print/Save as PDF |
-| Testing | Vitest, Node test runner, Playwright, disposable PostgreSQL databases |
-| Infrastructure | Docker Compose, GitHub Actions; optional Cloudflare Tunnel for remote access |
+Drafts distinguish **Continue**, **Carry over** and **New**. Overdue unstarted/unreceived work can be rescheduled using its original card. Started or partially received work stays on its original PM with only its remaining capacity reserved. Existing actual records remain; midnight alone does not move cards.
 
-## Architecture
+Default working hours are **07:00–19:00 MYT (Asia/Kuala_Lumpur)**. Available hours, rates, changeover, downtime and dated overtime/closure exceptions are configurable. The PM defaults below can be edited or disabled in **Settings → Production rules → Line preferences**.
 
-```text
-Browser / React dashboard
-          |
-          | same-origin queries and revision-checked commands
-          v
-      Express API
-          |
-          +---- Shared TypeScript planning and inventory rules
-          |
-          v
-     PostgreSQL 16
-          |
-          +---- Automatic V7 workspace snapshots
-          +---- Full PostgreSQL dumps for database recovery
-```
+| Exact product label | Packaging | Equally preferred lines |
+| --- | --- | --- |
+| 5220, 5220M | Bags | PM1 |
+| 5220 | Bulk | PM1, PM4 |
+| 5811, 5211 | Bags | PM2 |
+| 5210 | Bags | PM2, PM3 |
+| 5210 | Bulk | PM2 |
+| 5222 | Bags | PM2, PM4 |
+| Other combinations | As applicable | PM3 |
 
-Docker serves the built dashboard and API together on port `8080`. PostgreSQL stays on the internal Compose network unless the optional loopback development port is enabled. Writes validate and save atomically; uncertain network retries reuse the original command ID.
+Demand priority and the earliest available date come before line preference. Same-day capacity can divert work to another PM. Preferences are exact matches, so 5220M, 5220MER and 5220CCB are not interchangeable. Changing rules affects regenerated drafts; it does not automatically move confirmed cards.
 
-Repository layout:
-
-```text
-pellet-planning-dashboard/
-├── .github/workflows/    # CI
-├── src/
-│   ├── components/      # Shared UI, dialogs, and production details
-│   ├── domain/          # Scheduling, commands, quantities, and reports
-│   ├── lib/             # API, persistence, imports, and exports
-│   └── pages/           # Dashboard workspaces
-├── server/              # Express API, persistence, and backup service
-├── migrations/          # PostgreSQL schema changes
-├── tests/               # API and browser integration suites
-├── scripts/             # Setup, startup, backups, and demo history
-├── docs/                # User, developer, and operations guides
-├── compose.yml
-└── compose.dev.yml      # Optional localhost:5434 database access
-```
-
-## Current State
-
-The application runs as a shared, persistent workspace with order imports, inventory tracking, reviewed scheduling, actual production, reporting, and recovery. A new database starts empty. Fictional demo records are loaded only through an explicit action.
-
-The deployment model is a local Docker application. A configured Cloudflare Tunnel can route HTTPS traffic to it, but the host computer, Docker, and tunnel must remain running. GitHub Actions verifies the source; it does not automatically deploy this installation.
-
-The application currently has no login, user roles, or named audit actors. Shared company access needs an authentication layer and an agreed backup owner. `ALLOWED_ORIGINS` controls accepted browser origins; it is not a login mechanism.
+Current-day drafts leave a short review window and display **Confirm before**. Expired or stale drafts must be regenerated, with specific rejection reasons shown. **Save draft to this browser** is separate from confirming cards to PostgreSQL. For uncertain saves, retry/check the original request so it cannot create a second batch.
 
 ## Quick Start
 
-### Windows with Docker Desktop
+### Windows Local Installation
 
-Install and open Docker Desktop with Linux containers enabled. From PowerShell:
+Requirements: Git to clone the source, Docker Desktop with Linux containers and Docker Compose, and Windows PowerShell. The Docker-only application does not require Node.js installed on the host.
 
 ```powershell
 git clone https://github.com/shiebin-bit/pellet-planning-dashboard.git
@@ -162,21 +145,22 @@ cd pellet-planning-dashboard
 docker compose up --build -d --wait
 ```
 
-Open **[http://127.0.0.1:8080](http://127.0.0.1:8080)**.
+Open **[http://127.0.0.1:8080](http://127.0.0.1:8080)** and verify **PostgreSQL workspace** in the sidebar.
 
-After cloning, you can also double-click **`OPEN-DASHBOARD.cmd`** or **`START-DASHBOARD.cmd`**. The setup script creates a private `.env` with a random database password and preserves an existing configuration. Docker-only startup does not require Node.js on Windows.
+After the initial download, double-click **OPEN-DASHBOARD.cmd** or **START-DASHBOARD.cmd** to run setup, start services and open the browser. Both preserve an existing `.env`. The first setup generates a random database password.
 
-- Add your own production or import orders into the empty workspace.
-- For fictional sample data, use **Settings → Backup & recovery → Reset demo**.
-- Stop with **`STOP-DASHBOARD.cmd`** or `docker compose stop`.
+- New workspace: import stock first, then next-day SAP orders; manual production is also available.
+- Demonstration workspace: **Settings → Backup & recovery → Reset demo** intentionally replaces data with fictional examples. Do not use it on company records.
+- Stop: **STOP-DASHBOARD.cmd** or `docker compose stop`.
+- Update: back up first, then follow [Operations](docs/OPERATIONS.md#start-stop-and-update). CI does not deploy the local installation.
 
-Container replacement and normal stopping preserve the database volume. **`docker compose down -v` deletes that volume.**
+Normal stopping and container replacement retain the named PostgreSQL volume. **`docker compose down -v` deletes that volume.**
 
-On other operating systems, copy `.env.example` to `.env`, set a long random hex password, use the same password in `DATABASE_URL`, and run the Compose command above.
+For other operating systems, copy [.env.example](.env.example) to `.env`, set a strong random hex database password and the matching native connection string, then start Docker Compose.
 
 ### Native Development
 
-Requires Node.js **24.x**, npm, and Docker for PostgreSQL. Run from the repository root:
+Requires **Node.js 24.x**, npm and Docker for PostgreSQL. Run from the repository root:
 
 ```powershell
 npm ci
@@ -187,35 +171,89 @@ npm run build
 npm run server:dev
 ```
 
-In another terminal:
+In a second terminal, run `npm run dev`.
 
-```powershell
-npm run dev
-```
-
-| Service | Local address |
+| Service | Address |
 | --- | --- |
 | Built dashboard and API | `http://127.0.0.1:8080` |
-| Vite development UI | `http://127.0.0.1:5178`, with `/api` proxied to port `8080` |
-| PostgreSQL for DataGrip/native development | `127.0.0.1:5434`, enabled by `compose.dev.yml` |
+| Vite development UI | `http://127.0.0.1:5178`; `/api` proxies to port 8080 |
+| Optional PostgreSQL access for DataGrip/development | `127.0.0.1:5434`, through `compose.dev.yml` |
 
-Keep the example Vite origins in `.env`. `npm run preview` previews assets only; `npm start` serves the complete built application. Avoid running the Docker app and native API on the same port.
+Avoid running the native API and Docker app on the same port. `npm run preview` previews frontend assets; `npm start` serves the built application and API. To preserve optional DataGrip access across normal Windows launcher runs, see the Compose configuration in [Operations](docs/OPERATIONS.md#configuration).
 
-### Configuration
+## Architecture and Stack
 
-| Variable | Purpose |
+```mermaid
+flowchart LR
+    Excel[Excel stock reports and SAP exports] --> UI[React dashboard]
+    UI --> API[Node.js / Express API]
+    API --> Rules[Planning and inventory rules]
+    API --> DB[(PostgreSQL 16)]
+    DB --> Snapshots[V7 workspace backups]
+    DB --> Dumps[Full PostgreSQL dumps]
+    UI --> Reports[Excel and print / PDF reports]
+```
+
+| Layer | Implementation |
 | --- | --- |
-| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Database identity and private credentials |
-| `APP_PORT` | Docker application host port; defaults to `8080` |
-| `DATABASE_URL` | Native API database connection; Compose supplies its own internal connection |
-| `HOST`, `PORT` | Native API binding; setup uses `127.0.0.1:8080` |
-| `ALLOWED_ORIGINS` | Exact permitted origins for development or a configured HTTPS reverse proxy |
-| `AUTOMATIC_BACKUP_INTERVAL_HOURS` | Automatic snapshot interval; defaults to `24` |
-| `AUTOMATIC_BACKUP_RETENTION_COUNT` | Managed successful snapshots retained; defaults to `14` |
+| Interface | React 19, TypeScript 5.9, Vite, Lucide, dnd-kit |
+| API and rules | Node.js 24, Express 5, shared TypeScript domain rules |
+| Persistence | PostgreSQL 16, SQL migrations, transaction/version checks and command retry deduplication |
+| Workbook processing | ExcelJS; browser printing for PDF |
+| Verification | Vitest, Node test runner, Playwright Chromium and isolated PostgreSQL databases |
+| Deployment | Docker Compose; optional Cloudflare Tunnel for remote browser access |
 
-Use [.env.example](.env.example) as the configuration reference. Keep `.env`, tunnel tokens, database dumps, and company data private.
+```text
+pellet-planning-dashboard/
+├── .github/workflows/   # Verification workflow
+├── src/
+│   ├── components/     # Dialogs, cards, inventory and shared interface
+│   ├── domain/         # Scheduling, quantities, commands and reports
+│   ├── lib/            # API clients, browser drafts and workbook handling
+│   └── pages/          # Overview, Planning, Orders, Stock, History, Settings
+├── server/
+│   └── migrations/     # Database schema migrations
+├── scripts/            # Setup, launch, database backup and demo-history tools
+├── tests/              # API and browser integration tests
+├── docs/               # User manual and technical documentation
+├── compose.yml         # Application + PostgreSQL
+└── compose.dev.yml     # Optional loopback database port 5434
+```
 
-## Testing
+### Configuration and Remote Access
+
+Use [.env.example](.env.example) as the public reference; keep the real `.env` private.
+
+| Configuration | Purpose |
+| --- | --- |
+| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Database configuration; changing `.env` alone does not rotate an existing database role password |
+| `APP_PORT` | Docker web port; default 8080, bound to loopback |
+| `DATABASE_URL`, `HOST`, `PORT` | Native API connection/binding; Compose supplies the app's internal database URL |
+| `ALLOWED_ORIGINS` | Exact additional browser origins for development or a configured HTTPS proxy |
+| `AUTOMATIC_BACKUP_INTERVAL_HOURS`, `AUTOMATIC_BACKUP_RETENTION_COUNT` | Snapshot interval and retained successful copies; defaults 24 and 14 |
+
+The standard Compose file exposes the application on `127.0.0.1` and keeps PostgreSQL internal. The optional development file exposes the database on loopback **5434**.
+
+A configured Cloudflare Tunnel can route an HTTPS hostname to the local app. The host, Docker and connector must stay running. The application currently has **no built-in login, roles or named audit actors**; `ALLOWED_ORIGINS` is request validation, not access control. See [Cloudflare Tunnel](docs/OPERATIONS.md#cloudflare-tunnel) for proxy settings and restricted-access deployment.
+
+## Backup and Recovery
+
+| Backup | Contents and use |
+| --- | --- |
+| **V7 workspace JSON** | Planning, catalog, settings, orders, inventory/collection history, reviews, progress, accepted batches and continuation plans; download/restore through Settings |
+| **Automatic snapshots** | Docker writes V7 JSON to `backups/automatic/` every 24 hours by default, retaining 14 managed successful copies; Settings displays status and failures |
+| **PostgreSQL dump** | Full database recovery, including metadata and command receipts; run `.\scripts\backup.ps1` |
+| **Browser-local draft** | Proposal stored in one browser/origin; outside database and workspace backups |
+
+Workspace restoration previews then **replaces** the active workspace, retaining the preceding recovery copy; it does not merge records. Versions 1–6 remain readable with warnings for omitted data. Old orders without accepted-batch metadata do not automatically enter the new-demand queue.
+
+Keep protected copies outside the host disk and verify restores in a separate database. A Docker volume is persistent storage, not a backup. Recovery procedures are in [Operations](docs/OPERATIONS.md#backups).
+
+The optional **OPEN-OFFLINE-DASHBOARD.cmd** uses a separate planning-only browser workspace with localStorage and the device clock. It has no PostgreSQL stock ledger. Migration requires an explicit backup/restore; records are not shared automatically.
+
+## Verification
+
+Basic checks:
 
 ```powershell
 npm test
@@ -223,51 +261,29 @@ npm run build
 npm audit --omit=dev
 ```
 
-For database and browser verification, **configure separate disposable databases and a test server first**. API tests truncate configured test tables, and browser mutation suites replace their selected workspace. Follow [Testing and verification](docs/TESTING.md); never point these suites at the active planning service.
+Database/browser tests require a disposable database and an isolated loopback test server. Follow [Testing and verification](docs/TESTING.md) before running `npm run test:api` or `npm run test:browser`: these suites can truncate or replace their configured test workspace and must never target company data.
 
-```powershell
-npm run test:api
-npm run test:browser
-```
+[GitHub Actions](.github/workflows/ci.yml) runs on pushes and pull requests using Node.js 24 and PostgreSQL 16. It installs the lockfile, runs domain/dependency/backup tests, builds, audits runtime dependencies, exercises the API and runs the complete browser suite configured in [package.json](package.json). The badge links to the current result; CI verifies source and does not deploy the application.
 
-Coverage includes scheduling, precise quantities, order batching, import reviews, reservations, partial production/collection, calendar changes, conflict handling, network retries, backup recovery, reports, and desktop/mobile interactions.
-
-## CI
-
-[Verify dashboard](.github/workflows/ci.yml) runs on pushes and pull requests with Node.js 24 and PostgreSQL 16. It installs the lockfile, runs unit and backup tests, builds the application, audits runtime dependencies, tests the API, and runs all 19 browser scripts using Playwright Chromium against a disposable database.
-
-The badge above links to the current workflow status. Deployment is managed separately from CI.
-
-## Backups and Data
-
-- **Automatic recovery copies:** Docker saves portable V7 JSON snapshots to `backups/automatic/` every 24 hours by default, retaining 14 managed successful files. Settings shows last success, next attempt, and failures.
-- **Manual workspace recovery:** Download or restore JSON in **Settings → Backup & recovery**. V7 includes orders, inventory movements, import reviews, production progress, retained history, split-card lineage, accepted SAP batches, continuation capacity and line preferences. Versions 1-6 remain readable; old orders without acceptance metadata do not silently enter the new-demand queue. Older versions remain readable with warnings about omitted data.
-- **Full database recovery:** Run `.\scripts\backup.ps1` for a PostgreSQL custom-format dump. Portable JSON does not include all database metadata or command receipts.
-- **Restore behaviour:** Workspace restoration replaces the active workspace after preview and retains the preceding recovery copy. It does not merge records.
-- **Browser drafts:** Saved generated drafts belong to that browser/origin and are outside database backups.
-
-The one-time next-day-workflow reset uses private local maintenance after a full backup and verified restore. It clears operational orders, schedules, balances and history while retaining catalog, stock policies and Settings; no public reset button is added. Start again with a new stock baseline, then next-day SAP orders. Old October files are not replayed automatically. DataGrip stays on loopback port `5434`.
-
-Keep protected copies outside the host disk and verify restores in a separate database. See the [operations guide](docs/OPERATIONS.md) for backup, recovery, update, and troubleshooting procedures.
-
-The optional **`OPEN-OFFLINE-DASHBOARD.cmd`** opens the built, planning-only file workspace using localStorage and the device clock. It is separate from PostgreSQL and has no stock ledger. Export its JSON and explicitly restore it in the database dashboard to migrate records; nothing imports silently.
-
-For presentation history, [seed-demo-history.ts](scripts/seed-demo-history.ts) accepts a bounded date range within the previous 31 Malaysia calendar days. It defaults to a dry run, requires a demo workspace, skips occupied date/line pairs, and uses `--apply` for an explicit import after backup.
+Coverage includes stock-only and next-day imports, duplicates and reviews, precise quantities, MTO/MTS, multi-order allocation, card splits, carryover, PM preferences, calendar exceptions, actual output/collection, stale drafts, conflicts, retry safety, restore and responsive interactions.
 
 ## Documentation
 
-- **[User manual (English)](docs/USER_MANUAL.md)** — daily workflows, Excel imports, orders and stock, planning cards, actual production, reports, settings, recovery and troubleshooting.
-- [Architecture and database](docs/ARCHITECTURE.md)
-- [Command API](docs/API.md)
-- [Startup, backup, recovery, and troubleshooting](docs/OPERATIONS.md)
-- [Testing and verification](docs/TESTING.md)
-- [Inventory and stock workflow](docs/inventory-workflow.md)
-- [中文操作说明](docs/USER_GUIDE.zh-CN.md)
+| Guide | Audience and purpose |
+| --- | --- |
+| **[User Manual — English](docs/USER_MANUAL.md)** | Daily operators: feature explanations, step-by-step workflows, troubleshooting and worked example |
+| [Inventory workflow](docs/inventory-workflow.md) | Detailed stock, import, reservation and scheduling rules |
+| [Operations and handoff](docs/OPERATIONS.md) | Startup, configuration, tunnel, updates, backup and recovery |
+| [Architecture](docs/ARCHITECTURE.md) | System boundaries and persistence design |
+| [Command API](docs/API.md) | Queries, commands, validation and data contracts |
+| [Testing and verification](docs/TESTING.md) | Isolated database and browser test setup |
+| [Chinese operation notes](docs/USER_GUIDE.zh-CN.md) | Existing Chinese-language reference |
 
-## Notes
+## Current Boundaries
 
-- SAP integration currently uses Excel exports; there is no direct SAP API connection.
-- Excel imports read data and cached formula results. They do not execute macros, formulas, or external links.
-- Repeated imports retain existing orders and manual fields. Orders absent from a later workbook are not deleted or marked collected.
-- The public repository contains source and fictional fixtures, not the running database or company files.
+- SAP integration uses Excel exports; there is no direct SAP API synchronisation.
+- Stock accuracy depends on verified imports and recorded movements. A new day does not refresh stock or infer production/collection.
+- Utilisation is planned capacity; output estimates depend on manual receipts and sufficient recent samples.
+- Local installation and optional tunnel access require the host services to remain running. Company-wide deployment needs agreed access, backup and operating responsibilities.
+- Company workbooks, customer data, private reports, backups and credentials must stay outside the public repository.
 - No open-source licence is granted by this repository.
