@@ -20,6 +20,7 @@
 <p align="center">
   <a href="#dashboard-preview">Preview</a> ·
   <a href="#quick-start">Quick Start</a> ·
+  <a href="docs/USER_MANUAL.md">User Manual</a> ·
   <a href="#architecture">Architecture</a> ·
   <a href="#documentation">Documentation</a>
 </p>
@@ -255,6 +256,7 @@ For presentation history, [seed-demo-history.ts](scripts/seed-demo-history.ts) a
 
 ## Documentation
 
+- **[User manual (English)](docs/USER_MANUAL.md)** — daily workflows, Excel imports, orders and stock, planning cards, actual production, reports, settings, recovery and troubleshooting.
 - [Architecture and database](docs/ARCHITECTURE.md)
 - [Command API](docs/API.md)
 - [Startup, backup, recovery, and troubleshooting](docs/OPERATIONS.md)
