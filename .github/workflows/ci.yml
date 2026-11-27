@@ -27,7 +27,7 @@ jobs:
           umask 077
           printf '%s\n' ci-only-password > "$RUNNER_TEMP/millplan-pg.pw"
           /usr/lib/postgresql/16/bin/initdb -D "$RUNNER_TEMP/millplan-pg" -U millplan --encoding UTF8 --auth-local=trust --auth-host=scram-sha-256 --pwfile="$RUNNER_TEMP/millplan-pg.pw"
-          /usr/lib/postgresql/16/bin/pg_ctl -D "$RUNNER_TEMP/millplan-pg" -l "$RUNNER_TEMP/millplan-pg.log" -o '-p 55432 -h 127.0.0.1' -w start
+          /usr/lib/postgresql/16/bin/pg_ctl -D "$RUNNER_TEMP/millplan-pg" -l "$RUNNER_TEMP/millplan-pg.log" -o "-p 55432 -h 127.0.0.1 -k $RUNNER_TEMP" -w start || { cat "$RUNNER_TEMP/millplan-pg.log"; exit 1; }
           PGPASSWORD=ci-only-password /usr/lib/postgresql/16/bin/createdb --host 127.0.0.1 --port 55432 --username millplan millplan_test
       - run: npm test
       - run: npm run test:desktop
@@ -81,7 +81,7 @@ jobs:
       - name: Stop native test database
         if: always()
         run: |
-          if [ -f "$RUNNER_TEMP/millplan-pg/PG_VERSION" ]; then
+          if [ -f "$RUNNER_TEMP/millplan-pg/postmaster.pid" ]; then
             /usr/lib/postgresql/16/bin/pg_ctl -D "$RUNNER_TEMP/millplan-pg" -m fast -w stop
           fi
 
