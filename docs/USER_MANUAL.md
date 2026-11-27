@@ -28,16 +28,15 @@ Button names in **bold** match the English interface. All examples are fictional
 
 ### Open the dashboard
 
-1. On the host computer, open Docker Desktop and wait for it to be ready.
-2. Double-click **OPEN-DASHBOARD.cmd** or **START-DASHBOARD.cmd** in the application folder.
-3. Open `http://127.0.0.1:8080` if the browser does not open automatically.
-4. Check that the sidebar says **PostgreSQL workspace** and that there is no connection warning.
+1. Install the Windows desktop application once using **Millplan Setup**.
+2. Open **Millplan** from the desktop shortcut or Start menu. Wait while PostgreSQL and the workspace start.
+3. Confirm **PostgreSQL workspace** in the sidebar. A new installation starts empty; import stock before generating production plans.
 
-If your installation has a remote address, use the address supplied by the person maintaining it. The host computer, Docker and any configured tunnel must remain running. Changing from a local address to a remote address does not transfer browser-saved drafts.
+Closing the window keeps Millplan in the Windows system tray. Open it again from the tray or shortcut; choose **Quit** to stop the application and database. Saved data remains under `%LOCALAPPDATA%\FFM\MillPlan`, separately from the installed program. Updates and normal uninstall/reinstall preserve this directory.
 
-Use **STOP-DASHBOARD.cmd** to stop the local services. Normal stopping preserves saved database records. Do not remove the database volume in Docker Desktop.
+The local browser address remains **http://127.0.0.1:8080** while Millplan is running. A configured remote address also needs the host computer, Millplan tray process and tunnel to remain running. Browser-saved drafts stay in the browser/profile that created them; opening the desktop window does not transfer drafts from another browser. Confirmed PostgreSQL records are shared.
 
-**OPEN-OFFLINE-DASHBOARD.cmd** opens a separate, browser-only planning workspace. It does not share the database or stock ledger. Use the PostgreSQL workspace for the workflows in this manual.
+For company installation, copy the installer. Do not copy another computer's private application directory or credentials. Use an explicit backup/restore to transfer approved business records.
 
 ### Recommended daily routine
 
@@ -442,7 +441,7 @@ Configure extra output as a fixed quantity or percentage where needed; no settin
 
 Open **Settings → Backup & recovery → Download backup**. Save the JSON in an approved location with its date. Current database workspace backups are **V7** and include production, orders, inventory movements, collections, catalog, settings, reviews, accepted batches and continuation plans. Browser-local planning drafts are separate.
 
-Automatic backup status shows recent success, the next attempt and failures. The normal Docker configuration creates a copy every **24 hours** and retains **14** managed successful snapshots; the maintainer can change these settings. The host must be running. Keep a protected copy outside the host disk as well.
+Automatic backup status shows recent success, the next attempt and failures. The desktop application creates a copy every **24 hours** and retains **14** managed successful snapshots; the maintainer can change these settings. The host must be running. Keep a protected copy outside the host disk as well.
 
 ### Restore a workspace
 
@@ -461,7 +460,7 @@ Do not use **Reset demo** in a working company workspace. It is for intentionall
 
 | Symptom | What to check or do |
 | --- | --- |
-| Dashboard will not open | Start Docker Desktop and OPEN-DASHBOARD.cmd; confirm the correct address. Remote access also needs the host and tunnel running |
+| Dashboard will not open | Open Millplan from the desktop/Start menu and wait for startup; confirm the correct address. Remote access also needs the host and tunnel running |
 | Connection/storage warning | Keep the open form and use **Retry connection** after service is restored; do not switch to the offline workspace as a retry |
 | Another planner changed the workspace | Reload/review the latest data using the offered control. Check your retained entries before saving; regenerate a stale planning draft |
 | Save outcome is unknown | Use the original retry/check action. Do not submit a second batch or duplicate receipt |

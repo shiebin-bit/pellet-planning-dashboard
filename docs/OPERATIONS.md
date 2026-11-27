@@ -1,138 +1,100 @@
 # Operations and handoff
 
-## Configuration
+## Windows desktop installation
 
-`scripts/setup.ps1` creates `.env` once and preserves an existing file. Keep the file private and backed up separately. `.env.example` documents the shape without credentials.
+Install the supplied **Millplan Setup** executable as the Windows user who will operate the dashboard. It includes Electron, the built interface/API and PostgreSQL 16. A company PC needs no separate database, Node.js or container software installation. First launch creates an empty database. Real company workbooks, credentials and existing records are never included in the installer.
 
-| Variable | Use |
+The default executable is `%LOCALAPPDATA%\Programs\Millplan\Millplan.exe`. Open its desktop/Start menu shortcut. Closing the window keeps the application in the system tray; **Quit** closes the API and then PostgreSQL. The tray process must remain running for local browser or tunnel access. Startup refuses occupied ports rather than terminating unknown processes.
+
+The application and database run as the current user, not a Windows service. They stop on logout/shutdown. Separate Windows accounts have separate workspaces and encrypted credentials. This is a local pilot installation, not an unattended shared server.
+
+## Data and configuration
+
+All mutable files live under `%LOCALAPPDATA%\FFM\MillPlan`, outside the installation directory:
+
+| Path | Contents |
 | --- | --- |
-| `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Initial PostgreSQL database/account; password generated as random hex by setup |
-| `APP_PORT` | Docker's loopback web port, default 8080 |
-| `DATABASE_URL` | Native Node connection URL; Compose app supplies its internal URL automatically |
-| `HOST`, `PORT` | Native server bind address/port; default 127.0.0.1:8080 |
-| `PUBLIC_PORT` | Optional external port recognized in Host/Origin checks; Compose sets this from APP_PORT |
-| `ALLOWED_ORIGINS` | Additional exact origins, comma-separated; forwarded to the Docker app too. Required for Vite development and any HTTPS reverse-proxy hostname |
-| `DIST_DIR` | Optional native static build path |
-| `AUTOMATIC_BACKUP_ENABLED`, `AUTOMATIC_BACKUP_DIR` | Native automatic V7 snapshots default disabled; enable explicitly with an absolute non-root private directory. Compose enables snapshots and binds `./backups/automatic` |
-| `AUTOMATIC_BACKUP_INTERVAL_HOURS` | Snapshot interval, default24, allowed1–168 hours |
-| `AUTOMATIC_BACKUP_RETENTION_COUNT` | Keep the newest successful managed snapshots, default14, allowed1–365 |
-| `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR` | Optional persistent Compose file selection; on Windows use `compose.yml;compose.dev.yml` and `;` to retain DataGrip port 5434 through normal startup |
+| `config/desktop.json` | Desktop ports, exact allowed origins and Windows-encrypted database credential |
+| `postgres/data/` | PostgreSQL cluster; do not edit, move or delete while running |
+| `backups/automatic/` | Managed portable V7 snapshots |
+| `backups/database/` | Full database dumps |
+| `logs/` | Desktop and PostgreSQL startup/shutdown diagnostics |
 
-Changing `.env`'s PostgreSQL password does **not** change the role password inside an existing volume. Coordinate password rotation through PostgreSQL and update all connection settings. Do not delete a data volume to fix a password mismatch. Arbitrary passwords need URL encoding in a connection URL; the generated hex passwords avoid that problem.
+Default HTTP is **127.0.0.1:8080** and PostgreSQL is **127.0.0.1:5434**, preserving DataGrip's port. Desktop configuration is separate from a developer checkout's `.env`. Stop Millplan before changing desktop configuration. Never paste the encrypted credential, connection URLs or logs containing company information into public issues.
 
-## Cloudflare Tunnel
+`desktop.json` uses version 1 with `httpPort`, `postgresPort`, `allowedOrigins`, `closeToTrayExplained`, and `database` (`user`, `name`, `encryptedPassword`). Use `allowedOrigins` only for additional exact HTTP(S) origins. Changing the stored credential alone does not rotate PostgreSQL's role password. Do not copy another user's encrypted credentials to a different PC.
 
-For a `cloudflared` connector running on this Windows PC, route the chosen hostname to **HTTP `127.0.0.1:8080`** (or the configured `APP_PORT`). Under the route's additional HTTP settings, set **HTTP Host Header** to **`127.0.0.1:8080`**. This lets the existing loopback Host validation work behind the tunnel. Add the exact public origin, for example `https://planning.example.com`, to `.env`'s `ALLOWED_ORIGINS`, preserving existing origins. Recreate only the app with `docker compose up -d --no-deps --wait app`; an environment-only change does not require an image rebuild.
-
-Keep web port 8080 and DataGrip port 5434 bound to `127.0.0.1`. Route only the web application through the tunnel. Verify the public health endpoint and preview request validation as well as loading the page: loading HTML alone does not prove that the HTTPS origin can save/import.
-
-The dashboard provides full planning and stock operations without an application login. An unprotected published hostname makes these operations reachable by anyone who discovers the URL; it does not provide view-only access. Use Cloudflare Access with an explicit allow policy for restricted remote use. Do not overwrite other tunnel routes. Removing this application's route/DNS and its exact allowed origin rolls back external access while preserving the local dashboard and database.
+For standalone web/server deployment, use `.env.example` as the private `.env` template. `DATABASE_URL` selects an existing native PostgreSQL database; `HOST` and `PORT` select the API binding. `DIST_DIR` and `MIGRATIONS_DIR` can supply absolute packaged paths. `ALLOWED_ORIGINS` contains exact additional browser origins. `AUTOMATIC_BACKUP_ENABLED`, `AUTOMATIC_BACKUP_DIR`, `AUTOMATIC_BACKUP_INTERVAL_HOURS` and `AUTOMATIC_BACKUP_RETENTION_COUNT` control snapshots. Desktop supplies these paths itself and enables snapshots.
 
 ## Start, stop and update
 
+Use the installed shortcut or tray menu for normal operation. In a source checkout, after `npm ci` and `npm run desktop:prepare`, the existing launchers open the desktop application:
+
 ```powershell
-.\scripts\start.ps1 -NoBrowser
-docker compose ps
-docker compose logs --tail 100 app
-docker compose stop
+.\scripts\start.ps1
+.\scripts\start.ps1 -NoBrowser  # tray only
+.\scripts\stop.ps1
 ```
 
-`OPEN-DASHBOARD.cmd` and `START-DASHBOARD.cmd` both start the Docker services and open the PostgreSQL-backed application in the browser. `OPEN-OFFLINE-DASHBOARD.cmd` is the explicitly separate localStorage build. `STOP-DASHBOARD.cmd` stops both Docker services without removing data. Compose waits for PostgreSQL's health check before starting the app, consistent with [Docker's startup-order guidance](https://docs.docker.com/compose/how-tos/startup-order/). The app migrates and initializes a new workspace with empty jobs and activity before listening.
+`OPEN-DASHBOARD.cmd` and `START-DASHBOARD.cmd` call the desktop launcher. `STOP-DASHBOARD.cmd` requests graceful shutdown. The separate `OPEN-OFFLINE-DASHBOARD.cmd` still opens a planning-only localStorage file; it does not share the PostgreSQL inventory ledger.
 
-Before updating, create a database backup. Then pull the reviewed source and run `docker compose up --build -d --wait`. Existing data is retained. Avoid running the native server and container app on the same port. Changing `APP_PORT` changes the browser URL; do not publish the port to all network interfaces to bypass the local boundary.
+Before updating, save a full database dump and a workspace JSON. Quit Millplan, run the replacement installer, then reopen it. Updates replace program resources, not the private data directory. Normal uninstall preserves company data and backups; reinstall reuses the retained compatible cluster. Do not manually delete the data directory as an update or password-repair step.
 
-If DataGrip uses `127.0.0.1:5434`, keep `compose.dev.yml` enabled during every update/start. Either pass `-f compose.yml -f compose.dev.yml`, or put `COMPOSE_FILE=compose.yml;compose.dev.yml` and `COMPOSE_PATH_SEPARATOR=;` in the private Windows `.env`. The override publishes only loopback PostgreSQL; database/user remain `millplan` with the existing private password. Do not paste the password into documentation.
-
-The efficiency update adds migration 003 (`workspace.catalog` JSONB) without replacing existing jobs. Before deploying, retain a dump and a workspace JSON, then compare all pre-existing job payloads after startup. Seed the eight fictional `-DEMO` catalog entries only when the existing workspace is marked Demo and its catalog is empty; do not reset its production data. Ordinary workspaces stay empty. New backups and newly saved recovery/Undo snapshots use version 2; rolling back to a binary that only reads version 1 requires a matching pre-upgrade database backup.
-
-The pause/history update adds optional `jobs.payload.pauseIntervals` and `history_events.payload.changes` fields without SQL changes or automatic backfills. Back up both PostgreSQL and the workspace JSON before deploying, then verify that the revision, complete job payloads, settings, catalog and existing activity match the predeployment snapshot. The existing DataGrip port remains 5434. Once new fields have been written, **an older binary's strict reader cannot read them**; rollback requires the matching predeployment dump plus the previous application image/source, not just an old image. Restore that dump into a separate verified database and coordinate any newer records before switching the service.
-
-The named volume is `millplan_postgres_data` with the default project name. It survives container replacement. It is **not a backup**, and `down -v` deletes it.
+PostgreSQL stays on major version 16. A future major upgrade requires a separate verified database migration. SQL migrations run transactionally under an advisory lock. An older application may not understand newer data; rollback requires the matching pre-update dump and compatible application version.
 
 ## Backups
 
-Docker automatically saves portable V7 recovery copies in `backups/automatic/` on the host, independently of the browser. The first enabled start queues a copy immediately. Later starts inspect existing valid copies; within the interval they reuse the last success, and after a missed interval they queue one catch-up rather than every missed run. The default is 24 hours and 14 successful files. Settings → Backup & recovery shows last success, next attempt and any failure; Refresh updates status. Native development/tests default to disabled unless explicitly enabled.
+**Portable workspace:** Settings → Backup & recovery → Download backup. V7 includes planning, settings, products, source orders/versions, import reviews, stock ledger, collection records, progress samples/resets, retained daily history, accepted SAP batches and continuation plans. It omits database migration history, command receipts, revision metadata, recovery copies and browser-only drafts. Restoration previews and replaces the workspace rather than merging. V1–V6 remain readable with warnings about absent sections; old orders without acceptance metadata do not automatically enter the new-demand queue.
 
-New files use `millplan-auto-v7-YYYYMMDDTHHmmssSSSZ.json` (UTC). Existing validated V5 and V6 managed files remain discoverable and recoverable. A same-directory temporary file is written exclusively and synced before atomic rename. Only after success are older regular files matching the supported managed filenames removed. Manual JSON, database dumps, directories and symlinks are excluded. A failed export/write keeps existing copies and retries after 15 minutes; pruning failure retains the valid new copy and shows a warning. The host directory must be writable by the container's unprivileged `node` user and private under host ACLs; a permissions failure is shown as degraded status without stopping planning. It is outside the static web root and excluded from Git/Docker build context.
+**Automatic snapshots:** the desktop API creates V7 JSON snapshots every 24 hours by default and retains 14 successful managed copies. The first enabled start queues a copy immediately. On later starts, a missed interval produces one catch-up copy. Settings displays success/failure and the next attempt. The process must be running; there are no backups while the PC is off. Existing validated V5/V6 snapshots remain discoverable. Writes use exclusive temporary files, sync and atomic rename before managed-file pruning. Manual files are not pruned. Failures retain earlier backups and retry after 15 minutes.
 
-For routine recovery, select a saved automatic JSON through the existing Restore JSON backup preview. V7 contains the current business graph, including orders, inventory, review history, production progress, accepted SAP batches, continuation plans and line preferences. It does not include schema/migration history, command receipts, workspace revision, old recovery snapshots or browser-local drafts. Continue full database dumps for releases and database-level recovery, and retain protected copies outside this disk.
-
-Portable workspace: Settings → Download backup. The database application exports version 7, including planning, catalog, activity, source orders/versions, import reviews, inventory ledger, production-progress samples/resets, retained daily history, accepted order batches and continuation reservations. Offline exports remain planning-only version 2. Import requires a preview and replaces the active workspace. Versions 1–6 remain readable with warnings about missing data; versions 1/2 omit imported orders, and version 1 also restores an empty catalog. Old orders without acceptance metadata do not automatically enter the new-demand queue. The preceding complete workspace is retained once. Download that recovery copy if it must be kept permanently.
-
-Full database:
+**Full PostgreSQL dump:** includes all database tables, receipts, recovery metadata and migrations. Use the desktop database-backup action or this source-checkout helper:
 
 ```powershell
 .\scripts\backup.ps1
+# Optional new destination filename:
+.\scripts\backup.ps1 -OutputPath 'E:\Protected backups\millplan-before-update.dump'
 ```
 
-This uses `pg_dump -Fc` inside PostgreSQL and copies the binary dump to ignored `backups/millplan-<UTC time>.dump`. Do not redirect binary dump bytes through Windows PowerShell. The dump includes receipts, revision, recovery snapshots and migrations. Automatic portable JSON snapshots do not replace this database-level recovery path. Keep independent protected copies outside this PC and agree retention and restore responsibility with the company.
+The helper requests the desktop backup operation and waits for its private status sidecar. It works with a running desktop process or starts the database temporarily for a backup. Existing output files are not intentionally overwritten. Keep protected copies outside this PC and verify restoration periodically. A PostgreSQL data directory is persistent storage, not a backup.
 
-## Restore drill into a separate database
+## Restore rehearsal and recovery
 
-Test backups without overwriting the active database. The following creates a new validation database; use a fresh name if it already exists. Substitute the actual dump filename. Run from the project directory with `db` running.
+Never test restoration by replacing the active company workspace. Retain the current dump, then restore into a new isolated PostgreSQL 16 database using the bundled tools under the installed `resources/pgsql/bin` directory. Supply credentials privately through a password file or environment, never a public command line:
 
 ```powershell
-docker compose cp .\backups\millplan-YYYYMMDDTHHMMSSZ.dump db:/tmp/millplan-restore.dump
-docker compose exec -T db sh -c 'createdb -U "$POSTGRES_USER" millplan_restore_check'
-docker compose exec -T db sh -c 'pg_restore -U "$POSTGRES_USER" --no-owner --exit-on-error -d millplan_restore_check /tmp/millplan-restore.dump'
-docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d millplan_restore_check -c "SELECT revision, updated_at FROM workspace; SELECT count(*) FROM jobs; SELECT count(*) FROM history_events;"'
-docker compose exec -T db rm -f /tmp/millplan-restore.dump
+createdb --host 127.0.0.1 --port 5434 --username millplan millplan_restore_test
+pg_restore --host 127.0.0.1 --port 5434 --username millplan --dbname millplan_restore_test --no-owner --no-privileges --exit-on-error --single-transaction 'E:\Protected backups\millplan.dump'
 ```
 
-Verify expected counts, planning data and recovery metadata. For a full application check, start an isolated native server against the restored database on another loopback port using a separate ignored environment file. Do not point integration tests at an active workspace.
+Run a matching standalone API on a different loopback port against the restored database. Compare complete portable sections, workspace revision, migration versions and table contents/counts. Only after verification and a coordinated write freeze should a maintainer switch the active database. Retain the preceding recovery source. Do not direct mutation test suites at company data.
 
-To recover the service, first stop `app`, retain a dump of the current database, restore into a **new** database, verify it, and update `POSTGRES_DB`/native connection settings to the recovered database. Recreate `db` with the **same named volume** so its environment, health check and backup target all match the recovered database, then recreate `app`:
+For the former container installation, the maintenance migration freezes old writes, creates a custom-format dump, restores into an isolated native cluster, compares all persisted rows and the V7 workspace, and verifies a second dump/restore before removing the project's old containers/volume. Re-importing spreadsheets is not an equivalent migration: receipts, audits and historical progress must survive.
 
-```powershell
-docker compose up -d --force-recreate db --wait
-docker compose up -d --force-recreate app --wait
-.\scripts\backup.ps1
-```
+## Cloudflare Tunnel
 
-Verify the new backup targets the recovered database. Recreating only `app` leaves the old database name in the running `db` container, which would make later backups target the old database. Starting the application can run newer migrations, so match the source version to the backup before upgrading. Preserve the old database until recovery is accepted; do not use `down -v`.
+The desktop app preserves the existing same-origin API, so a Windows `cloudflared` connector can continue routing to **HTTP 127.0.0.1:8080** while Millplan remains running. Set the route's **HTTP Host Header** to `127.0.0.1:8080`. Add the exact public HTTPS origin to `desktop.json`'s `allowedOrigins`, then restart Millplan. Preserve other routes and origins.
+
+Keep HTTP and PostgreSQL bound to loopback; route only the web application. Check public health, page loading and read-only preview validation. The application has no built-in login/roles and an unprotected hostname exposes full operations; exact-origin checks are not access control. Cloudflare Access can restrict a later shared deployment. Separate server deployment remains possible with the same API and native PostgreSQL.
+
+## Building and verification
+
+On Windows with Node.js 24, npm and Visual Studio C++ x64 redistributable files, run `npm ci`, then `npm run desktop:dist`. The vendor step downloads the pinned [EDB PostgreSQL ZIP](https://www.enterprisedb.com/download-postgresql-binaries), checks its official SHA-256, and retains runtime libraries/resources and notices. The [PostgreSQL Windows page](https://www.postgresql.org/download/windows/) describes this archive for application embedding. The build copies the required Microsoft CRT DLLs from the licensed Visual Studio Redist directory into PostgreSQL's executable folder following [Microsoft's application-local deployment guidance](https://learn.microsoft.com/en-us/cpp/windows/walkthrough-deploying-a-visual-cpp-application-to-an-application-local-folder?view=msvc-170). Builders can set `MILLPLAN_VC_RUNTIME_DIR` to that x64 `Microsoft.VC*.CRT` directory. Destination PCs do not need C++ Build Tools. Installers contain no company records and make no database download at first launch.
+
+Local installers are unsigned unless signing credentials are configured. Test the installer on a clean Windows 10/11 x64 company PC before wider distribution, including standard-user first launch, update/reinstall persistence, printing, Excel import/export and shutdown. Existing-machine smoke checks cannot prove every corporate antivirus or application-control policy will permit it.
 
 ## Troubleshooting
 
-| Symptom | Check |
+| Symptom | Action |
 | --- | --- |
-| Docker unavailable | Start Docker Desktop; confirm Linux containers and `docker compose version` |
-| Port 8080 occupied | Stop the competing native/app process, or choose an unused APP_PORT and reopen the matching URL |
-| Database connection screen | `docker compose ps`; wait for DB health; inspect app logs; choose Retry connection |
-| Save cannot be confirmed | Keep the form; restore connectivity; Retry connection resends the same command ID |
-| Conflict after saving | Another client changed the workspace; review the retained draft, choose Reload latest, then re-enter the intended changes |
-| Empty database but old file has records | Export JSON from the original offline file/browser and explicitly import it into the database UI |
-| Invalid Host/Origin in development | Use 127.0.0.1/localhost, Vite proxy `changeOrigin`, and the matching ALLOWED_ORIGINS; do not disable checks |
-| Authentication failed after changing .env | Existing volume still has its previous PostgreSQL password; rotate the DB credential properly |
-| Static dashboard missing | Run `npm run build` for native serving, or rebuild the Docker app |
+| App not visible after closing | Open its tray menu or desktop shortcut |
+| Port 8080/5434 occupied | Close the known competing service or choose unused desktop ports; do not kill unknown processes |
+| Startup/database error | Read the private `logs/` files and confirm the same Windows account/data directory |
+| Credential cannot be decrypted | Use the original Windows account or recover an approved backup into a new installation; do not delete the cluster |
+| Save cannot be confirmed | Keep the form; restore connectivity and retry the original request |
+| Version conflict | Review the retained draft against the latest workspace and regenerate if required |
+| Missing former browser draft | Drafts are profile/origin-local; reopen the original browser to recover them |
+| Remote address unavailable | Host, Millplan tray process and tunnel must all run; check exact allowed origin and Host Header |
+| Backup failure | Check private destination permissions/free space and Settings status; preserve earlier backups |
 
-Useful checks: `GET /api/health`, `GET /api/workspace`, `docker compose logs --tail 100 app db`, and `docker compose ps`. Do not paste secrets or full connection URLs into issues.
-
-## Before company-wide adoption
-
-Confirm actual calendar/rates/changeover with the planner; agree backup ownership and retention; add login/roles, named audit actors and TLS; separate migration/runtime database roles; benchmark retained history; define data retention and SAP/stock integration requirements. Current Docker configuration is a loopback-only pilot, not an unattended company-server deployment.
-
-
-## Excel Data / shift rollout
-
-Before upgrading, save a PostgreSQL dump and current workspace JSON. Record the latest production count, IDs/payloads, catalog and execution timestamps; use the fresh count rather than an older demonstration count. Migrations 004–007 add source tables, source links/recovery and canonical identity indexes. These migrations do not reset jobs or activate a new calendar. Intermediate development databases from unreleased 004–006 builds are disposable; use a clean test database if semantic-digest backfill finds collisions.
-
-After independent tests pass, rebuild only the app with the existing Compose project and volume. Retain `compose.dev.yml` / localhost **5434** for DataGrip. Call the revision-checked `settings.activateCalendar` command once with `effectiveFrom` equal to the server's current MYT date, `dayStart: "07:00"`, `availableHours: 12`. The server verifies the date, freezes missing legacy execution segments, records the prior calendar and validates the entire candidate schedule atomically. Repeat identical activation is safe; different activation values are rejected. Legacy activation remains a one-time compatibility command. Current users change working hours through ordinary Settings saves; effective-dated history preserves older assignments. If validation fails, leave existing data intact and resolve the reported schedule before retrying.
-
-Re-read the workspace and compare every pre-existing job. Status, actual times/quantities, source values and record IDs must be unchanged; only missing locked segments on already-started/completed legacy jobs may be added. Pending computed times may change for today/future dates. Check Data and its empty initial state without inserting fictional company records, then verify health and the 5434 mapping. Portable version 3 backups include source data and full recovery; generated JSON is bounded to 64 MB and larger workspaces require the PostgreSQL dump path. Restore must use a matching application version.
-
-Editable-calendar releases require no SQL migration or automatic settings rewrite. Back up and deploy the reader/UI before the first calendar edit. Verify unchanged production payloads after deployment; then planners can save their intended hours. Once a user saves calendar history, use a compatible reader for restore and rollback. Reverting to an older binary requires restoring its complete pre-change database backup rather than dropping history fields.
-
-
-Planning-safety releases add a read-only production-summary endpoint and browser-local drafts; they require no SQL migration or production data rewrite. Preserve the existing app/database configuration and loopback 5434 mapping during app-only updates. Browser drafts are separate per origin and browser profile and are not included in database or version 4 portable backups. If confirmation was interrupted, use Retry connection or, after reload, Check previous save to reuse the saved command receipt. Do not clear browser storage to resolve an unconfirmed save.
-
-## Progress / date-hours / review-queue release
-
-Retain a fresh PostgreSQL dump and portable backup before deployment. Migrations 012–013 add tables/recovery columns only; they must leave all existing jobs, source versions, stock movements, reservations and execution timestamps unchanged. Rehearse on a restored database, then deploy the app only with the existing Compose configuration and DataGrip localhost 5434 mapping. Compare complete pre-existing portable sections after rollout; new review/progress collections begin empty rather than deriving fictitious historical evidence.
-
-At this release, portable backups advanced to V5; the current format is V7 as described under Backups above. Restoring v1–4 clears the absent review/progress collections with a visible warning; v4 retains its inventory. Full PostgreSQL dumps remain the rollback source, including receipts and migrations. A binary that cannot parse date-specific settings or v5 backups must use its matching pre-upgrade database dump. Date exceptions only take effect when a planner explicitly saves them. Browser-local generated drafts remain outside portable backups and require regeneration after hours/revision changes.
-
-## Rebuilding a dated historical baseline
-
-A full operational rebuild is a maintenance operation. First retain a fresh PostgreSQL dump and portable workspace backup, freeze application writes, preserve the current catalog/settings/calendar, and prepare the replacement graph in a separate database. Import dated stock files in chronological order into an empty ledger, compare every Closing and next Opening, then round-trip a V7 export. Baseline imports only the upper stock table; it does not replay lower-table orders or remarks. SAP admission still accepts Goods Issue Dates from tomorrow onward; use a validated full backup to retain existing accepted orders rather than replaying old workbooks as new demand. Keep the planning board empty unless actual documented jobs were supplied. Do not infer per-order daily production or execution timestamps from aggregate daily stock or Remark.
-
-Use the existing atomic workspace restore to apply the validated graph while writes remain frozen. Retain the previous portable graph and full dump; verify post-restore counts, exact stock balances, history and configuration before reopening the app. Check the live revision again immediately before replacement; if it changed during staging, recapture and reconcile the new records first. Real workbooks, customer records, database credentials and maintenance payloads remain private. This workflow adds no public erase-data button and does not change the optional loopback5434 DataGrip mapping.
+Before company-wide/cloud adoption, agree ownership of backups, credentials, access controls and operating hours. Desktop packaging does not add named audit actors, account login or direct SAP synchronization.

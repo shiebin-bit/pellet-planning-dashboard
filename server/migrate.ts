@@ -7,7 +7,7 @@ import { loadConfig } from "./config";
 
 const MIGRATION_LOCK = 728_451_920;
 
-export async function runMigrations(pool: pg.Pool): Promise<void> {
+export async function runMigrations(pool: pg.Pool, migrationsDirectory = resolveMigrationsDirectory()): Promise<void> {
   const client = await pool.connect();
   let locked = false;
   try {
@@ -19,15 +19,14 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
         applied_at timestamptz NOT NULL DEFAULT now()
       )
     `);
-    const directory = fileURLToPath(new URL("./migrations", import.meta.url));
-    const files = (await readdir(directory)).filter(file => /^\d+_[a-z0-9_]+\.sql$/.test(file)).sort();
+    const files = (await readdir(migrationsDirectory)).filter(file => /^\d+_[a-z0-9_]+\.sql$/.test(file)).sort();
     for (const file of files) {
       const applied = await client.query<{ exists: boolean }>(
         "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1) AS exists",
         [file],
       );
       if (applied.rows[0]?.exists) continue;
-      const sql = await readFile(path.join(directory, file), "utf8");
+      const sql = await readFile(path.join(migrationsDirectory, file), "utf8");
       await client.query("BEGIN");
       try {
         await client.query(sql);
@@ -41,6 +40,16 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
   } finally {
     try { if (locked) await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK]); } finally { client.release(); }
   }
+}
+
+function resolveMigrationsDirectory(): string {
+  const configured = process.env.MIGRATIONS_DIR?.trim();
+  if (!configured) return fileURLToPath(new URL("./migrations", import.meta.url));
+  const resolved = path.resolve(configured);
+  if (!path.isAbsolute(configured) || path.parse(resolved).root === resolved) {
+    throw new Error("MIGRATIONS_DIR must be an absolute non-root directory.");
+  }
+  return resolved;
 }
 
 async function main(): Promise<void> {

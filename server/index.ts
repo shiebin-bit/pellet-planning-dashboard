@@ -47,7 +47,27 @@ export async function startServer(): Promise<{ close(): Promise<void> }> {
       if (closed) return;
       closed = true;
       let failure: unknown;
-      try { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
+      try {
+        await new Promise<void>((resolve, reject) => {
+          let settled = false;
+          const finish = (error?: Error) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(forceTimer);
+            clearTimeout(boundTimer);
+            error ? reject(error) : resolve();
+          };
+          const forceTimer = setTimeout(() => {
+            server.closeAllConnections();
+          }, 5_000);
+          const boundTimer = setTimeout(() => {
+            server.closeAllConnections();
+            finish(new Error("HTTP server shutdown exceeded 8 seconds; remaining connections were closed."));
+          }, 8_000);
+          server.close(error => finish(error ?? undefined));
+          server.closeIdleConnections();
+        });
+      }
       catch (error) { failure = error; }
       try { await automaticBackup!.close(); }
       catch (error) { failure ??= error; }

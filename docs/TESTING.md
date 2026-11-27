@@ -2,6 +2,14 @@
 
 Use Node 24.x. `npm ci` installs the lockfile exactly.
 
+## Windows desktop checks
+
+`npm run test:desktop` covers encrypted first-run configuration, refusing credential replacement for an existing cluster, invalid-secret rejection, database stop/restart ownership, occupied-port refusal, forwarded backup arguments/status, and refusing to overwrite a dump. These focused tests use temporary directories and injected tool adapters; they do not replace an installed application smoke check.
+
+Build on Windows with `npm run desktop:dist`. Check the packaged executable against a disposable profile/database for first launch, a safe save and restart, native import/download/print, single-instance behaviour, tray close/Quit, backups and port-conflict handling. For an existing company migration, freeze writes, retain a full dump, compare every table and the portable workspace after restoration, and test a second dump in a separate database. Read-only verification may inspect the live UI; mutation fixtures must remain isolated.
+
+CI uses native PostgreSQL 16 on Ubuntu 24.04 for the existing domain/API/browser checks. A separate Windows job runs desktop checks, builds the bundled installer and uploads the EXE as a workflow artifact. The artifact starts with an empty workspace and contains no private files. Clean company-PC installation, application-control policy and signing checks remain rollout responsibilities.
+
 `tests/browser-table-ux.cjs` adds fictional 57-row stock/history fixtures in the isolated test database. It checks synchronized top/bottom pagination, empty-filter recovery, bounded scrolling/sticky headers, horizontal controls at desktop/390/320px, bottom-row physical-count modal focus/scroll restoration, close-before-load cancellation, retained drafts and idempotent retry after a lost adjustment response. It also verifies independent planning/stock/history date labels and reads the downloaded quick Excel to prove empty History filters do not truncate a planning-day report. All fixtures/screenshots stay in ignored `output/playwright/table-ux`; the original test workspace is restored in `finally`.
 
 ```powershell
@@ -19,8 +27,7 @@ The six synthetic-history cases cover a bounded fictional month, preserved sourc
 These tests **truncate their configured tables**. Use a dedicated database with a separated `test` token in its name, such as `millplan_test`. The guard rejects the configured application database even if its credentials/query parameters differ. With no TEST_DATABASE_URL the suite skips; skipped tests are not a successful database verification.
 
 ```powershell
-docker compose -f compose.yml -f compose.dev.yml up -d db --wait
-docker compose exec -T db sh -c 'createdb -U "$POSTGRES_USER" millplan_test'
+createdb --host 127.0.0.1 --port 5434 --username millplan millplan_test
 # Set TEST_DATABASE_URL privately to the matching loopback:5434/millplan_test URL.
 npm run test:api
 Remove-Item Env:TEST_DATABASE_URL
@@ -75,7 +82,7 @@ CI runs the complete suite on Ubuntu with PostgreSQL 16, Node 24 and Playwright 
 
 ## Release checks
 
-Alongside the automated suites, verify the full Compose image starts healthy; records/revision persist after app and DB restarts; a real stopped DB returns 503 and recovers; and a custom-format dump restores to another database with matching records and metadata. Never use the application's actual data for destructive outage or fixture testing.
+Alongside the automated suites, verify the packaged Windows application starts healthy; records/revision persist after app and DB restarts; a real stopped DB returns 503 and recovers; and a custom-format dump restores to another database with matching records and metadata. Never use the application's actual data for destructive outage or fixture testing.
 
 For the offline compatibility build, check four fitted horizontal lines at 1366×768, direct drag/insertion/Undo, retained input drafts, Done, report downloads, restore recovery, and 390px touch layouts. The delivery verification retained the existing 9 horizontal, 10 drag and 5 report/restore workflow groups. These local historical QA scripts/evidence are excluded from source because they use machine-specific paths; the portable database suite is committed.
 
@@ -168,7 +175,7 @@ Card-preview regressions cover late focus-induced scroll events, real page scrol
 
 `tests/browser-baseline-split.cjs` uses fictional multi-file workbooks to exercise the single Baseline/SAP modal, preserved file drafts across mode changes, failed/retried read-only preview, keyboard/focus restoration, scrolling at1366/390/320px, packaging filters and partial-order split/recombine. No mutation suite is allowed against production8080. Real company workbook reconciliation is a separate private staged rehearsal; its files and screenshots must stay outside public Git history.
 
-Verification on 16 November 2026 passed 200 maintained unit tests, one dependency compatibility test, 11 backup scheduler/status tests, 55 PostgreSQL API tests and all 20 browser scripts. Unit discovery is restricted to the actual `src` directory so ignored rollback copies cannot inflate local results. Additional API checks cover duplicate history after later stock activity and manual review, an established zero-stock baseline, and historical DONE/OUT without invented timestamps. The production and Docker builds pass; the runtime dependency audit reports zero vulnerabilities. A private five-day baseline was imported and restored in a separate database, with every latest Closing checked against the ledger. Real records and maintenance payloads are excluded from the public repository.
+Verification on 16 November 2026 passed 200 maintained unit tests, one dependency compatibility test, 11 backup scheduler/status tests, 55 PostgreSQL API tests and all 20 browser scripts. Unit discovery is restricted to the actual `src` directory so ignored rollback copies cannot inflate local results. Additional API checks cover duplicate history after later stock activity and manual review, an established zero-stock baseline, and historical DONE/OUT without invented timestamps. The production build passed at that release; the runtime dependency audit reports zero vulnerabilities. A private five-day baseline was imported and restored in a separate database, with every latest Closing checked against the ledger. Real records and maintenance payloads are excluded from the public repository.
 
 
 ## Next-day import, carryovers and PM preferences
@@ -181,4 +188,4 @@ Run new scenarios alongside maintained unit/API/browser regressions in the isola
 
 `tests/browser-carryover.cjs` verifies a draft containing only Continue / Carry over proposals, browser-local save/resume, confirmation without replacement cards, unchanged original IDs/quantities/actuals/locks, V7 continuation reservations, reload deduplication and 1366/390px modal bounds and focus. It requires the same disposable-database opt-in and restores its original workspace in `finally`.
 
-Verification on 20 November 2026 passed 230 maintained domain tests, one dependency compatibility test, 11 backup scheduler/status tests, 69 PostgreSQL API tests with zero skips, and all 22 browser scripts. App/server typechecks, the production build and Docker image build passed. A private full database dump was restored in an isolated database, migrated, exported as V7 and restored again; jobs, orders, ledger, progress, retained activity, catalog, stock policies and Settings were compared. Zero-continuation regressions include receipt-before-Start, full receipt, correction to zero, reload, Start without resurrecting old capacity, and V7 restoration. No company fixtures or recovery files are published.
+Verification on 20 November 2026 passed 230 maintained domain tests, one dependency compatibility test, 11 backup scheduler/status tests, 69 PostgreSQL API tests with zero skips, and all 22 browser scripts. App/server typechecks, the production build passed at that release. A private full database dump was restored in an isolated database, migrated, exported as V7 and restored again; jobs, orders, ledger, progress, retained activity, catalog, stock policies and Settings were compared. Zero-continuation regressions include receipt-before-Start, full receipt, correction to zero, reload, Start without resurrecting old capacity, and V7 restoration. No company fixtures or recovery files are published.

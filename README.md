@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/TypeScript-5.9-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript 5.9">
   <img src="https://img.shields.io/badge/Node.js-24-5FA04E?style=for-the-badge&logo=nodedotjs&logoColor=white" alt="Node.js 24">
   <img src="https://img.shields.io/badge/PostgreSQL-16-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL 16">
-  <img src="https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
+  <img src="https://img.shields.io/badge/Windows-Desktop-0078D4?style=for-the-badge&logo=electron&logoColor=white" alt="Windows desktop">
   <a href="https://github.com/shiebin-bit/pellet-planning-dashboard/actions/workflows/ci.yml"><img src="https://github.com/shiebin-bit/pellet-planning-dashboard/actions/workflows/ci.yml/badge.svg?branch=main" alt="Verify dashboard CI"></a>
 </p>
 
@@ -30,7 +30,7 @@
 
 Millplan connects the daily work that otherwise lives across SAP exports, stock spreadsheets and a manually maintained production schedule. Planners can see what is already available, what still needs production and how that work fits across four pelleting lines. Supervisors can record actual output and stops, while order progress continues through partial customer collection.
 
-The current application runs in a browser, backed by Node.js and PostgreSQL. Windows launchers start the local Docker installation and open the dashboard. A new database starts empty; demonstration data is loaded only through an explicit action.
+The Windows desktop application bundles the dashboard, its API and PostgreSQL 16. Install it once and open Millplan from the desktop or Start menu; no separate Node.js or database installation is needed. The same API remains independently runnable for future server deployment. A new installation starts empty; demonstration data is loaded only through an explicit action.
 
 **Reviewed against the implementation: 27 November 2026.** For step-by-step operating instructions, see the **[English User Manual](docs/USER_MANUAL.md)**.
 
@@ -136,52 +136,49 @@ Current-day drafts leave a short review window and display **Confirm before**. E
 
 ## Quick Start
 
-### Windows Local Installation
+### Windows Desktop
 
-Requirements: Git to clone the source, Docker Desktop with Linux containers and Docker Compose, and Windows PowerShell. The Docker-only application does not require Node.js installed on the host.
+Run the **Millplan Setup** installer supplied with the release, then open **Millplan** from the desktop or Start menu. The application starts its own local PostgreSQL database and opens the planning workspace in a desktop window.
 
-```powershell
-git clone https://github.com/shiebin-bit/pellet-planning-dashboard.git
-cd pellet-planning-dashboard
-.\scripts\setup.ps1
-docker compose up --build -d --wait
-```
+- Windows 10/11 x64; a normal user installation does not require administrator access.
+- No separate Docker, Node.js, PostgreSQL or browser setup is required on the destination PC.
+- Company orders and stock are **not** bundled in the installer. A fresh installation starts empty.
+- Data and backups are stored separately under `%LOCALAPPDATA%\FFM\MillPlan`, surviving application updates and normal uninstall/reinstall.
+- Closing the window keeps the application in the system tray. Use **Quit** to shut down the API and PostgreSQL safely.
+- The local dashboard is also available at `http://127.0.0.1:8080` while the desktop app is running. PostgreSQL remains on `127.0.0.1:5434` for DataGrip.
 
-Open **[http://127.0.0.1:8080](http://127.0.0.1:8080)** and verify **PostgreSQL workspace** in the sidebar.
+For company rollout, copy the installer rather than this repository or your private data directory. To transfer a workspace, use an explicitly selected backup through Settings. For full database migration and recovery, see [Operations](docs/OPERATIONS.md).
 
-After the initial download, double-click **OPEN-DASHBOARD.cmd** or **START-DASHBOARD.cmd** to run setup, start services and open the browser. Both preserve an existing `.env`. The first setup generates a random database password.
+### Build the Windows Installer
 
-- New workspace: import stock first, then future-dated SAP orders; manual production is also available.
-- Demonstration workspace: **Settings → Backup & recovery → Reset demo** intentionally replaces data with fictional examples. Do not use it on company records.
-- Stop: **STOP-DASHBOARD.cmd** or `docker compose stop`.
-- Update: back up first, then follow [Operations](docs/OPERATIONS.md#start-stop-and-update). CI does not deploy the local installation.
-
-Normal stopping and container replacement retain the named PostgreSQL volume. **`docker compose down -v` deletes that volume.**
-
-For other operating systems, copy [.env.example](.env.example) to `.env`, set a strong random hex database password and the matching native connection string, then start Docker Compose.
-
-### Native Development
-
-Requires **Node.js 24.x**, npm and Docker for PostgreSQL. Run from the repository root:
+On a Windows development machine with **Node.js 24.x**, npm and the Visual Studio C++ x64 redistributable files (C++ Build Tools component):
 
 ```powershell
 npm ci
-.\scripts\setup.ps1
-docker compose stop app
-docker compose -f compose.yml -f compose.dev.yml up -d db --wait
+npm run desktop:dist
+```
+
+The build downloads a pinned PostgreSQL Windows runtime and verifies its SHA-256 before packaging it. The installer contains the runtime, so the destination computer does not download PostgreSQL on first launch. Build outputs are ignored by Git. Local builds are unsigned unless signing credentials are supplied by the maintainer.
+
+### Native Development
+
+The web API remains available without Electron. Use an existing native PostgreSQL 16 database, copy [.env.example](.env.example) to a private `.env`, and set its connection URL:
+
+```powershell
+npm ci
 npm run build
 npm run server:dev
 ```
 
-In a second terminal, run `npm run dev`.
+In a second terminal, run `npm run dev`. Use a dedicated development database; do not run mutation tests against the company workspace.
 
 | Service | Address |
 | --- | --- |
-| Built dashboard and API | `http://127.0.0.1:8080` |
+| Desktop / built dashboard and API | `http://127.0.0.1:8080` |
 | Vite development UI | `http://127.0.0.1:5178`; `/api` proxies to port 8080 |
-| Optional PostgreSQL access for DataGrip/development | `127.0.0.1:5434`, through `compose.dev.yml` |
+| Desktop PostgreSQL / DataGrip | `127.0.0.1:5434` |
 
-Avoid running the native API and Docker app on the same port. `npm run preview` previews frontend assets; `npm start` serves the built application and API. To preserve optional DataGrip access across normal Windows launcher runs, see the Compose configuration in [Operations](docs/OPERATIONS.md#configuration).
+Only one API may own port 8080. `npm run preview` previews frontend assets; `npm start` serves the built application and API. Desktop configuration is separate from the source checkout's `.env`.
 
 ## Architecture and Stack
 
@@ -203,7 +200,7 @@ flowchart LR
 | Persistence | PostgreSQL 16, SQL migrations, transaction/version checks and command retry deduplication |
 | Workbook processing | ExcelJS; browser printing for PDF |
 | Verification | Vitest, Node test runner, Playwright Chromium and isolated PostgreSQL databases |
-| Deployment | Docker Compose; optional Cloudflare Tunnel for remote browser access |
+| Deployment | Electron Windows installer with bundled PostgreSQL; standalone API for server deployment; optional Cloudflare Tunnel |
 
 ```text
 pellet-planning-dashboard/
@@ -218,8 +215,7 @@ pellet-planning-dashboard/
 ├── scripts/            # Setup, launch, database backup and demo-history tools
 ├── tests/              # API and browser integration tests
 ├── docs/               # User manual and technical documentation
-├── compose.yml         # Application + PostgreSQL
-└── compose.dev.yml     # Optional loopback database port 5434
+└── desktop/            # Windows lifecycle, local PostgreSQL and installer configuration
 ```
 
 ### Configuration and Remote Access
@@ -229,27 +225,27 @@ Use [.env.example](.env.example) as the public reference; keep the real `.env` p
 | Configuration | Purpose |
 | --- | --- |
 | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | Database configuration; changing `.env` alone does not rotate an existing database role password |
-| `APP_PORT` | Docker web port; default 8080, bound to loopback |
-| `DATABASE_URL`, `HOST`, `PORT` | Native API connection/binding; Compose supplies the app's internal database URL |
+| `PORT` | Standalone API port; default 8080, bound to loopback |
+| `DATABASE_URL`, `HOST` | Standalone API connection and bind address |
 | `ALLOWED_ORIGINS` | Exact additional browser origins for development or a configured HTTPS proxy |
 | `AUTOMATIC_BACKUP_INTERVAL_HOURS`, `AUTOMATIC_BACKUP_RETENTION_COUNT` | Snapshot interval and retained successful copies; defaults 24 and 14 |
 
-The standard Compose file exposes the application on `127.0.0.1` and keeps PostgreSQL internal. The optional development file exposes the database on loopback **5434**.
+The desktop app manages its private configuration under `%LOCALAPPDATA%\FFM\MillPlan`. Both the API and PostgreSQL listen only on loopback; the source `.env` is used only for standalone server/development commands.
 
-A configured Cloudflare Tunnel can route an HTTPS hostname to the local app. The host, Docker and connector must stay running. The application currently has **no built-in login, roles or named audit actors**; `ALLOWED_ORIGINS` is request validation, not access control. See [Cloudflare Tunnel](docs/OPERATIONS.md#cloudflare-tunnel) for proxy settings and restricted-access deployment.
+A configured Cloudflare Tunnel can route an HTTPS hostname to the local app. The host, desktop application (including its tray process) and connector must stay running. The application currently has **no built-in login, roles or named audit actors**; `ALLOWED_ORIGINS` is request validation, not access control. See [Cloudflare Tunnel](docs/OPERATIONS.md#cloudflare-tunnel) for proxy settings and restricted-access deployment.
 
 ## Backup and Recovery
 
 | Backup | Contents and use |
 | --- | --- |
 | **V7 workspace JSON** | Planning, catalog, settings, orders, inventory/collection history, reviews, progress, accepted batches and continuation plans; download/restore through Settings |
-| **Automatic snapshots** | Docker writes V7 JSON to `backups/automatic/` every 24 hours by default, retaining 14 managed successful copies; Settings displays status and failures |
+| **Automatic snapshots** | The desktop API writes V7 JSON under the private data directory every 24 hours by default, retaining 14 managed successful copies; Settings displays status and failures |
 | **PostgreSQL dump** | Full database recovery, including metadata and command receipts; run `.\scripts\backup.ps1` |
 | **Browser-local draft** | Proposal stored in one browser/origin; outside database and workspace backups |
 
 Workspace restoration previews then **replaces** the active workspace, retaining the preceding recovery copy; it does not merge records. Versions 1–6 remain readable with warnings for omitted data. Old orders without accepted-batch metadata do not automatically enter the new-demand queue.
 
-Keep protected copies outside the host disk and verify restores in a separate database. A Docker volume is persistent storage, not a backup. Recovery procedures are in [Operations](docs/OPERATIONS.md#backups).
+Keep protected copies outside the host disk and verify restores in a separate database. The PostgreSQL data directory is persistent storage, not a backup. Recovery procedures are in [Operations](docs/OPERATIONS.md#backups).
 
 The optional **OPEN-OFFLINE-DASHBOARD.cmd** uses a separate planning-only browser workspace with localStorage and the device clock. It has no PostgreSQL stock ledger. Migration requires an explicit backup/restore; records are not shared automatically.
 

@@ -2,9 +2,9 @@
 
 ## 启动和资料保存
 
-先打开 Docker Desktop，再双击 `OPEN-DASHBOARD.cmd`（或功能相同的 `START-DASHBOARD.cmd`）。两者都会启动 PostgreSQL 数据库版。浏览器地址是 `http://127.0.0.1:8080`。页面左侧显示 PostgreSQL，表示目前使用数据库。第一次启动是空白 planning，可直接新增；示范资料需要在 Settings 主动加载。
+运行 Millplan Setup 安装包后，从桌面或开始菜单打开 Millplan。程序会自动启动本机 PostgreSQL 和排程界面，不需要另外安装 Node.js 或数据库。浏览器仍可在程序运行期间访问 `http://127.0.0.1:8080`。新电脑默认空白，先导入库存，再导入 SAP 订单。
 
-双击 `STOP-DASHBOARD.cmd` 停止服务，资料会保留在 Docker volume。不要删除 volume。只有 `OPEN-OFFLINE-DASHBOARD.cmd` 会打开独立的离线版本；资料只在原本浏览器里，和数据库版不共用。
+关闭窗口会保留在系统托盘；选择 Quit 才会关闭程序和数据库。数据和备份保存在 `%LOCALAPPDATA%\FFM\MillPlan`，正常更新及卸载不会删除。公司电脑使用安装包，不要复制包含私人资料及凭据的数据目录。离线 HTML 仍是独立的浏览器记录，不和 PostgreSQL 共用。
 
 ## 界面布局
 
@@ -73,7 +73,7 @@ Daily stock 的 **Enter physical count** 会立即打开盘点弹窗，载入所
 
 ## 断线或同时修改
 
-出现 Saving 时等待确认。若提示保存无法确认，保留表单，恢复 Docker/数据库连接后按 Retry connection。同一个请求会重复确认，避免新增两份任务。
+出现 Saving 时等待确认。若提示保存无法确认，保留表单，恢复程序/数据库连接后按 Retry connection。同一个请求会重复确认，避免新增两份任务。
 
 若另一位使用者已修改 planning，系统会显示冲突并保留输入。先检查草稿，再按 Reload latest 载入最新资料，重新填写需要修改的内容后保存。系统不会自动覆盖别人的改动。
 
@@ -85,7 +85,7 @@ Settings → **Backup & recovery** → Download backup 下载整个 workspace JS
 
 旧离线资料：在原本浏览器、原本 HTML 路径打开 → 下载 JSON → 在数据库版导入。不会自动迁移。
 
-Docker 数据库版会在服务端每24小时自动保存一份 version5 JSON，保留最近14份，存于本机私有 `backups/automatic/`。首次启用立即备份，重启后错过的备份会补做一份；浏览器关闭也会继续，电脑／Docker 停止期间暂停。Settings → Backup & recovery 可查看最近成功时间、下次备份和失败提示；按 Refresh 更新状态。自动 JSON 可用原有 Restore JSON backup 预览恢复。数据库完整备份仍由 `scripts/backup.ps1` 产生，用于包含数据库结构、请求去重及恢复副本的完整恢复；交接负责人应保留独立副本并验证恢复。
+桌面数据库版会在服务端每24小时自动保存一份 version7 JSON，保留最近14份，存于本机私有数据目录下的 `backups/automatic/`。首次启用立即备份，重启后错过的备份会补做一份；浏览器关闭也会继续，电脑／程序停止期间暂停。Settings → Backup & recovery 可查看最近成功时间、下次备份和失败提示；按 Refresh 更新状态。自动 JSON 可用原有 Restore JSON backup 预览恢复。数据库完整备份仍由 `scripts/backup.ps1` 产生，用于包含数据库结构、请求去重及恢复副本的完整恢复；交接负责人应保留独立副本并验证恢复。
 
 
 ## 从 Excel 导入订单（Orders）
@@ -228,6 +228,6 @@ Settings → Production rules → **Line preferences** 可搜索、新增、修�
 
 5220M、5220MER、5220CCB 精确区分，不按前缀混用，也不改变袋重、Medication／FMR 的库存隔离。草稿会显示惯用 PM 或容量分流，负责人仍可调整新增卡片的产线。
 
-## 本次重新开始
+## 历史库存规则升级的维护说明
 
-本次清空由本机维护流程完成，不提供公开清空按钮。先做完整备份并在独立数据库验证恢复，再清空订单、排程、库存余额和业务历史；产品清单、库存参数、安全库存／超产、工时、产能及其他设置保留。不自动重放旧 October 文件。清空后先导入新的库存，再导入未来日期的 SAP 订单；没有库存基准时 Generate 会提示先导入库存。DataGrip 的本机端口保持 **5434**。
+此前库存规则升级时，重新开始由本机维护流程完成，不提供公开清空按钮。新工作区先导入库存，再导入未来日期的 SAP 订单；没有库存基准时 Generate 会提示先导入库存。本次桌面版迁移保留现有订单、排程、库存和历史，不会再次清空或重放旧 Excel。DataGrip 的本机端口保持 **5434**。

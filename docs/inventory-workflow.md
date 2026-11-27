@@ -167,7 +167,7 @@ For the full database backup path, run the existing command from the project dir
 
 It creates an ignored `backups/millplan-<UTC time>.dump` file using `pg_dump -Fc`. Keep protected copies outside the working checkout and agree retention and restore ownership with the company. The dump is the recovery path for database metadata, command receipts, migrations, source graph, stock, and ledger data that should not be reduced to a portable JSON file.
 
-The local Docker/PostgreSQL development connection remains on loopback port **5434** for DataGrip. This inventory workflow does not change that local port or imply a company-server deployment.
+The desktop PostgreSQL connection remains on loopback port **5434** for DataGrip. This inventory workflow does not change that local port or imply a company-server deployment.
 
 ## Data handling rules
 

@@ -9,22 +9,8 @@ permissions:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: millplan_test
-          POSTGRES_USER: millplan
-          POSTGRES_PASSWORD: ci-only-password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U millplan -d millplan_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -32,7 +18,20 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --no-audit --fetch-timeout=30000 --fetch-retries=1 --fetch-retry-mintimeout=2000
+      - name: Start native PostgreSQL 16
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-16
+          if ! pg_lsclusters --no-header | awk '$1 == "16" && $2 == "main" { found=1 } END { exit !found }'; then
+            sudo pg_createcluster 16 main --port 5432
+          fi
+          sudo pg_conftool 16 main set port 5432
+          sudo pg_conftool 16 main set listen_addresses 127.0.0.1
+          sudo pg_ctlcluster 16 main restart
+          sudo -u postgres psql --set ON_ERROR_STOP=1 --command "CREATE ROLE millplan LOGIN SUPERUSER PASSWORD 'ci-only-password'"
+          sudo -u postgres createdb --owner millplan millplan_test
       - run: npm test
+      - run: npm run test:desktop
       - run: npm run build
       - run: npm audit --omit=dev --json --fetch-timeout=30000 --fetch-retries=1 --fetch-retry-mintimeout=2000
       - run: npm run test:api
@@ -80,3 +79,24 @@ jobs:
             output/playwright/carryover/
             output/playwright/batch-orders/
           if-no-files-found: ignore
+
+  windows-desktop:
+    runs-on: windows-latest
+    needs: verify
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit
+      - run: npm run test:desktop
+      - run: npm run desktop:dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Millplan-Windows-x64
+          path: output/installer/Millplan-Setup-*.exe
+          if-no-files-found: error

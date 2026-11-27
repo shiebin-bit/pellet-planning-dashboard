@@ -11,7 +11,7 @@ flowchart LR
   UI --> Reports[Excel / print PDF / JSON]
 ```
 
-Docker serves the built dashboard and `/api` on the same port. PostgreSQL is internal to the Compose network. The native development setup adds a loopback-only database port and a Vite API proxy.
+Electron supervises a local PostgreSQL 16 cluster and the same Express API, then opens the existing dashboard in a sandboxed window. The built dashboard and `/api` share loopback port 8080; PostgreSQL uses loopback 5434. Read-only bundled resources live under the installation directory; mutable data, credentials, logs and backups live under `%LOCALAPPDATA%\FFM\MillPlan`. A standalone API/Vite setup remains available for development and future server deployment.
 
 HTTP(S) always uses the API, even if browser records exist. Its in-memory loading state and a newly initialized database both start with default settings and no jobs or activity; initial connection failure shows a reconnect screen. There is no fallback to a sample plan. The separate `OPEN-OFFLINE-DASHBOARD.cmd` `file:` build preserves offline localStorage operation.
 
@@ -29,7 +29,7 @@ HTTP(S) always uses the API, even if browser records exist. Its in-memory loadin
 | `server/app.ts`, `index.ts` | HTTP boundary, static files, startup and shutdown |
 | `server/store.ts` | Transactions, revision checks, command receipts and recovery |
 | `server/migrate.ts`, `migrations/` | Numbered SQL migrations under an advisory lock |
-| `scripts/`, `compose*.yml` | Local setup, containers and database backup |
+| `desktop/`, `scripts/` | Windows packaging, local process lifecycle, setup and database backup |
 
 ## Data model
 
@@ -80,7 +80,7 @@ The activity log has no authenticated actor and is replaced when a backup is res
 ## Current deployment limits
 
 - No authentication, authorization, TLS, tenant separation or scheduled backup service. Host and Origin checks protect the loopback pilot boundary; they do not identify a user.
-- The default Compose database account owns the database and runs migrations. Before a company deployment, separate a migration/owner role from a runtime role with only the required table privileges.
+- The desktop database account owns its local database and runs migrations. Before a shared server deployment, separate a migration/owner role from a runtime role with only the required table privileges.
 - Normal writes upsert job rows and synchronize allocation/history projections inside the transaction. Work is proportional to the total workspace, not only one card. This is for a small pilot; benchmark representative retained history before adoption and monitor latency. Consider incremental upserts/appends or archiving as history grows. Import limits are validation ceilings, not a performance guarantee.
 - Command receipts have no automatic expiry. Keep them for reliable retry deduplication; a future retention policy must define how old retries are handled before deleting receipts.
 - Reports run in the browser against the loaded workspace. There is no server-side report archive or SAP connector.

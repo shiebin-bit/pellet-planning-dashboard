@@ -174,7 +174,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           ? 'The last save could not be confirmed. Retry connection to check it before making another change.'
           : 'PostgreSQL is unavailable. Reconnect before saving changes.';
         setStorageWarning(message);
-        if (!remote.current) setLoadError('Cannot connect to the planning database. Start the Docker services, then retry.');
+        if (!remote.current) setLoadError('Cannot connect to the planning database. Open Millplan and wait for its local services to start, then retry.');
       }
     } finally { reading.current = false; }
   }, [acceptRemote, clearUncertain, notify, registerConflict]);

@@ -1,8 +1,9 @@
 {
   "name": "pellet-planning-dashboard",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Four-line pellet planning dashboard with SAP Excel imports, stock ledger, order progress, reviewed automatic scheduling and PostgreSQL persistence.",
+  "main": "desktop/main.cjs",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
@@ -12,6 +13,11 @@
     "start": "node --env-file-if-exists=.env --import tsx server/index.ts",
     "server:dev": "node --env-file-if-exists=.env --import tsx --watch server/index.ts",
     "db:migrate": "node --env-file-if-exists=.env --import tsx server/migrate.ts",
+    "desktop:prepare": "node scripts/build-desktop.mjs",
+    "desktop:dev": "node scripts/desktop-dev.mjs",
+    "desktop:pack": "node scripts/desktop-package.mjs dir",
+    "desktop:dist": "node scripts/desktop-package.mjs nsis",
+    "test:desktop": "node --test tests/desktop-runtime.test.cjs",
     "seed:demo-history": "node --env-file-if-exists=.env --import tsx scripts/seed-demo-history.ts",
     "test:api": "node --env-file-if-exists=.env --import tsx --test --test-concurrency=1 tests/api.test.ts tests/inventory-api.test.ts tests/operations-summary-api.test.ts tests/production-progress-api.test.ts tests/source-review-api.test.ts tests/working-hours-api.test.ts tests/automatic-backup-db.test.ts tests/daily-import-api.test.ts tests/split-api.test.ts tests/transfer-order-api.test.ts tests/historical-fixture.test.ts tests/nextday-api.test.ts",
     "test:browser": "node tests/browser.cjs && node tests/browser-efficiency.cjs && node tests/browser-pause-audit.cjs && node tests/browser-ui.cjs && node tests/browser-data.cjs && node tests/browser-inventory.cjs && node tests/browser-table-ux.cjs && node tests/browser-settings-preview.cjs && node tests/browser-list-navigation.cjs && node tests/browser-combined-production.cjs && node tests/browser-calendar.cjs && node tests/browser-planning-safety.cjs && node tests/browser-live-progress.cjs && node tests/browser-working-hours.cjs && node tests/browser-import-reviews.cjs && node tests/browser-business-priorities.cjs && node tests/browser-weekly-list.cjs && node tests/browser-backup-status.cjs && node tests/browser-workbench-ux.cjs && node tests/browser-baseline-split.cjs && node tests/browser-nextday.cjs && node tests/browser-carryover.cjs && node tests/browser-order-readiness.cjs && node tests/browser-planning-retry-rejection.cjs && node tests/browser-batch-orders.cjs",
@@ -37,6 +43,9 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^6.1.2",
+    "electron": "45.5.0",
+    "electron-builder": "26.18.0",
+    "esbuild": "0.28.2",
     "playwright": "^1.64.1",
     "typescript": "~5.9.3",
     "vite": "^8.3.4",
@@ -53,6 +62,48 @@
     },
     "readdir-glob": {
       "minimatch": "^11.0.1"
+    }
+  },
+  "build": {
+    "appId": "com.ffm.millplan",
+    "productName": "Millplan",
+    "artifactName": "Millplan-Setup-${version}.${ext}",
+    "asar": true,
+    "directories": {
+      "output": "output/installer",
+      "buildResources": "desktop/assets"
+    },
+    "files": [
+      "desktop/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "output/vendor/pgsql",
+        "to": "pgsql"
+      },
+      {
+        "from": "output/desktop/server",
+        "to": "server"
+      },
+      {
+        "from": "dist",
+        "to": "ui"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "desktop/assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Millplan"
     }
   }
 }
