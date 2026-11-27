@@ -91,8 +91,8 @@ Docker 数据库版会在服务端每24小时自动保存一份 version5 JSON，
 ## 从 Excel 导入订单（Orders）
 
 1. 打开 Orders → Import Excel → SAP orders，选择 `.xlsx`／`.xlsm` 文件（最多 5 MB、2,000 行）。
-2. 系统读取 bag order 和 bulk order，只接收 **Goods Issue Date＝马来西亚今天＋1 天**。例如今天 19 号，只接收 20 号；更早、较远及无效日期会分别显示排除数量。先筛日期，再检查符合订单的其他栏位，因此旧单的错误数量不会阻挡本次导入。
-3. 日期由服务器决定，只能查看，不能自选。若使用手动列映射，日期栏必须对应 Goods Issue Date，同样只接收隔天。跨过午夜后需要重新预览，已选择的文件会保留。没有符合订单时不会保存空批次。
+2. 系统读取 bag order 和 bulk order，只接收 **Goods Issue Date＞马来西亚今天**。例如今天 27 号，接收 28 号及之后的所有日期；今天、更早及无效日期会显示排除数量。先筛日期，再检查符合订单的其他栏位，因此旧单的错误数量不会阻挡本次导入。
+3. 日期由服务器决定，只能查看，不能自选。若使用手动列映射，日期栏必须对应 Goods Issue Date，同样接收隔天起所有未来日期。跨过午夜后需要重新预览，已选择的文件会保留。没有符合订单时不会保存空批次。
 4. 预览新订单和会跳过的已有订单。差异列出 Saved · retained（保留）与 Excel · skipped（跳过），只供核对，不会覆盖旧值。0、空白（Empty）和未提供（Not provided）分开显示。错误须全部修正才可保存；确认后只添加新订单，不自动排产。
 5. 在 Orders 搜寻 DO、客户、物料或描述。快捷视图为 All orders（全部）、Needs production（扣除预留库存及已有未完成排程后仍有缺口）、Ready for pickup（预留现货已覆盖剩余未取数量）及 Needs review（待核对）。没有库存基准的旧订单按关联卡片及生产状态判断。Advanced filters 可展开交期、单位、生产状态、交货状态、逾期及导入批次；快捷视图、搜索和高级筛选同时生效，Clear filters 全部清除。每页 50 条，顶部统计包含所有匹配订单。点击 DO 编号会弹出订单详情，关闭后回到原来的列表位置。主列表分为七栏，将交货日和生产期限放在一起，生产缺口单独突出，取货天数放在状态下。按 Breakdown 展开现货预留、累计生产、已取货及已排未入库数量。Bags 显示整数，MT 保留三位小数，避免小缺口被四舍五入隐藏。主列表会按栏宽换行；窄屏可用表格上方的 Left／Right 按钮左右查看，操作栏固定在右侧。
 6. 点 DO 查看完整字段、原始天数、来源版本、Medication、FMR / OMED 和导入历史。
@@ -141,7 +141,7 @@ Orders、Stock 和 Daily stock 的产品主标题统一为 **5220 · 25kg Bags**
 
 Stock 的标准 Make for stock 库存低于目标时，在 Available 下显示 **Short X Bags／MT**，缺口按「安全库存 − 可用库存」计算。药物／FMR 版本不会混入标准补库存缺口。首次载入显示 Loading，失败时可按 Retry loading stock；刷新期间显示上次成功读取的余额及更新提示，不会把尚未载入的资料当成零或未建立基准。
 
-Daily stock 可选日期查看 Opening、Production、Received、Return、Rework、Issue、Adjustment、Closing，并按 Enter physical count 输入盘点数量及原因，预览差异后确认。SAP orders 只添加符合隔天日期的新订单；Baseline import 只保存上方库存及每日变动，不读取下方订单或 Remark。盘点差异须勾选确认并填写原因，生成调整而不覆盖原流水。
+Daily stock 可选日期查看 Opening、Production、Received、Return、Rework、Issue、Adjustment、Closing，并按 Enter physical count 输入盘点数量及原因，预览差异后确认。SAP orders 只添加符合未来日期的新订单；Baseline import 只保存上方库存及每日变动，不读取下方订单或 Remark。盘点差异须勾选确认并填写原因，生成调整而不覆盖原流水。
 
 切换 Daily stock 日期时，先隐藏旧日期资料，等待新日期完成载入；读取失败可直接重试。若只是产品说明无法读取，日报数量仍按完整 material code 显示，可用 Retry product details 重新取得说明。
 
@@ -198,7 +198,7 @@ Excel 重复订单仍不会自动覆盖。差异保存于 Orders → **Import re
 按 Import Excel 后先选来源，切换来源不会清掉尚未保存的文件和草稿。弹窗内容独立滚动，底部确认按钮保持可见；Cancel／Escape 关闭后回到原清单。
 
 - **Baseline import**：选择自制的 26th、27th 等日期表，可多份按日期预览。**只读取上方库存和每日变动**，完全忽略下方订单、Remark、Medication 和 FMR／OMED；不会建单、改状态、改预留或判断订单缺失。下方 DONE／CANCEL 即使没有日期，也不会影响库存导入。空台账首批记录 Opening 和每日汇总变动；已有台账时只保存原日报，确认差异及原因后才调整余额，不重放全天生产或出货。
-- **SAP orders**：读取 bag order／bulk order，只接收服务器马来西亚日期的隔天 Goods Issue Date。只添加新 DO＋完整 Material 组合；旧单数量、日期、人工字段及执行状态保留，差异进入审核。首次接收的批次日期和顺序固定，重复导入不会把旧单提升成新优先级。文件没有某张单，不代表删除、取消或 OUT。
+- **SAP orders**：读取 bag order／bulk order，接收晚于服务器马来西亚今天的所有 Goods Issue Date。只添加新 DO＋完整 Material 组合；旧单数量、日期、人工字段及执行状态保留，差异进入审核。首次接收的批次日期和顺序固定，重复导入不会把旧单提升成新优先级。文件没有某张单，不代表删除、取消或 OUT。
 
 DONE 是已备齐，OUT 是已取走，CANCEL 是取消，HOLD 是暂缓。现有历史及人工控制仍保留，但新 Baseline 不再导入或推断这些订单状态，也不因日期表缺单而改成待核对。订单详情的 Planning control 可填写原因后处理；实际取货继续用 Record collection 扣库存，未知实际时间保持未知。
 
@@ -230,4 +230,4 @@ Settings → Production rules → **Line preferences** 可搜索、新增、修�
 
 ## 本次重新开始
 
-本次清空由本机维护流程完成，不提供公开清空按钮。先做完整备份并在独立数据库验证恢复，再清空订单、排程、库存余额和业务历史；产品清单、库存参数、安全库存／超产、工时、产能及其他设置保留。不自动重放旧 October 文件。清空后先导入新的库存，再导入隔天 SAP 订单；没有库存基准时 Generate 会提示先导入库存。DataGrip 的本机端口保持 **5434**。
+本次清空由本机维护流程完成，不提供公开清空按钮。先做完整备份并在独立数据库验证恢复，再清空订单、排程、库存余额和业务历史；产品清单、库存参数、安全库存／超产、工时、产能及其他设置保留。不自动重放旧 October 文件。清空后先导入新的库存，再导入未来日期的 SAP 订单；没有库存基准时 Generate 会提示先导入库存。DataGrip 的本机端口保持 **5434**。

@@ -52,7 +52,7 @@ Previously stored historical observations remain available for audit, but a new 
 
 ### SAP orders
 
-SAP sheets use A:I: Delivery, raw goods movement status, Goods Issue Date, sold-to, ship-to, full Material, Description, Delivery quantity, Sales Unit. Both `bag order` and `bulk order` are read when present. The server supplies Malaysia today and tomorrow; only Goods Issue Date equal to tomorrow is eligible. Old, later and invalid-date rows are counted and excluded before validating unrelated fields. Manual column mapping uses the same rule. No matches means no empty batch is saved.
+SAP sheets use A:I: Delivery, raw goods movement status, Goods Issue Date, sold-to, ship-to, full Material, Description, Delivery quantity, Sales Unit. Both `bag order` and `bulk order` are read when present. The server supplies Malaysia today and tomorrow; all Goods Issue Dates from tomorrow onward are eligible. Today, earlier and invalid-date rows are counted and excluded before validating unrelated fields. Manual column mapping uses the same rule. No matches means no empty batch is saved.
 
 The preview shows target Issue Date, matching Bags/Bulk rows and earlier/later/invalid exclusions. Dates are read-only. The server revalidates on commit; if midnight changes the day, keep the file and preview again. New identities are appended. Existing quantities, dates, execution status and manual fields remain unchanged, and differences enter the review queue. Missing orders are never deleted or assumed OUT. Each newly accepted order keeps its original batch target date and stable ordinal; a duplicate import never promotes its priority.
 
@@ -60,7 +60,7 @@ Import previews write nothing. Confirmation revalidates the batch under the work
 
 ## First import and later imports
 
-1. Confirm that the selected mode has its required sheets: a dated daily sheet for Baseline, or bag/bulk order sheets for SAP. Confirm the dated sheet’s `R14` date and review the stock counts or next-day order/exclusion counts before saving.
+1. Confirm that the selected mode has its required sheets: a dated daily sheet for Baseline, or bag/bulk order sheets for SAP. Confirm the dated sheet’s `R14` date and review the stock counts or future order/exclusion counts before saving.
 2. Choose Baseline import for dated reports or SAP orders for append-only SAP exports; review the comparison.
 3. Verify the target dates, eligible order counts and stock differences. Confirm a reason for any stock adjustment.
 4. Review **Orders** and **Stock** after the import. Resolve missing bag weights, missing policies, incompatible units, and Medication/FMR mismatches before generating a draft.
@@ -155,7 +155,7 @@ Versions 1-6 remain readable. The preview warns that old backups have no accepte
 
 ### One-time operational reset
 
-Use the private local maintenance procedure only after a full backup and a successful restore rehearsal in a separate database. Clear operational orders, schedules, stock balances and business history; retain catalog, stock-product parameters, safety/extra policies, capacities, working hours and other configuration. No public reset control is added. Do not replay old October files automatically. First import a new stock baseline, then eligible next-day SAP orders; Generate requires the stock baseline.
+Use the private local maintenance procedure only after a full backup and a successful restore rehearsal in a separate database. Clear operational orders, schedules, stock balances and business history; retain catalog, stock-product parameters, safety/extra policies, capacities, working hours and other configuration. No public reset control is added. Do not replay old October files automatically. First import a new stock baseline, then eligible future-dated SAP orders; Generate requires the stock baseline.
 
 ### PostgreSQL dump
 

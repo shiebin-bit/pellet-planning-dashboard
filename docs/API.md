@@ -135,7 +135,7 @@ Do not infer a failed commit from a disconnected response: the database may have
 - `GET /api/data/import-context`: server-authoritative `{asOfDate,targetIssueDate,timeZone:"Asia/Kuala_Lumpur",revision}`. Dates are Malaysia today and tomorrow; no client date override is accepted.
 - `GET /api/data/imports`: batch options (ID, file name, as-of date, import timestamp and row count).
 - `GET /api/data/:id`: current fields, production/delivery status, linked card ID, deadline counts, review flag and immutable versions.
-- `POST /api/data/preview`: `SourceImportInput` (`fileName`, `sheetName`, `digest`, `asOfDate`, normalized `rows`). Read-only validation/comparison; every row must have Goods Issue Date (`deliveryDate`) equal to server tomorrow and `asOfDate` equal to server today. Response includes `asOfDate`, `targetIssueDate`, added/changed/unchanged totals and changed field names. `409 IMPORT_TARGET_DATE_CHANGED` requires reloading context and re-previewing the retained file.
+- `POST /api/data/preview`: `SourceImportInput` (`fileName`, `sheetName`, `digest`, `asOfDate`, normalized `rows`). Read-only validation/comparison; every row must have Goods Issue Date (`deliveryDate`) on or after server tomorrow and `asOfDate` equal to server today. Response includes `asOfDate`, `targetIssueDate`, added/changed/unchanged totals and changed field names. `409 IMPORT_TARGET_DATE_CHANGED` requires reloading context and re-previewing the retained file.
 - `GET /api/backup`, `GET /api/backup/previous`: current or recovery portable version 7 backup. Data is fetched on demand, not in the live workspace response or Undo snapshot.
 
 All source mutations use the existing `POST /api/commands` revision/command-ID envelope:
@@ -193,7 +193,7 @@ Commands `data.applySourceCorrection {reviewId,expectedSourceVersion,selectedFie
 
 Portable database backup V7 is `{schemaVersion:7,exportedAt,planning,sourceData,inventory,productionProgress,baselineHistory,dailyPlanning}`. The complete reference graph is validated and the previous workspace is retained transactionally. `dailyPlanning` contains `admissionBatches`, `orderAdmissions` and `continuationReservations`; `planning.settings.linePreferences` stores routing preferences. Planning `AppState` and offline export remain version 2. V1-V6 restore remains supported; missing admission metadata does not silently admit legacy orders into automatic new demand.
 
-## Stock-only Baseline, next-day SAP and split cards (V7)
+## Stock-only Baseline, future-dated SAP and split cards (V7)
 
 `POST /api/inventory/daily-import/preview` accepts `{reports: StockReportInput[]}` and returns revision, file/date/stock counts, formula/continuity/count differences, warnings and `requiresReconcile`. It is read-only and does not inspect or project orders. `GET /api/data/:id/observations` reads retained historical observations; new stock-only imports do not append them.
 
@@ -212,7 +212,7 @@ New revision-checked `/api/commands` variants:
 
 A stock report includes `fileName`, SHA-256 `digest`, `sheetName`, `asOfDate` and `stockRows` only. Stock rows carry exact unit/bag-weight/policy and all reported daily movements. `orderRows` is excluded from the new command; the legacy daily-report entry only tolerates an empty array and cannot import orders or trigger missing-order checks. Reports in one batch need unique ascending dates. Stock differences require explicit reconciliation and a nonblank reason; existing ledger history is never replayed.
 
-SAP `data.import` and `data.importBatch` enforce next-day dates server-side, including manually mapped files. They reject empty/mixed-date batches. DO + complete material identifies an order; duplicates retain saved quantity/date/status/manual fields, changed candidates enter review, and missing identities are not deleted. New identities record accepted batch target date and ordinal; duplicate retries retain original priority.
+SAP `data.import` and `data.importBatch` enforce Goods Issue Date later than Malaysia today server-side, including manually mapped files. They reject empty batches and any rows dated today or earlier. Different future dates may share one batch. `targetIssueDate` remains the inclusive earliest accepted date, not an exact-match date. DO + complete material identifies an order; duplicates retain saved quantity/date/status/manual fields, changed candidates enter review, and missing identities are not deleted. New identities record accepted batch target date and ordinal; duplicate retries retain original priority.
 
 A split creates2–500 nonempty pending children with server-owned `derivedFromJobId`. Quantities use whole Bags or0.001MT; every source allocation and unallocated quantity must balance exactly. Dates/lines/bin/remarks may vary, product and saved source facts cannot. The original is cancelled and retained; its actual output/stock is never changed. Unstarted cards with posted output or locks are rejected. Same-order split portions can recombine only with matching saved source version and snapshot. All validation, child persistence, audit, revision and retry receipts commit together.
 

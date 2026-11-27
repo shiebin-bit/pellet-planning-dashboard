@@ -28,13 +28,14 @@ integration('next-day SAP admission and stock-only baseline',()=>{
   beforeEach(async()=>{await pool.query('TRUNCATE command_receipts,history_events,jobs,workspace CASCADE');await store.initialize(createDefaultSettings())});
   after(async()=>{await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));await pool.end()});
 
-  it('publishes an authoritative Malaysia import context and rejects stale or non-next-day rows',async()=>{
+  it('publishes an authoritative Malaysia import context and accepts every future date and rejects stale, today or earlier rows',async()=>{
     const context=await json(await fetch(`${baseUrl}/api/data/import-context`));
     assert.equal(context.timeZone,'Asia/Kuala_Lumpur');assert.equal(context.targetIssueDate,addDays(context.asOfDate,1));assert.equal(context.revision,0);
     const stale=source('STALE',context.targetIssueDate,addDays(context.asOfDate,-1));
     let response=await preview(stale);assert.equal(response.status,409);assert.equal((await response.json()).error.code,'IMPORT_TARGET_DATE_CHANGED');
     const far=source('FAR',addDays(context.targetIssueDate,1),context.asOfDate);
-    response=await preview(far);assert.equal(response.status,400);assert.equal((await response.json()).error.code,'SAP_ORDER_NOT_NEXT_DAY');
+    response=await preview(far);assert.equal(response.status,200);
+    for(const date of [context.asOfDate,addDays(context.asOfDate,-1)]){response=await preview(source('OLD',date,context.asOfDate));assert.equal(response.status,400);assert.equal((await response.json()).error.code,'SAP_ORDER_NOT_FUTURE');}
     const accepted=await json(await preview(source('OK',context.targetIssueDate,context.asOfDate)));
     assert.equal(accepted.targetIssueDate,context.targetIssueDate);assert.equal(accepted.added,1);
     const year=await readSapImportContext(pool,new Date('2026-12-31T15:59:00Z')),month=await readSapImportContext(pool,new Date('2026-01-31T15:59:00Z'));

@@ -32,7 +32,7 @@ Millplan connects the daily work that otherwise lives across SAP exports, stock 
 
 The current application runs in a browser, backed by Node.js and PostgreSQL. Windows launchers start the local Docker installation and open the dashboard. A new database starts empty; demonstration data is loaded only through an explicit action.
 
-**Reviewed against the implementation: 26 November 2026.** For step-by-step operating instructions, see the **[English User Manual](docs/USER_MANUAL.md)**.
+**Reviewed against the implementation: 27 November 2026.** For step-by-step operating instructions, see the **[English User Manual](docs/USER_MANUAL.md)**.
 
 ## Preview
 
@@ -48,7 +48,7 @@ The image uses fictional demonstration records. This repository contains source 
 | --- | --- |
 | **Overview** | Daily planned quantity, within-shift plan, received stock, planned utilisation, daily line timeline, weekly capacity, priorities and recorded stops |
 | **Planning board** | PM1–PM4 Timeline/List, manual production, stock-aware drafts, reviewed drag-and-drop moves, multi-order batches, combine/split, copy planning and browser draft recovery |
-| **Orders** | Separate stock/SAP import modes, next-day order acceptance, search and filters, per-order production/collection journals, planning controls and import difference reviews |
+| **Orders** | Separate stock/SAP import modes, future order acceptance, search and filters, per-order production/collection journals, planning controls and import difference reviews |
 | **Stock** | Separate Bags/Bulk balances, reservations and available quantities, MTO/MTS policies, safety stock, extra output, variant filters, Daily stock and physical-count adjustments |
 | **History** | Production records and activity logs, date/PM/status/search filters, statistics across all matching records and 50-entry pagination |
 | **Settings** | Working calendar, line rates and changeover, exact-product PM preferences, downtime and dated shift exceptions, product catalog, stock policies and backup/recovery |
@@ -70,7 +70,7 @@ Export the selected planning day to Excel or browser Print / Save as PDF. Date-r
 ## Daily Workflow
 
 1. **Establish or reconcile stock.** Review the latest dated stock report, or maintain the ledger through actual movements. The last count date is visible so old balances are not mistaken for a current physical count.
-2. **Import tomorrow's SAP orders.** Review the eligible date, packaging counts, exclusions and duplicates before confirming.
+2. **Import future SAP orders.** Review the eligible date, packaging counts, exclusions and duplicates before confirming.
 3. **Review demand.** Check reservations, shortages, held/cancelled orders and any import differences requiring attention.
 4. **Prepare a plan.** Generate a reviewed draft or select orders manually. Continue unfinished work before new demand, then replenish applicable MTS targets.
 5. **Record production.** Start the card, enter new receipts as output occurs and complete it with the final cumulative actual quantity.
@@ -82,9 +82,9 @@ Export the selected planning day to Excel or browser Print / Save as PDF. Date-r
 | --- | --- | --- |
 | Workbook source | Upper stock table on dated sheets such as 26th or 27th | `bag order` and `bulk order` |
 | Purpose | Establish stock, retain daily stock reports and reconcile Closing differences | Accept new customer orders for the next production demand queue |
-| Date rule | Detected stock-report date, reviewed before confirmation | **Goods Issue Date = server Malaysia today + 1 day** |
+| Date rule | Detected stock-report date, reviewed before confirmation | **Goods Issue Date > server Malaysia today** |
 | Existing records | Existing ledger movements remain; approved differences become adjustments | DO + complete Material code identifies duplicates; existing values remain unchanged |
-| Excluded data | Lower order table, order Remark, Medication and FMR / OMED fields | Older, farther-future and invalid/missing Issue Dates |
+| Excluded data | Lower order table, order Remark, Medication and FMR / OMED fields | Today, older and invalid/missing Issue Dates |
 
 Re-imports do not automatically overwrite order quantities, dates, statuses or manual fields. Changed candidates enter the **Import review queue** for permitted, reasoned corrections. A row missing from a later workbook does not delete an order or mark it collected. If a preview crosses midnight, the server requires a new preview against the new eligible day.
 
@@ -149,7 +149,7 @@ Open **[http://127.0.0.1:8080](http://127.0.0.1:8080)** and verify **PostgreSQL 
 
 After the initial download, double-click **OPEN-DASHBOARD.cmd** or **START-DASHBOARD.cmd** to run setup, start services and open the browser. Both preserve an existing `.env`. The first setup generates a random database password.
 
-- New workspace: import stock first, then next-day SAP orders; manual production is also available.
+- New workspace: import stock first, then future-dated SAP orders; manual production is also available.
 - Demonstration workspace: **Settings → Backup & recovery → Reset demo** intentionally replaces data with fictional examples. Do not use it on company records.
 - Stop: **STOP-DASHBOARD.cmd** or `docker compose stop`.
 - Update: back up first, then follow [Operations](docs/OPERATIONS.md#start-stop-and-update). CI does not deploy the local installation.
@@ -265,7 +265,7 @@ Database/browser tests require a disposable database and an isolated loopback te
 
 [GitHub Actions](.github/workflows/ci.yml) runs on pushes and pull requests using Node.js 24 and PostgreSQL 16. It installs the lockfile, runs domain/dependency/backup tests, builds, audits runtime dependencies, exercises the API and runs the complete browser suite configured in [package.json](package.json). The badge links to the current result; CI verifies source and does not deploy the application.
 
-Coverage includes stock-only and next-day imports, duplicates and reviews, precise quantities, MTO/MTS, multi-order allocation, card splits, carryover, PM preferences, calendar exceptions, actual output/collection, stale drafts, conflicts, retry safety, restore and responsive interactions.
+Coverage includes stock-only and future-date imports, duplicates and reviews, precise quantities, MTO/MTS, multi-order allocation, card splits, carryover, PM preferences, calendar exceptions, actual output/collection, stale drafts, conflicts, retry safety, restore and responsive interactions.
 
 ## Documentation
 

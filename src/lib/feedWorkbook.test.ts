@@ -21,17 +21,17 @@ describe('daily stock workbook adapter', () => {
     sheet.addRow(IMPORT_FIELDS.map(([,label])=>label));
     sheet.addRow(['KEEP','2026-11-20','Buyer','Farm','7.9999000000025','FS 5220 TEST 25KG',100,'Bags',1,'',0,'','']);
     sheet.addRow(['KEEP','2026-11-19','Buyer','Farm',{formula:'NO_CACHE()'},'',{error:'#VALUE!'},'Bags',1,'',0,'','']);
-    sheet.addRow(['KEEP','2026-11-21','Buyer','Farm','7.9999000000025','',-100,'Bags',1,'',0,'','']);
+    sheet.addRow(['LATER','2026-11-21','Buyer','Farm','7.9999000000025','',100,'Bags',1,'',0,'','']);
     sheet.addRow(['NO-DATE','unknown']);
     const book:ImportBook={sheets:excel.worksheets,date1904:false,digest:'b'.repeat(64)};
     const mapping=Object.fromEntries(IMPORT_FIELDS.map(([field],index)=>[field,index+1])) as ColumnMapping;
     const parsed=parseMappedSapNextDayWorkbook(book,'mapped.xlsx',0,1,mapping,'YMD','2026-11-19','2026-11-20');
-    expect(parsed.counts).toEqual({matched:1,bag:1,bulk:0,old:1,future:1,invalidDate:1});
+    expect(parsed.counts).toEqual({matched:2,bag:2,bulk:0,old:1,future:0,invalidDate:1});
     expect(parsed.rows[0].errors).toEqual([]);expect(parsed.rows[0].rowNumber).toBe(2);
     expect(parsed.inputs[0].rows[0].materialCode).toBe('7.9999000000025');
     expect(parseMappedSapNextDayWorkbook(book,'mapped.xlsx',0,1,mapping,'YMD','2026-12-01','2026-12-02').inputs).toEqual([]);
     sheet.addRow(sheet.getRow(2).values);
-    expect(parseMappedSapNextDayWorkbook(book,'mapped.xlsx',0,1,mapping,'YMD','2026-11-19','2026-11-20').rows.every(row=>row.errors.some(error=>error.includes('Duplicate')))).toBe(true);
+    expect(parseMappedSapNextDayWorkbook(book,'mapped.xlsx',0,1,mapping,'YMD','2026-11-19','2026-11-20').rows.filter(row=>row.data.doNo==='KEEP').every(row=>row.errors.some(error=>error.includes('Duplicate')))).toBe(true);
   });
   it('reads only stock and never evaluates lower order cells',()=>{
     const book=workbook(),daily=book.sheets[2];
@@ -45,10 +45,10 @@ describe('daily stock workbook adapter', () => {
   it('filters dates before validating obsolete SAP fields and preserves full material identifiers',()=>{
     const book=workbook(),bag=book.sheets[0];
     bag.addRow(['old','A',new Date('2026-10-19'),'', '', {error:'#VALUE!'},'',{formula:'BROKEN()'},'BAG']);
-    bag.addRow(['future','A',new Date('2026-10-21'),'', '', '', '', 'invalid','BAG']);
+    bag.addRow(['future','A',new Date('2026-10-21'),'Buyer','Farm','7.9999000000025','Feed',20,'BAG']);
     bag.addRow(['bad-date','A','unknown']);
     const parsed=parseSapNextDayWorkbook(book,'test.xlsm','2026-10-19','2026-10-20');
-    expect(parsed.counts).toEqual({matched:2,bag:1,bulk:1,old:1,future:1,invalidDate:1});
+    expect(parsed.counts).toEqual({matched:3,bag:2,bulk:1,old:1,future:0,invalidDate:1});
     expect(parsed.inputs[0].rows[0].materialCode).toBe('7.9999000000025');
     expect(parseSapNextDayWorkbook(book,'test.xlsm','2026-10-22','2026-10-23').inputs).toEqual([]);
   });

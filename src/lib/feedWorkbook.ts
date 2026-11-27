@@ -3,6 +3,7 @@ import { IMPORT_FIELDS, cellText, identifierText, parseDate, parseImportRows, ty
 import type { DailyReportInput } from '../domain/dailyImport';
 import { quantityToScaled, scaledToQuantity } from '../domain/inventory';
 
+// Legacy names/shape retained for callers; future dates are accepted, so future exclusions stay zero.
 export interface SapNextDayCounts { matched:number; bag:number; bulk:number; old:number; future:number; invalidDate:number }
 export interface SapNextDayWorkbook { inputs:SourceImportInput[]; counts:SapNextDayCounts }
 
@@ -20,7 +21,6 @@ export function parseMappedSapNextDayWorkbook(book: ImportBook, fileName: string
     let date: string;
     try { date = parseDate(row.getCell(mapping.deliveryDate), dateOrder, book.date1904); } catch { counts.invalidDate++; continue; }
     if (date < targetIssueDate) { counts.old++; continue; }
-    if (date > targetIssueDate) { counts.future++; continue; }
     eligible.add(index);
   }
   // The existing row validator sees empty rows in place of excluded source rows.
@@ -46,7 +46,6 @@ export function parseSapNextDayWorkbook(book: ImportBook, fileName: string, asOf
       let deliveryDate:string;
       try{deliveryDate=parseDate(row.getCell(3),'MDY',book.date1904);}catch{counts.invalidDate++;continue;}
       if(deliveryDate<targetIssueDate){counts.old++;continue;}
-      if(deliveryDate>targetIssueDate){counts.future++;continue;}
       const doNo=identifierText(row.getCell(1));
       const materialCode = identifierText(row.getCell(6));
       if (!materialCode) throw new Error(`${sheet.name}!${n}: Material is required.`);
@@ -68,7 +67,7 @@ export function parseSapNextDayWorkbook(book: ImportBook, fileName: string, asOf
   return {inputs:imports,counts};
 }
 
-/** Compatibility helper follows the same next-day filtering policy. */
+/** Compatibility helper accepts all Issue Dates from tomorrow onward. */
 export function parseSapOrderWorkbook(book: ImportBook, fileName: string, asOfDate: string): SourceImportInput[] {
   const target=new Date(Date.parse(asOfDate+'T12:00:00Z')+86400000).toISOString().slice(0,10);
   return parseSapNextDayWorkbook(book,fileName,asOfDate,target).inputs;

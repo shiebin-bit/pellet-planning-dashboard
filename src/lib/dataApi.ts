@@ -20,6 +20,7 @@ export const readSourceOrders = (query: URLSearchParams) => dataRequest<SourceOr
 export const readSourceOrder = (id: string) => dataRequest<SourceOrderDetail>('/api/data/' + encodeURIComponent(id));
 export const readSourceObservations = (id: string) => dataRequest<SourceOrderObservation[]>('/api/data/' + encodeURIComponent(id) + '/observations');
 export const previewSourceImport = (input: SourceImportInput, context?: SourceImportPreviewContext) => dataRequest<SourceImportPreview>('/api/data/preview', context ? {input, context} : input);
+/** targetIssueDate is the inclusive lower bound; all later dates are eligible too. */
 export interface SapImportContext {asOfDate:string;targetIssueDate:string;timeZone:'Asia/Kuala_Lumpur';revision:number}
 export const readSapImportContext=()=>dataRequest<SapImportContext>('/api/data/import-context');
 export interface ImportBatchOption { id: string; fileName: string; asOfDate: string; importedAt: string; rowCount: number }

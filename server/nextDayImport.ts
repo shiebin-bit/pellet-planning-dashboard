@@ -9,6 +9,7 @@ import { syncSapOrders } from './dailyImport';
 
 export const MALAYSIA_TIME_ZONE='Asia/Kuala_Lumpur' as const;
 
+/** targetIssueDate is the inclusive minimum Issue Date, with no upper date limit. */
 export interface SapImportContext { asOfDate:string; targetIssueDate:string; timeZone:typeof MALAYSIA_TIME_ZONE; revision:number }
 
 export async function readSapImportContext(db:pg.Pool|pg.PoolClient,now=new Date()):Promise<SapImportContext>{
@@ -55,20 +56,21 @@ export async function importNextDaySourceBatch(client:pg.PoolClient,state:AppSta
 }
 
 export function validateNextDayInputs(inputs:SourceImportInput[],context:{asOfDate:string;targetIssueDate:string}):void{
-  if(!inputs.length)throw new ApiError(400,'SAP_IMPORT_EMPTY','At least one SAP worksheet containing next-day orders is required.');
+  if(!inputs.length)throw new ApiError(400,'SAP_IMPORT_EMPTY','At least one SAP worksheet containing future orders is required.');
   const identities=new Set<string>();
   let count=0;
   for(const input of inputs){
     if(input.asOfDate!==context.asOfDate)throw new ApiError(409,'IMPORT_TARGET_DATE_CHANGED','The Malaysia import date changed. Refresh the import context and preview the workbook again.');
     for(const row of input.rows){
       count++;
-      if(row.deliveryDate!==context.targetIssueDate)throw new ApiError(400,'SAP_ORDER_NOT_NEXT_DAY',`Only orders with Goods Issue Date ${context.targetIssueDate} can be imported.`);
+      const date=row.deliveryDate, parsed=Date.parse(`${date}T00:00:00Z`);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||!Number.isFinite(parsed)||new Date(parsed).toISOString().slice(0,10)!==date||date<context.targetIssueDate)throw new ApiError(400,'SAP_ORDER_NOT_FUTURE',`Goods Issue Date must be ${context.targetIssueDate} or later. Today's and earlier orders cannot be imported.`);
       const key=`${row.doNo.trim().toUpperCase()}\0${row.materialCode.trim().toUpperCase()}`;
       if(identities.has(key))throw new ApiError(400,'SAP_ORDER_DUPLICATE','The same DO and material appears more than once across the selected worksheets.');
       identities.add(key);
     }
   }
-  if(!count)throw new ApiError(400,'SAP_IMPORT_EMPTY','No next-day SAP orders were provided.');
+  if(!count)throw new ApiError(400,'SAP_IMPORT_EMPTY','No future SAP orders were provided.');
 }
 
 function malaysiaDate(now:Date):string{

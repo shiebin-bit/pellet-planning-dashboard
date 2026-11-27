@@ -1,7 +1,7 @@
 # Millplan User Manual
 
 **Pellet production planning dashboard · English edition**  
-**Last reviewed:** 26 November 2026
+**Last reviewed:** 27 November 2026
 
 This manual is for planners, production supervisors and staff who maintain orders, finished-goods stock and production records. It covers the PostgreSQL dashboard used for daily operations. Installation and database maintenance are covered in the [operations guide](OPERATIONS.md).
 
@@ -44,7 +44,7 @@ Use **STOP-DASHBOARD.cmd** to stop the local services. Normal stopping preserves
 | Step | Action | Check before continuing |
 | --- | --- | --- |
 | 1 | Import the latest stock report when available, or record actual stock movements | The stock date and balances reflect the information you intend to use |
-| 2 | Import SAP orders | The target Goods Issue Date is tomorrow in Malaysia |
+| 2 | Import SAP orders | Goods Issue Dates are from tomorrow onward in Malaysia |
 | 3 | Review Orders and Stock | Check held/cancelled orders, import differences, reservations and shortages |
 | 4 | Generate or manually create a plan | Review unfinished work, quantities, PM assignments, changeovers and completion dates |
 | 5 | Confirm the plan | Wait for the save confirmation; a preview alone creates no cards |
@@ -52,7 +52,7 @@ Use **STOP-DASHBOARD.cmd** to stop the local services. Normal stopping preserves
 | 7 | Record customer collection | Deduct only the quantity actually collected |
 | 8 | Review results and export reports | Check the report's dates and production line; maintain a backup copy |
 
-On a new workspace, **establish stock first, then import next-day SAP orders**. Generate planning requires a stock baseline. A stock-ready order is not a newly completed production job, and a completed production job is not a customer collection.
+On a new workspace, **establish stock first, then import future-dated SAP orders**. Generate planning requires a stock baseline. A stock-ready order is not a newly completed production job, and a completed production job is not a customer collection.
 
 ## 2. Navigation and common controls
 
@@ -106,8 +106,8 @@ Open **Orders → Import Excel**. Choose the source before selecting the file. I
 | --- | --- | --- |
 | Source | Dated company worksheet, such as 26th or 27th | `bag order` and `bulk order` worksheets |
 | Purpose | Import stock reports and reconcile balances | Add eligible new customer orders |
-| Included | Upper stock table and daily stock movements | Orders whose Goods Issue Date equals Malaysia today + 1 day |
-| Excluded | Lower order table, order Remark, Medication and FMR / OMED fields | Older dates, later dates and invalid/missing dates |
+| Included | Upper stock table and daily stock movements | Orders whose Goods Issue Date is later than Malaysia today |
+| Excluded | Lower order table, order Remark, Medication and FMR / OMED fields | Today, earlier dates and invalid/missing dates |
 | Existing data | Stock differences require review; ledger entries are retained | Existing DO + complete material identities are retained without automatic overwrite |
 
 ### 4.2 Baseline import: stock only
@@ -126,17 +126,17 @@ For an empty ledger, the initial report establishes the stock position while ret
 
 Baseline does not create orders or interpret DONE, OUT, HOLD or CANCEL in the lower table. It does not set order status or import manual order Medication / FMR / OMED fields.
 
-### 4.3 SAP orders: next-day orders only
+### 4.3 SAP orders: future orders only
 
 1. Select **SAP orders** and choose the SAP-export workbook.
-2. Check the read-only target Issue Date. For example, importing on **26 November** accepts **27 November** Goods Issue Dates.
+2. Check the read-only earliest Issue Date. For example, importing on **27 November** accepts **28 November and all later** Goods Issue Dates.
 3. Review the matching Bags/Bulk counts and the counts excluded for old, future or invalid dates.
-4. If the standard sheets are not recognised, check the worksheet, header, date interpretation and column mapping. Manual mapping still follows the next-day restriction.
+4. If the standard sheets are not recognised, check the worksheet, header, date interpretation and column mapping. Manual mapping follows the same future-date restriction.
 5. Select **Review import**. Check new records, retained duplicates, skipped differences and invalid rows.
 6. Select the review acknowledgement and **Confirm import**.
 7. Verify the new orders in **Orders**.
 
-The server rechecks the date when saving. If midnight changes the eligible day after preview, keep the file selected and preview it again. No matching next-day orders means there is no batch to save.
+The server rechecks the date when saving. If midnight changes the eligible day after preview, keep the file selected and preview it again. No matching future orders means there is no batch to save.
 
 ### 4.4 Duplicate orders and changed SAP values
 
@@ -451,7 +451,7 @@ Do not use **Reset demo** in a working company workspace. It is for intentionall
 | Save outcome is unknown | Use the original retry/check action. Do not submit a second batch or duplicate receipt |
 | Draft rejected or confirmation time passed | Read the displayed reason/code, retain the draft, review current stock/plan/settings, then regenerate. A rejection does not mean cards were saved |
 | Generate produces no new cards | Check stock coverage, existing schedules, held/cancelled/review-blocked orders, eligible accepted batches, planning range and capacity; no new cards can be correct |
-| SAP import finds no orders | Check the read-only next-day target and actual **Goods Issue Date**, not just file name or delivery description. Review excluded dates and filters |
+| SAP import finds no orders | Check the read-only earliest accepted date and actual **Goods Issue Date**, not just file name or delivery description. Review excluded dates and filters |
 | Import preview crossed midnight | Preview the retained file again against the new server date |
 | Existing SAP orders did not change | Expected: imports add new identities and retain duplicates. Use Import review queue for eligible, verified differences |
 | Baseline confirmation is disabled | Review detected rows, dates, differences, reconciliation checkbox/reason and the final acknowledgement; resolve validation errors |
