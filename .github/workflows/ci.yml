@@ -20,29 +20,28 @@ jobs:
       - run: npm ci --no-audit --fetch-timeout=30000 --fetch-retries=1 --fetch-retry-mintimeout=2000
       - name: Start native PostgreSQL 16
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y postgresql-16
-          if ! pg_lsclusters --no-header | awk '$1 == "16" && $2 == "main" { found=1 } END { exit !found }'; then
-            sudo pg_createcluster 16 main --port 5432
+          if [ ! -x /usr/lib/postgresql/16/bin/initdb ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y postgresql-16
           fi
-          sudo pg_conftool 16 main set port 5432
-          sudo pg_conftool 16 main set listen_addresses 127.0.0.1
-          sudo pg_ctlcluster 16 main restart
-          sudo -u postgres psql --set ON_ERROR_STOP=1 --command "CREATE ROLE millplan LOGIN SUPERUSER PASSWORD 'ci-only-password'"
-          sudo -u postgres createdb --owner millplan millplan_test
+          umask 077
+          printf '%s\n' ci-only-password > "$RUNNER_TEMP/millplan-pg.pw"
+          /usr/lib/postgresql/16/bin/initdb -D "$RUNNER_TEMP/millplan-pg" -U millplan --encoding UTF8 --auth-local=trust --auth-host=scram-sha-256 --pwfile="$RUNNER_TEMP/millplan-pg.pw"
+          /usr/lib/postgresql/16/bin/pg_ctl -D "$RUNNER_TEMP/millplan-pg" -l "$RUNNER_TEMP/millplan-pg.log" -o '-p 55432 -h 127.0.0.1' -w start
+          PGPASSWORD=ci-only-password /usr/lib/postgresql/16/bin/createdb --host 127.0.0.1 --port 55432 --username millplan millplan_test
       - run: npm test
       - run: npm run test:desktop
       - run: npm run build
       - run: npm audit --omit=dev --json --fetch-timeout=30000 --fetch-retries=1 --fetch-retry-mintimeout=2000
       - run: npm run test:api
         env:
-          TEST_DATABASE_URL: postgresql://millplan:ci-only-password@127.0.0.1:5432/millplan_test
+          TEST_DATABASE_URL: postgresql://millplan:ci-only-password@127.0.0.1:55432/millplan_test
       - run: npx playwright install --with-deps chromium
       - name: Verify database browser workflows
         shell: bash
         env:
-          DATABASE_URL: postgresql://millplan:ci-only-password@127.0.0.1:5432/millplan_test
-          TEST_DATABASE_URL: postgresql://millplan:ci-only-password@127.0.0.1:5432/millplan_test
+          DATABASE_URL: postgresql://millplan:ci-only-password@127.0.0.1:55432/millplan_test
+          TEST_DATABASE_URL: postgresql://millplan:ci-only-password@127.0.0.1:55432/millplan_test
           HOST: 127.0.0.1
           PORT: 8091
           BROWSER_BASE_URL: http://127.0.0.1:8091
@@ -79,6 +78,12 @@ jobs:
             output/playwright/carryover/
             output/playwright/batch-orders/
           if-no-files-found: ignore
+      - name: Stop native test database
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/millplan-pg/PG_VERSION" ]; then
+            /usr/lib/postgresql/16/bin/pg_ctl -D "$RUNNER_TEMP/millplan-pg" -m fast -w stop
+          fi
 
   windows-desktop:
     runs-on: windows-latest
