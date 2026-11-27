@@ -20,7 +20,7 @@ import { DetailDialog } from './DetailDialog';
 import './BatchPlanningBoard.css';
 
 type TransferInput = {jobId:string;sourceOrderId:string;toLineId:LineId;targetJobId?:string};
-type DragItem = {kind:'order'|'batch';jobId:string;sourceOrderId?:string};
+export type DragItem = {kind:'order'|'batch';jobId:string;sourceOrderId?:string};
 const editable = isTransferableOrderBatch;
 const compatible = (source:Job,target:Job) => editable(source)&&editable(target)&&source.id!==target.id&&getOrderTransferBatchIdentity(source)===getOrderTransferBatchIdentity(target);
 const quantityLabel = (allocation:JobSourceAllocation) => `${numberLabel(allocation.plannedQuantity,allocation.sourceSnapshot.unit==='Bags'?0:3)} ${allocation.sourceSnapshot.unit}`;
@@ -31,42 +31,23 @@ const orderCollision:CollisionDetection = args => {
   return batches.length?batches:hits;
 };
 
-/** Detailed batch workspace. Timeline/List stay available for time-scale and compact views. */
-export function BatchPlanningBoard({lines,start,end,onOpen,onAdd,onMove}:{
-  lines:LineSchedule[];start:number;end:number;onOpen:(id:string)=>void;
-  onAdd:(lineId:LineId)=>void;onMove:(input:MoveImpactInput)=>void;
-}) {
-  const {state,storageMode,commit,mutationLocked,hasConflict,toast,confirmedRetry}=useWorkspace();
+export function useOrderTransfer(jobs:Job[],start:number) {
+  const {state,commit,mutationLocked,hasConflict,toast,confirmedRetry}=useWorkspace();
   const disabled=mutationLocked||hasConflict;
-  const [active,setActive]=useState<DragItem|null>(null);
-  const [overJob,setOverJob]=useState<string|null>(null);
-  const [overLine,setOverLine]=useState<LineId|null>(null);
   const [moving,setMoving]=useState<{jobId:string;sourceOrderId:string}|null>(null);
-  const [feedback,setFeedback]=useState('');
-  const [failed,setFailed]=useState(false);
-  const [saveFailed,setSaveFailed]=useState(false);
+  const [feedback,setFeedback]=useState(''),[failed,setFailed]=useState(false),[saveFailed,setSaveFailed]=useState(false);
   const retrySeen=useRef(confirmedRetry?.nonce);
-  const visible=lines.map(line=>({...line,jobs:line.jobs.filter(job=>job.segments.some(segment=>segment.kind==='production'&&segment.end>start&&segment.start<end))}));
-  const jobs=visible.flatMap(line=>line.jobs);
-  const {metadata}=useOrderMetadata(jobs,storageMode==='database');
-  const activeJob=state.jobs.find(job=>job.id===active?.jobId);
-  const activeOrder=activeJob&&getJobSourceAllocations(activeJob).find(row=>row.sourceOrderId===active?.sourceOrderId);
-  const sensors=useSensors(
-    useSensor(MouseSensor,{activationConstraint:{distance:7}}),
-    useSensor(TouchSensor,{activationConstraint:{delay:220,tolerance:6}}),
-    useSensor(KeyboardSensor,{keyboardCodes:{start:['Space'],end:['Space','Enter'],cancel:['Escape']}}),
-  );
   useEffect(()=>{if(saveFailed&&toast?.error)setFeedback(toast.message);},[saveFailed,toast]);
   useEffect(()=>{
     if(confirmedRetry?.nonce===retrySeen.current)return;
     retrySeen.current=confirmedRetry?.nonce;
     if(confirmedRetry?.type==='job.transferOrder'){setMoving(null);setFailed(false);setSaveFailed(false);setFeedback('Order move confirmed. Batch quantities and schedules updated.');}
   },[confirmedRetry]);
-  useEffect(()=>{setActive(null);setOverJob(null);setOverLine(null);setMoving(null);setFeedback('');},[start]);
-
+  useEffect(()=>{setMoving(null);setFeedback('');},[start]);
+  const clearFeedback=()=>{setFeedback('');setFailed(false);setSaveFailed(false);};
   async function transfer(input:TransferInput) {
     if(disabled)return false;
-    setFailed(false);setSaveFailed(false);setFeedback('');
+    clearFeedback();
     const command={type:'job.transferOrder' as const,...input};
     try{executeCommand(state,command,{nowIso:new Date().toISOString()});}
     catch(error){setFailed(true);setFeedback(error instanceof Error?error.message:'This order cannot be moved.');return false;}
@@ -75,6 +56,35 @@ export function BatchPlanningBoard({lines,start,end,onOpen,onAdd,onMove}:{
     else{setFailed(true);setSaveFailed(true);setFeedback('The order was not moved. Review the save message or latest workspace before retrying.');}
     return saved;
   }
+  const movingJob=state.jobs.find(job=>job.id===moving?.jobId);
+  const movingOrder=movingJob&&getJobSourceAllocations(movingJob).find(row=>row.sourceOrderId===moving?.sourceOrderId);
+  return {transfer,clearFeedback,openMove:(jobId:string,sourceOrderId:string)=>{clearFeedback();setMoving({jobId,sourceOrderId});},
+    feedbackNode:feedback?<p className={failed?'notice warning':'batch-feedback'} role="status">{feedback}</p>:null,
+    moveDialog:movingJob&&movingOrder?<OrderMoveDialog key={movingJob.id+'-'+movingOrder.sourceOrderId} job={movingJob} allocation={movingOrder} jobs={jobs} disabled={disabled} feedback={feedback} onClose={()=>setMoving(null)} onSave={transfer}/>:null};
+}
+
+/** Detailed batch workspace. Timeline/List stay available for time-scale and compact views. */
+export function BatchPlanningBoard({lines,start,end,onOpen,onAdd,onMove}:{
+  lines:LineSchedule[];start:number;end:number;onOpen:(id:string)=>void;
+  onAdd:(lineId:LineId)=>void;onMove:(input:MoveImpactInput)=>void;
+}) {
+  const {state,storageMode,mutationLocked,hasConflict}=useWorkspace();
+  const disabled=mutationLocked||hasConflict;
+  const [active,setActive]=useState<DragItem|null>(null);
+  const [overJob,setOverJob]=useState<string|null>(null);
+  const [overLine,setOverLine]=useState<LineId|null>(null);
+  const visible=lines.map(line=>({...line,jobs:line.jobs.filter(job=>job.segments.some(segment=>segment.kind==='production'&&segment.end>start&&segment.start<end))}));
+  const jobs=visible.flatMap(line=>line.jobs);
+  const {metadata}=useOrderMetadata(jobs,storageMode==='database');
+  const {transfer,openMove,feedbackNode,moveDialog,clearFeedback}=useOrderTransfer(jobs,start);
+  const activeJob=state.jobs.find(job=>job.id===active?.jobId);
+  const activeOrder=activeJob&&getJobSourceAllocations(activeJob).find(row=>row.sourceOrderId===active?.sourceOrderId);
+  const sensors=useSensors(
+    useSensor(MouseSensor,{activationConstraint:{distance:7}}),
+    useSensor(TouchSensor,{activationConstraint:{delay:220,tolerance:6}}),
+    useSensor(KeyboardSensor,{keyboardCodes:{start:['Space'],end:['Space','Enter'],cancel:['Escape']}}),
+  );
+  useEffect(()=>{setActive(null);setOverJob(null);setOverLine(null);},[start]);
   function endDrag(event:DragEndEvent) {
     setActive(null);setOverJob(null);setOverLine(null);
     if(disabled||!event.over)return;
@@ -84,12 +94,10 @@ export function BatchPlanningBoard({lines,start,end,onOpen,onAdd,onMove}:{
     if(item.kind==='batch')onMove({jobId:item.jobId,toLineId:target.lineId,...(target.targetJobId?{beforeJobId:target.targetJobId}:{})});
     else if(item.sourceOrderId)void transfer({jobId:item.jobId,sourceOrderId:item.sourceOrderId,toLineId:target.lineId,...(target.targetJobId?{targetJobId:target.targetJobId}:{})});
   }
-  const movingJob=state.jobs.find(job=>job.id===moving?.jobId);
-  const movingOrder=movingJob&&getJobSourceAllocations(movingJob).find(row=>row.sourceOrderId===moving?.sourceOrderId);
   return <section className="batch-workspace" aria-label="Production batches and orders" aria-busy={mutationLocked}>
     <p className="batch-instructions"><strong>One box, one production batch.</strong> Drag an order into another compatible box to combine, or into a PM's new-batch area to separate it. Use the batch header handle to move the whole run.</p>
-    {feedback&&<p className={failed?'notice warning':'batch-feedback'} role="status">{feedback}</p>}
-    <DndContext sensors={sensors} collisionDetection={orderCollision} onDragStart={event=>{setFeedback('');setFailed(false);setActive(event.active.data.current as DragItem);}} onDragOver={event=>{setOverJob(event.over?.data.current?.targetJobId??null);setOverLine(event.over?.data.current?.lineId??null);}} onDragCancel={()=>{setActive(null);setOverJob(null);setOverLine(null);}} onDragEnd={endDrag} accessibility={{
+    {feedbackNode}
+    <DndContext sensors={sensors} collisionDetection={orderCollision} onDragStart={event=>{clearFeedback();setActive(event.active.data.current as DragItem);}} onDragOver={event=>{setOverJob(event.over?.data.current?.targetJobId??null);setOverLine(event.over?.data.current?.lineId??null);}} onDragCancel={()=>{setActive(null);setOverJob(null);setOverLine(null);}} onDragEnd={endDrag} accessibility={{
       screenReaderInstructions:{draggable:'Press Space to pick up an order or batch. Use arrow keys to move, Space to drop, Escape to cancel. The Move order button provides a non-drag alternative.'},
       announcements:{onDragStart:()=> 'Picked up production item.',onDragOver:({over})=>over?`Over ${over.data.current?.targetJobId?'production batch':'new batch area'} on ${over.data.current?.lineId}.`:'Outside the production lines.',onDragEnd:()=> 'Drop finished. Check the save result.',onDragCancel:()=> 'Move cancelled.'},
     }}>
@@ -98,14 +106,14 @@ export function BatchPlanningBoard({lines,start,end,onOpen,onAdd,onMove}:{
           {line.jobs.map(job=><BatchBox key={job.id} job={job} disabled={disabled} active={active} overJob={overJob} allowed={!!activeJob&&compatible(activeJob,job)} onOpen={()=>onOpen(job.id)}>
             {getJobSourceAllocations(job).map(allocation=>{
               const source=allocation.sourceSnapshot,current=metadata[allocation.sourceOrderId];
-              return <OrderTile key={allocation.sourceOrderId} job={job} allocation={allocation} customer={source.shipToParty||source.soldToParty||current?.shipToParty||current?.soldToParty||'Customer not recorded'} dueDate={source.deliveryDate||current?.deliveryDate} disabled={disabled||!editable(job)} active={active} onOpen={()=>onOpen(job.id)} onMove={()=>{setFeedback('');setFailed(false);setMoving({jobId:job.id,sourceOrderId:allocation.sourceOrderId});}}/>;
+              return <OrderTile key={allocation.sourceOrderId} job={job} allocation={allocation} customer={source.shipToParty||source.soldToParty||current?.shipToParty||current?.soldToParty||'Customer not recorded'} dueDate={source.deliveryDate||current?.deliveryDate} disabled={disabled||!editable(job)} active={active} onOpen={()=>onOpen(job.id)} onMove={()=>openMove(job.id,allocation.sourceOrderId)}/>;
             })}
           </BatchBox>)}
         </BatchLine>)}
       </div>
       <DragOverlay dropAnimation={null}>{activeJob&&<div className="batch-order-overlay"><GripVertical size={17}/><div><strong>{activeOrder?`DO ${activeOrder.sourceSnapshot.doNo}`:productLabel(activeJob)}</strong><span>{activeOrder?quantityLabel(activeOrder):batchQuantity(activeJob)} · {activeJob.lineId}</span></div></div>}</DragOverlay>
     </DndContext>
-    {movingJob&&movingOrder&&<OrderMoveDialog key={`${movingJob.id}-${movingOrder.sourceOrderId}`} job={movingJob} allocation={movingOrder} jobs={jobs} disabled={disabled} feedback={feedback} onClose={()=>setMoving(null)} onSave={transfer}/>}
+    {moveDialog}
   </section>;
 }
 
@@ -140,15 +148,15 @@ function BatchBox({job,disabled,active,overJob,allowed,onOpen,children}:{job:Job
   </article>;
 }
 
-function OrderTile({job,allocation,customer,dueDate,disabled,active,onOpen,onMove}:{job:Job;allocation:JobSourceAllocation;customer:string;dueDate?:string;disabled:boolean;active:DragItem|null;onOpen:()=>void;onMove:()=>void}) {
+export function OrderTile({job,allocation,customer,dueDate,disabled,active,onOpen,onMove,segmentKey='',dragDisabled=false,compact=false}:{compact?:boolean;dragDisabled?:boolean;segmentKey?:string;job:Job;allocation:JobSourceAllocation;customer:string;dueDate?:string;disabled:boolean;active:DragItem|null;onOpen:()=>void;onMove:()=>void}) {
   const source=allocation.sourceSnapshot;
-  const {setNodeRef,attributes,listeners,isDragging}=useDraggable({id:`batch-order-${job.id}-${allocation.sourceOrderId}`,data:{kind:'order',jobId:job.id,sourceOrderId:allocation.sourceOrderId},disabled});
+  const {setNodeRef,attributes,listeners,isDragging}=useDraggable({id:`batch-order-${job.id}-${allocation.sourceOrderId}-${segmentKey}`,data:{kind:'order',jobId:job.id,sourceOrderId:allocation.sourceOrderId,date:job.date},disabled:disabled||dragDisabled});
   const partial=allocation.plannedQuantity!==source.quantity;
   return <div ref={setNodeRef} className={`batch-order ${isDragging?'dragging':''}`} data-order-id={allocation.sourceOrderId}>
-    <button type="button" className="batch-order-main" {...(!disabled?attributes:{})} {...(!disabled?listeners:{})} onClick={()=>{if(!active)onOpen();}} aria-label={`Order ${source.doNo}, ${quantityLabel(allocation)}, ${customer}`} aria-description={disabled?'Order allocation is locked.':'Drag to another batch or PM. Enter opens production details; Space starts a keyboard move.'}>
+    <button type="button" className="batch-order-main" {...(!disabled&&!dragDisabled?attributes:{})} {...(!disabled&&!dragDisabled?listeners:{})} onClick={()=>{if(!active)onOpen();}} aria-label={`Order ${source.doNo}, ${quantityLabel(allocation)}, ${customer}`} aria-description={disabled?'Order allocation is locked.':dragDisabled?'Use Move order to choose a destination.':'Drag to another batch or PM. Enter opens production details; Space starts a keyboard move.'}>
       <span className="batch-order-top"><strong>DO {source.doNo}</strong><GripVertical size={14} aria-hidden="true"/></span>
       <span className="batch-order-customer" title={customer}>{customer}</span>
-      <span className="batch-order-bottom"><strong>{quantityLabel(allocation)}</strong><span className={dueDate&&dueDate<localDate()?'overdue':''}>{dueDate?`Due ${dateLabel(dueDate)}`:'Due date unknown'}</span></span>
+      <span className="batch-order-bottom"><strong>{quantityLabel(allocation)}</strong><span title={dueDate?`Due ${dateLabel(dueDate)}`:'Due date unknown'} className={dueDate&&dueDate<localDate()?'overdue':''}>{dueDate?compact?dateLabel(dueDate,true).replace(/ \d{4}$/,''):`Due ${dateLabel(dueDate)}`:'Date unknown'}</span></span>
       {partial&&<span className="batch-order-share">of {numberLabel(source.quantity,source.unit==='Bags'?0:3)} {source.unit} ordered</span>}
     </button>
     <button type="button" className="batch-order-move" disabled={disabled} onClick={onMove} aria-label={`Move order ${source.doNo}`} title="Move order without dragging"><ArrowRightLeft size={15}/></button>

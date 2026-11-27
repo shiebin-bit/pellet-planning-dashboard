@@ -769,6 +769,45 @@
 .page-is-planning .page-footer {
   display: none;
 }
+/* Keep production width tied to time; nested orders have their own horizontal strip. */
+.hplan-nested .hplan-line-label,.hplan-nested .hplan-track{height:166px;min-height:166px}
+.hplan-card.with-order-tiles .hplan-card-open{bottom:auto;height:61px}
+.hplan-card.with-order-tiles .hplan-card-content{inset:7px 8px auto;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 9px;max-height:45px}
+.hplan-card.with-order-tiles .hplan-code-full{font-size:16px;max-width:calc(100% - 65px);grid-column:1}
+.hplan-card.with-order-tiles .hplan-quantity{grid-column:2;grid-row:1;font-size:12px}
+.hplan-card.with-order-tiles .hplan-time{grid-column:1;grid-row:2}
+.hplan-card.with-order-tiles .hplan-state{grid-column:2;grid-row:2;font-size:10px;max-width:100%}
+.hplan-card.with-order-tiles .hplan-order-count{display:block;top:42px;left:8px;right:auto;z-index:4;pointer-events:auto;font-size:10px;padding:2px 4px;max-width:calc(100% - 16px);overflow:hidden;white-space:nowrap}
+.hplan-card.with-order-tiles .hplan-drag-handle{top:2px;bottom:auto;right:3px;z-index:2;background:none}
+.hplan-card.with-order-tiles .hplan-quantity{padding-right:21px}
+.hplan-order-strip{position:absolute;inset:64px 6px 6px;z-index:3;display:flex;gap:6px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;scrollbar-color:#9aaebc transparent;overscroll-behavior-x:contain;padding-bottom:3px;touch-action:pan-x pan-y}
+.hplan-order-strip:focus-visible{outline:2px solid var(--action);outline-offset:1px}
+.hplan-order-strip>.batch-order{flex:1 0 137px;min-width:137px;max-width:230px;background:#fff;border-color:#c4d2dc}
+.hplan-order-strip .batch-order-main{padding:7px;gap:4px;grid-template-rows:auto 14px auto;align-content:start;touch-action:manipulation}
+.hplan-order-strip .batch-order-top strong{font-size:11px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hplan-order-strip .batch-order-top svg{display:none}
+.hplan-order-strip .batch-order-customer{font-size:10px}
+.hplan-order-strip .batch-order-bottom{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px;align-items:center}
+.hplan-order-strip .batch-order-bottom strong{font-size:12px;line-height:1.2;white-space:nowrap}
+.hplan-order-strip .batch-order-bottom>span{font-size:9px;line-height:1.2;white-space:nowrap}
+.hplan-order-strip .batch-order-share{display:none}
+.hplan-order-strip .batch-order-move{width:25px}
+.hplan-card.order-drop-valid{outline:2px solid #408c61;outline-offset:-2px;box-shadow:0 0 0 2px #408c6130}
+.hplan-card.order-drop-invalid{outline:2px solid #bd655d;outline-offset:-2px}
+.hplan-insert.invalid{background:#a43c32}
+.timeline-order-dialog{display:grid;gap:10px}
+.timeline-order-dialog .batch-order-main{cursor:pointer;touch-action:manipulation}
+@container hplan-card (max-width:239px){
+  .hplan-card.with-order-tiles .hplan-card-content{display:flex;gap:3px;max-height:44px}
+  .hplan-card.with-order-tiles .hplan-quantity{padding-right:0;font-size:11px}
+  .hplan-card.with-order-tiles .hplan-time,.hplan-card.with-order-tiles .hplan-state{display:none}
+  .hplan-card.with-order-tiles .hplan-order-count{top:42px;left:8px;right:auto;max-width:calc(100% - 16px)}
+}
+@container hplan-card (max-width:93px){
+  .hplan-card.with-order-tiles .hplan-order-count{display:block;left:2px;right:auto;top:42px;max-width:calc(100% - 4px)}
+  .hplan-card.with-order-tiles .hplan-order-count>span{display:none}
+  .hplan-card.with-order-tiles .hplan-code-full{max-width:100%}
+}
 @media(max-width:600px) {
   .hplan-page .planning-mobile-view { flex-direction: row; flex-wrap: wrap; gap: 6px 10px; margin-bottom: 12px; }
   .planning-mobile-view p { flex-basis: 100%; max-width: none; font-size: 12px; line-height: 1.5; }

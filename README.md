@@ -38,7 +38,7 @@ The current application runs in a browser, backed by Node.js and PostgreSQL. Win
 
 ![Four-line planning board with fictional demonstration records](docs/assets/planning-board.png)
 
-The board offers Batches, Timeline and List views. Batches shows each production run as a box containing individual order cards. Timeline card length follows planned duration; grey, blue, yellow, green and red distinguish unstarted, running, paused, completed and issue states. On phones, planning defaults to a per-line list.
+The board offers Timeline and List views. Timeline shows each production run as a horizontal box containing individual order cards; its width follows planned duration. Grey, blue, yellow, green and red distinguish unstarted, running, paused, completed and issue states. On phones, planning defaults to a per-line list.
 
 The image uses fictional demonstration records. This repository contains source code and test fixtures; company workbooks, customer records, backups and credentials are excluded.
 
@@ -47,7 +47,7 @@ The image uses fictional demonstration records. This repository contains source 
 | Page | Current capabilities |
 | --- | --- |
 | **Overview** | Daily planned quantity, within-shift plan, received stock, planned utilisation, daily line timeline, weekly capacity, priorities and recorded stops |
-| **Planning board** | PM1–PM4 Batches/Timeline/List, draggable order allocations, manual production, stock-aware drafts, reviewed whole-batch moves, combine/split, copy planning and browser draft recovery |
+| **Planning board** | PM1–PM4 Timeline/List, draggable order allocations inside time-scaled batches, manual production, stock-aware drafts, reviewed whole-batch moves, combine/split, copy planning and browser draft recovery |
 | **Orders** | Separate stock/SAP import modes, future order acceptance, search and filters, per-order production/collection journals, planning controls and import difference reviews |
 | **Stock** | Separate Bags/Bulk balances, reservations and available quantities, MTO/MTS policies, safety stock, extra output, variant filters, Daily stock and physical-count adjustments |
 | **History** | Production records and activity logs, date/PM/status/search filters, statistics across all matching records and 50-entry pagination |
@@ -59,7 +59,7 @@ The image uses fictional demonstration records. This repository contains source 
 - Optionally group same-product orders with the same due date during draft generation; later demand can remain in a separate batch.
 - Move unstarted work after reviewing the affected schedule, utilisation, bin assignment and delivery risk.
 - Combine compatible unstarted cards on the same date and PM, or split orders/partial quantities across new cards while preserving every allocation and extra-stock total.
-- In **Batches**, drag an order into a compatible batch on any PM, or into **New separate batch** to pull it out. Batch quantities and schedules recalculate together; extra stock stays in the source batch. The arrow button offers the same move without dragging. Started, locked or output-recorded batches cannot transfer orders.
+- In **Timeline**, drag an order into a compatible batch on any PM, or onto a PM label / empty line space to pull it out. Batch quantities, widths and schedules recalculate together; extra stock stays in the source batch. Narrow batches have a scrollable order strip and a **View orders** button. The arrow button offers the same move without dragging. Started, locked or output-recorded batches cannot transfer orders.
 - Copy eligible manual cards to another date with new order references. Linked Excel-order cards are excluded to avoid duplicate demand.
 - Start and finish at the current server time. Record incremental production receipts, pauses with reasons, issues and auditable corrections.
 - Show recorded output and an estimated finish when enough recent, reliable samples exist. Progress is based on entered output; it is not a machine-sensor feed or measured OEE.

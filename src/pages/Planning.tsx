@@ -1,6 +1,6 @@
-import { getJobSourceAllocations } from '../domain/jobSources';
+import { getJobSourceAllocations, getOrderTransferBatchIdentity, isTransferableOrderBatch } from '../domain/jobSources';
 import { LegacyCarryoverNotice } from '../components/LegacyCarryoverNotice';
-import { useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
   DndContext, DragOverlay, KeyboardSensor, MouseSensor, TouchSensor, pointerWithin,
   rectIntersection, useDndContext, useDraggable, useDroppable, useSensor, useSensors,
@@ -20,7 +20,10 @@ import './Planning.css';
 import { AutoPlanningButton } from '../components/InventoryDraftDialog';
 import { usePlanningCardPreview } from '../components/PlanningCardPreview';
 import { ProductionList } from '../components/ProductionList';
-import { BatchPlanningBoard } from '../components/BatchPlanningBoard';
+import { OrderTile, useOrderTransfer } from '../components/BatchPlanningBoard';
+import type { DragItem } from '../components/BatchPlanningBoard';
+import { DetailDialog } from '../components/DetailDialog';
+import { useOrderMetadata } from '../lib/useOrderMetadata';
 import { useListState } from '../lib/listNavigation';
 import { MoveImpactDialog } from '../components/MoveImpactDialog';
 import type { MoveImpactInput } from '../domain/moveImpact';
@@ -29,11 +32,17 @@ import { useLiveProduction } from '../lib/liveProduction';
 import { receiptProgressLabel } from '../components/LiveProduction';
 
 type PlanRange = 'day' | 'full';
+const TimelineOrders=createContext<{
+  active:DragItem|null;disabled:boolean;metadata:ReturnType<typeof useOrderMetadata>['metadata'];
+  openMove:(jobId:string,orderId:string)=>void;showOrders:(jobId:string)=>void;
+}>({active:null,disabled:false,metadata:{},openMove:()=>{},showOrders:()=>{}});
 
 const collision: CollisionDetection = args => {
   const candidates = (args.pointerCoordinates ? pointerWithin(args) : rectIntersection(args)).filter(hit => {
     const data = args.droppableContainers.find(container => container.id === hit.id)?.data.current;
-    return !data?.beforeId || data.date === args.active.data.current?.date;
+    // Keep incompatible order targets so a rejected merge cannot fall through
+    // into the underlying lane and accidentally create a separate batch.
+    return args.active.data.current?.kind==='order'||!data?.beforeId || data.date === args.active.data.current?.date;
   });
   const insertionTargets = candidates.filter(hit => String(hit.id).startsWith('hplan-before-'));
   return insertionTargets.length ? insertionTargets : candidates;
@@ -42,6 +51,8 @@ const collision: CollisionDetection = args => {
 export function Planning() {
   const { board, state, openJob, openInput, openCopy, openSource, storageMode, selectedId, canUndo, undo, mutationLocked, hasConflict } = useWorkspace();
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeOrderId,setActiveOrderId]=useState<string|null>(null);
+  const [orderListId,setOrderListId]=useState<string|null>(null);
   const [movePreview, setMovePreview] = useState<MoveImpactInput | null>(null);
   const [combineOpen, setCombineOpen] = useState(false);
   const moreRef = useRef<HTMLDetailsElement>(null);
@@ -50,10 +61,11 @@ export function Planning() {
   const [smallScreen,setSmallScreen]=useState(()=>window.matchMedia('(max-width:600px)').matches);
   const [mobileView,setMobileView]=useListState<'list'|'timeline'|'batches'>('planning.mobileView','list');
   const [desktopView,setDesktopView]=useListState<'list'|'timeline'|'batches'>('planning.desktopView','timeline');
-  const view=smallScreen?mobileView:desktopView;
+  const savedView=smallScreen?mobileView:desktopView;
+  const view=savedView==='batches'?'timeline':savedView;
   const listView=view==='list';
   const setView=smallScreen?setMobileView:setDesktopView;
-  const viewSwitch=<div className="hplan-range" role="group" aria-label="Planning view"><button type="button" aria-pressed={view==='batches'} className={view==='batches'?'active':''} onClick={()=>setView('batches')}>Batches</button><button type="button" aria-pressed={view==='timeline'} className={view==='timeline'?'active':''} onClick={()=>setView('timeline')}>Timeline</button><button type="button" aria-pressed={view==='list'} className={view==='list'?'active':''} onClick={()=>setView('list')}>List</button></div>;
+  const viewSwitch=<div className="hplan-range" role="group" aria-label="Planning view"><button type="button" aria-pressed={view==='timeline'} className={view==='timeline'?'active':''} onClick={()=>setView('timeline')}>Timeline</button><button type="button" aria-pressed={view==='list'} className={view==='list'?'active':''} onClick={()=>setView('list')}>List</button></div>;
   function closeMore(returnFocus = false) {
     if (moreRef.current) moreRef.current.open = false;
     if (returnFocus) moreTrigger.current?.focus();
@@ -75,6 +87,11 @@ export function Planning() {
     useSensor(KeyboardSensor, { keyboardCodes: { start: ['Space'], end: ['Space', 'Enter'], cancel: ['Escape'] } }),
   );
   const jobs = board.lines.flatMap(line => line.jobs);
+  const {metadata}=useOrderMetadata(jobs,storageMode==='database'&&view==='timeline');
+  const orderTransfer=useOrderTransfer(jobs,board.start);
+  const activeSourceJob=state.jobs.find(job=>job.id===activeId);
+  const activeOrder=activeOrderId&&activeSourceJob?getJobSourceAllocations(activeSourceJob).find(row=>row.sourceOrderId===activeOrderId):undefined;
+  const orderListJob=jobs.find(job=>job.id===orderListId);
   const previousPlan = useRef({ boardStart: board.start, ends: plannedEnds(jobs) });
   const active = jobs.find(job => job.id === activeId);
   const latestEnd = Math.max(board.end, ...jobs.map(job => job.plannedEnd ?? board.end));
@@ -88,13 +105,15 @@ export function Planning() {
 
   function dragName(item: Active) {
     const job = jobs.find(job => job.id === item.data.current?.jobId);
+    const order=job&&getJobSourceAllocations(job).find(row=>row.sourceOrderId===item.data.current?.sourceOrderId);
+    if(order)return `order ${order.sourceSnapshot.doNo}`;
     return job ? `${productLabel(job)} on ${job.lineId}` : 'Production card';
   }
 
   function dropName(over: Over | null) {
     if (!over) return 'outside the production lines';
     const target = jobs.find(job => job.id === over.data.current?.beforeId);
-    return target ? `before ${productLabel(target)} on ${target.lineId}` : `at the end of ${over.data.current?.lineId}`;
+    return target ? `${activeOrderId?'into':'before'} ${productLabel(target)} on ${target.lineId}` : `as a separate batch on ${over.data.current?.lineId}`;
   }
 
   useEffect(() => {
@@ -114,13 +133,16 @@ export function Planning() {
 
   function onDragEnd(event: DragEndEvent) {
     setActiveId(null);
-    if (!event.over) return;
+    setActiveOrderId(null);
+    if (!event.over||mutationLocked||hasConflict) return;
     const data = event.over.data.current;
     const lineId = data?.lineId as LineId | undefined;
     if (!lineId) return;
     const id = String(event.active.data.current?.jobId ?? event.active.id);
     const beforeId = data?.beforeId as string | undefined;
     if (beforeId === id) return;
+    const sourceOrderId=event.active.data.current?.sourceOrderId as string|undefined;
+    if(sourceOrderId){void orderTransfer.transfer({jobId:id,sourceOrderId,toLineId:lineId,...(beforeId?{targetJobId:beforeId}:{})});return;}
     setMovePreview({jobId:id,toLineId:lineId,...(beforeId?{beforeJobId:beforeId}:{})});
   }
 
@@ -128,8 +150,10 @@ export function Planning() {
     <span className="sr-only">Current time {fullDateTime(now)} MYT.{now < board.start || now >= windowEnd ? ' Outside the displayed planning range.' : ''}</span>
     {movePreview && <MoveImpactDialog input={movePreview} onClose={() => setMovePreview(null)} onSaved={() => setMovePreview(null)}/>}
     {combineOpen && <CombinePlanningDialog onClose={() => setCombineOpen(false)}/>}
+    {orderTransfer.moveDialog}
+    {orderListJob&&<DetailDialog title={`Orders in ${productLabel(orderListJob)}`} subtitle={`${orderListJob.lineId} · ${numberLabel(orderListJob.quantityMt)} MT · Use the arrow beside an order to move it.`} closeLabel="Close order cards" onClose={()=>setOrderListId(null)}><div className="timeline-order-dialog">{getJobSourceAllocations(orderListJob).map(allocation=>{const source=allocation.sourceSnapshot,current=metadata[allocation.sourceOrderId];return <OrderTile key={allocation.sourceOrderId} job={orderListJob} allocation={allocation} customer={source.shipToParty||source.soldToParty||current?.shipToParty||current?.soldToParty||'Customer not recorded'} dueDate={source.deliveryDate||current?.deliveryDate} disabled={mutationLocked||hasConflict||!isTransferableOrderBatch(orderListJob)} dragDisabled active={null} onOpen={()=>{setOrderListId(null);openJob(orderListJob.id);}} onMove={()=>{setOrderListId(null);orderTransfer.openMove(orderListJob.id,allocation.sourceOrderId);}}/>;})}</div></DetailDialog>}
     <div className="page-heading hplan-heading">
-      <div><h1>Planning board</h1><p>{view==='batches'?'Drag individual orders between production batches or PMs.':listView?'Production sequence and orders, grouped by line.':'Drag a not-started card to another line. Click for details.'}</p></div>
+      <div><h1>Planning board</h1><p>{listView?'Production sequence and orders, grouped by line.':'Drag order cards to combine or separate batches. Drag a batch header to move the whole run.'}</p></div>
       <div className="hplan-actions">
         {!smallScreen&&viewSwitch}
         <AutoPlanningButton/>
@@ -147,7 +171,8 @@ export function Planning() {
     </div>
 
     {smallScreen&&<div className="planning-mobile-view">{viewSwitch}{planningRange}<p className={listView ? 'sr-only' : undefined}>{listView?'Tap a card for details and moves.':'Hold a not-started card, then drag to move it.'}</p></div>}
-    {view==='batches'?<BatchPlanningBoard lines={board.lines} start={board.start} end={windowEnd} onOpen={openJob} onAdd={openInput} onMove={setMovePreview}/>:listView?<ProductionList lines={board.lines} start={board.start} end={windowEnd} date={board.date} settings={state.settings} bagWeightKg={state.settings.bagWeightKg} selectedId={selectedId} disabled={mutationLocked||hasConflict} onOpen={openJob} onAdd={openInput}/>:<DndContext sensors={sensors} collisionDetection={collision} accessibility={{
+    {view==='timeline'&&orderTransfer.feedbackNode}
+    {listView?<ProductionList lines={board.lines} start={board.start} end={windowEnd} date={board.date} settings={state.settings} bagWeightKg={state.settings.bagWeightKg} selectedId={selectedId} disabled={mutationLocked||hasConflict} onOpen={openJob} onAdd={openInput}/>:<DndContext sensors={sensors} collisionDetection={collision} accessibility={{
       screenReaderInstructions: { draggable: 'Press Enter to open production details. Press Space to pick up a card, arrow keys to move, Space to drop, or Escape to cancel. On a touch screen, hold the card briefly before dragging.' },
       announcements: {
         onDragStart: ({ active }) => `Picked up ${dragName(active)}.`,
@@ -155,13 +180,15 @@ export function Planning() {
         onDragEnd: ({ active, over }) => `Released ${dragName(active)} ${dropName(over)}.`,
         onDragCancel: ({ active }) => `Move cancelled for ${dragName(active)}.`,
       },
-    }} onDragStart={event => setActiveId(String(event.active.data.current?.jobId ?? event.active.id))} onDragCancel={() => setActiveId(null)} onDragEnd={onDragEnd}>
-      <section className="hplan-board" data-board-range={range} aria-label={`${hours}-hour production plan`}>
+    }} onDragStart={event => {orderTransfer.clearFeedback();setActiveId(String(event.active.data.current?.jobId ?? event.active.id));setActiveOrderId(event.active.data.current?.sourceOrderId??null);}} onDragCancel={() => {setActiveId(null);setActiveOrderId(null);}} onDragEnd={onDragEnd}>
+      <TimelineOrders.Provider value={{active:activeId?{kind:activeOrderId?'order':'batch',jobId:activeId,...(activeOrderId?{sourceOrderId:activeOrderId}:{})}:null,disabled:mutationLocked||hasConflict,metadata,openMove:orderTransfer.openMove,showOrders:setOrderListId}}>
+      <section className="hplan-board hplan-nested" data-board-range={range} aria-label={`${hours}-hour production plan`}>
         <div className="hplan-axis-label"><strong>MYT</strong><span>UTC+8</span></div>
         <div className="hplan-axis" aria-hidden="true">{ticks.map(hour => <div key={hour} className="hplan-axis-tick" style={{ left: `${hour / hours * 100}%` }}><span>{timeLabel(board.start + hour * 3_600_000)}</span>{hour >= 24 && hour % 24 === 0 && <small>+{hour / 24}d</small>}</div>)}<PlanningNow now={now} start={board.start} end={windowEnd} label/></div>
         {board.lines.map(line => <LineRow key={line.lineId} line={line} start={board.start} end={windowEnd} hours={hours} settings={state.settings} activeId={activeId} selectedId={selectedId} onOpen={openJob} onAdd={openInput} now={now}/>) }
       </section>
-      <DragOverlay dropAnimation={null}>{active ? <div className={`hplan-drag-card ${active.issue ? 'issue' : active.status}`}><GripVertical size={17}/><div><strong>{productLabel(active)}</strong><span>{numberLabel(active.quantityMt)} MT</span></div><small>{active.lineId}</small></div> : null}</DragOverlay>
+      </TimelineOrders.Provider>
+      <DragOverlay dropAnimation={null}>{active ? <div className={`hplan-drag-card ${active.issue ? 'issue' : active.status}`}><GripVertical size={17}/><div><strong>{activeOrder?`DO ${activeOrder.sourceSnapshot.doNo}`:productLabel(active)}</strong><span>{activeOrder?`${numberLabel(activeOrder.plannedQuantity,activeOrder.sourceSnapshot.unit==='Bags'?0:3)} ${activeOrder.sourceSnapshot.unit}`:`${numberLabel(active.quantityMt)} MT`}</span></div><small>{active.lineId}</small></div> : null}</DragOverlay>
     </DndContext>}
 
     <div className="hplan-below"><div className="hplan-legend"><StatusLegend/>{state.settings.changeoverMinutes>0&&<span className="hplan-interval-key"><i className="changeover-key"/>Changeover / line clean-up · {durationLabel(state.settings.changeoverMinutes)}</span>}<span className="hplan-interval-key"><i className="unavailable-key"/>Unavailable</span></div>{fullHours > dayHours && range === 'day' && <span className="hplan-carry-note">Carry-over continues for up to {fullHours} hours. Use Full plan to view it.</span>}</div>
@@ -214,15 +241,16 @@ function ProductionSegment({ segment, job, start, end, primary, activeId, select
   segment: ScheduleSegment; job: ScheduledJob; start: number; end: number; primary: boolean;
   activeId: string | null; selected: boolean; onOpen: () => void;
 }) {
+  const orders=useContext(TimelineOrders);
   const { jobs: productionProgress, stale: progressStale } = useLiveProduction();
   const progress = productionProgress.get(job.id);
   const received = progress && progress.actualTotal !== null ? receiptProgressLabel(progress) : null;
-  const locked = job.status !== 'pending';
+  const locked = orders.disabled||!isTransferableOrderBatch(job);
   const allocations = getJobSourceAllocations(job);
   const { attributes, listeners, setNodeRef: dragRef } = useDraggable({
     id: primary ? job.id : `hplan-segment-${job.id}-${segment.start}`,
     disabled: locked,
-    data: { lineId: job.lineId, jobId: job.id, date: job.date },
+    data: { kind:'batch',lineId: job.lineId, jobId: job.id, date: job.date },
   });
   const { setNodeRef: dropRef, isOver } = useDroppable({
     id: primary ? `hplan-before-${job.id}` : `hplan-before-segment-${job.id}-${segment.start}`,
@@ -234,14 +262,19 @@ function ProductionSegment({ segment, job, start, end, primary, activeId, select
   const status = job.issue ? 'issue' : paused ? 'paused' : job.status;
   const detail = `${productLabel(job)} · ${numberLabel(job.quantityMt)} MT · ${allocations.length} orders · ${timeLabel(segment.start)}–${timeLabel(segment.end)} · ${job.issue ? `Issue: ${job.issue.reason}` : paused ? 'Paused' : job.status}${received ? ` · ${received} received${progressStale ? ', last known' : ''}` : ''}`;
   const insert=isOver&&activeId&&activeId!==job.id;
-  const preview=usePlanningCardPreview(job,!!activeId);
-  return <div ref={node => {dragRef(node);dropRef(node);preview.anchor.current=node;}} {...preview.events} data-job-id={primary ? job.id : undefined} data-production-job={job.id} data-draggable={!locked} className={`hplan-card ${status} ${allocations.length > 1 ? 'has-order-count' : ''} ${selected ? 'selected' : ''} ${activeId===job.id ? 'dragging' : ''} ${insert ? 'drop-before' : ''} ${segment.end > end ? 'clipped-end' : ''}`} style={intervalStyle(clippedStart, clippedEnd, start, end)}>
+  const {active:dragged}=useDndContext();
+  const sourceJob=useWorkspace().state.jobs.find(candidate=>candidate.id===activeId);
+  const orderDrop=insert&&orders.active?.kind==='order';
+  const accepts=sourceJob&&isTransferableOrderBatch(sourceJob)&&!locked&&getOrderTransferBatchIdentity(sourceJob)===getOrderTransferBatchIdentity(job);
+  const preview=usePlanningCardPreview(job,!!activeId||allocations.length>0);
+  return <div ref={node => {dragRef(node);dropRef(node);preview.anchor.current=node;}} {...preview.events} data-job-id={primary ? job.id : undefined} data-production-job={job.id} data-draggable={!locked} className={`hplan-card ${status} ${allocations.length ? 'with-order-tiles' : ''} ${allocations.length > 1 ? 'has-order-count' : ''} ${selected ? 'selected' : ''} ${activeId===job.id&&!dragged?.data.current?.sourceOrderId ? 'dragging' : ''} ${insert ? orderDrop?accepts?'order-drop-valid':'order-drop-invalid':'drop-before' : ''} ${segment.end > end ? 'clipped-end' : ''}`} style={intervalStyle(clippedStart, clippedEnd, start, end)}>
     <button type="button" className="hplan-card-open" {...(!locked?attributes:{})} {...(!locked?listeners:{})} onClick={()=>{preview.close();onOpen();}} aria-describedby={[!locked?attributes['aria-describedby']:undefined,preview.descriptionId].filter(Boolean).join(' ')||undefined} aria-label={`Open ${productLabel(job)} on ${job.lineId}${primary?'':' continued segment'}`} aria-description={`${detail}. ${locked?'This production plan is locked.':'Drag anywhere on this card to move it. On touch screens, hold briefly then drag. Enter opens details; Space starts a keyboard move.'}`}/>
     <div className="hplan-card-content" aria-hidden="true"><strong className="hplan-code-short">{productLabel(job)}</strong><strong className="hplan-code-full">{productLabel(job)}</strong><span className="hplan-quantity">{numberLabel(job.quantityMt)} MT<small className="hplan-packaging">{job.mode === 'bags' ? 'Bags' : 'Bulk'}</small></span><span className="hplan-time">{timeLabel(segment.start)}–{timeLabel(segment.end)}</span><span className="hplan-state" title={received ? `${received} received${progressStale ? ' · last known' : ''}` : undefined}>{job.issue ? <AlertTriangle size={12}/> : locked ? <LockKeyhole size={11}/> : null}{job.issue ? 'Issue' + (paused ? ' · Paused' : '') : paused ? 'Paused' : job.status === 'running' ? 'Running' : job.status === 'completed' ? 'Completed' : primary ? 'Not started' : 'Continued'}{received && <span className="hplan-receipt-label"> · {received}{progressStale ? ' · last known' : ''}</span>}</span></div>
-    {allocations.length > 1 && <span className="hplan-order-count" aria-hidden="true">{allocations.length}<span> orders</span></span>}
+    {allocations.length > 0 && <button type="button" className="hplan-order-count" aria-label={`View ${allocations.length} orders in ${productLabel(job)} on ${job.lineId}`} onClick={()=>orders.showOrders(job.id)}>{allocations.length}<span> orders</span></button>}
+    {allocations.length>0&&<div className="hplan-order-strip" aria-label={`Order cards in ${productLabel(job)} on ${job.lineId}`} tabIndex={0}>{allocations.map(allocation=>{const source=allocation.sourceSnapshot,current=orders.metadata[allocation.sourceOrderId];return <OrderTile key={allocation.sourceOrderId} job={job} allocation={allocation} customer={source.shipToParty||source.soldToParty||current?.shipToParty||current?.soldToParty||'Customer not recorded'} dueDate={source.deliveryDate||current?.deliveryDate} disabled={locked} active={orders.active} compact segmentKey={String(segment.start)} onOpen={onOpen} onMove={()=>orders.openMove(job.id,allocation.sourceOrderId)}/>;})}</div>}
     {received && progress && <span className="hplan-receipt-meter" aria-hidden="true"><i style={{width:`${progress.plannedTotal > 0 ? Math.max(0,Math.min(100,(progress.actualTotal ?? 0)/progress.plannedTotal*100)) : 0}%`}}/></span>}
     {!locked && <span className="hplan-drag-handle" aria-hidden="true"><GripVertical size={15}/></span>}
-    {insert && <span className="hplan-insert">Insert</span>}
+    {insert && <span className={`hplan-insert ${orderDrop&&!accepts?'invalid':''}`}>{orderDrop?accepts?'Combine order':'Incompatible batch':'Insert'}</span>}
     {preview.preview}
   </div>;
 }
