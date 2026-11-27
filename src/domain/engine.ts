@@ -28,7 +28,13 @@ import type {
   CopyBatchItem,
   SplitPendingGroup,
 } from "./commands";
-import { getJobSourceAllocations, getProductionBatchIdentity, mergeSourceAllocations } from "./jobSources";
+import {
+  getJobSourceAllocations,
+  getOrderTransferBatchIdentity,
+  getProductionBatchIdentity,
+  isTransferableOrderBatch,
+  mergeSourceAllocations,
+} from "./jobSources";
 import { quantityToScaled, scaledToQuantity } from './inventory';
 
 const MINUTE_MS = 60_000;
@@ -1118,6 +1124,160 @@ export function splitPendingJob(state: AppState, jobId: string, groups: SplitPen
     const [date,lineId]=key.split('|'); jobs=resequence(jobs,lineId as LineId,date);
   }
   return finalizeMutation(state,jobs,event('job.split',`Split ${source.orderNo} into ${groups.length} cards; quantities retained.`,source.id,nowIso));
+}
+
+/** Move one whole persisted source-order allocation while preserving physical totals and snapshots. */
+export function transferOrderAllocation(
+  state: AppState,
+  jobId: string,
+  sourceOrderId: string,
+  toLineId: LineId,
+  targetJobId?: string,
+  nowIso = new Date().toISOString(),
+): AppState {
+  assertIsoDateTime(nowIso, "Order transfer time");
+  assertLineId(toLineId);
+  const source = requireJob(state, jobId);
+  requireTransferableOrderBatch(source, "source");
+  const sourceAllocations = getJobSourceAllocations(source);
+  const moved = sourceAllocations.find(allocation => allocation.sourceOrderId === sourceOrderId);
+  if (!moved) throw new Error("The selected order is no longer allocated to this production batch.");
+
+  const unit = source.mode === "bags" ? "Bags" : "MT";
+  const scale = (quantity: number) => quantityToScaled(unit, quantity, "Order transfer quantity");
+  const originalTotal = scale(source.mode === "bags" ? source.bagCount! : source.quantityMt);
+  const allocatedTotal = sourceAllocations.reduce((total, allocation) => total + scale(allocation.plannedQuantity), 0);
+  if (allocatedTotal > originalTotal) throw new Error("Order allocations exceed the source batch total.");
+  const movedTotal = scale(moved.plannedQuantity);
+  const remainingTotal = originalTotal - movedTotal;
+  if (remainingTotal < 0) throw new Error("The selected order allocation exceeds the source batch total.");
+  const remainingAllocations = sourceAllocations
+    .filter(allocation => allocation.sourceOrderId !== sourceOrderId)
+    .map(cloneSourceAllocation);
+  const bagWeight = source.bagWeightKgSnapshot
+    ?? (source.bagCount ? source.quantityMt * 1_000 / source.bagCount : state.settings.bagWeightKg);
+  let destinationId: string;
+  let jobs = state.jobs.map(job => {
+    if (job.id !== source.id) return job;
+    if (remainingTotal === 0) {
+      const { issue: _issue, continuationPlan: _continuationPlan, ...withoutIssue } = job;
+      return { ...withoutIssue, status: "cancelled" as const, updatedAt: nowIso };
+    }
+    const {
+      sourceOrderId: _legacyId,
+      sourceOrderVersion: _legacyVersion,
+      sourceSnapshot: _legacySnapshot,
+      sourceAllocations: _allocations,
+      ...withoutSources
+    } = job;
+    const remainingQuantity = scaledToQuantity(unit, remainingTotal);
+    return {
+      ...withoutSources,
+      orderNo: remainingAllocations.length ? allocationOrderNo(remainingAllocations) : job.orderNo,
+      bagCount: source.mode === "bags" ? remainingQuantity : null,
+      quantityMt: source.mode === "bags" ? Number((remainingQuantity * bagWeight / 1_000).toFixed(9)) : remainingQuantity,
+      ...(remainingAllocations.length ? { sourceAllocations: remainingAllocations } : {}),
+      updatedAt: nowIso,
+    };
+  });
+
+  if (targetJobId) {
+    if (targetJobId === source.id) throw new Error("The source batch cannot also be the destination batch.");
+    const target = requireJob(state, targetJobId);
+    requireTransferableOrderBatch(target, "destination");
+    if (target.lineId !== toLineId) throw new Error("The destination batch is not on the selected PM.");
+    if (getOrderTransferBatchIdentity(target) !== getOrderTransferBatchIdentity(source)) {
+      throw new Error("Destination batch must share the same date, product, packaging, bag weight and inventory variant.");
+    }
+    const mergedAllocations = mergeSourceAllocations([...getJobSourceAllocations(target), cloneSourceAllocation(moved)]);
+    const targetTotal = scale(target.mode === "bags" ? target.bagCount! : target.quantityMt);
+    const combinedTotal = targetTotal + movedTotal;
+    const combinedQuantity = scaledToQuantity(unit, combinedTotal);
+    const targetBagWeight = target.bagWeightKgSnapshot
+      ?? (target.bagCount ? target.quantityMt * 1_000 / target.bagCount : state.settings.bagWeightKg);
+    jobs = jobs.map(job => {
+      if (job.id !== target.id) return job;
+      const {
+        sourceOrderId: _legacyId,
+        sourceOrderVersion: _legacyVersion,
+        sourceSnapshot: _legacySnapshot,
+        sourceAllocations: _allocations,
+        calendarManagedRelease: _calendarManagedRelease,
+        notBefore: _notBefore,
+        ...withoutSources
+      } = job;
+      return {
+        ...withoutSources,
+        orderNo: allocationOrderNo(mergedAllocations),
+        bagCount: target.mode === "bags" ? combinedQuantity : null,
+        quantityMt: target.mode === "bags" ? Number((combinedQuantity * targetBagWeight / 1_000).toFixed(9)) : combinedQuantity,
+        sourceAllocations: mergedAllocations,
+        ...(source.calendarManagedRelease === true && target.calendarManagedRelease === true ? { calendarManagedRelease: true } : {}),
+        ...combinedReleaseFloor([source, target]),
+        binNeedsReview: target.binNeedsReview || source.lineId !== target.lineId,
+        updatedAt: nowIso,
+      };
+    });
+    destinationId = target.id;
+  } else {
+    if (state.jobs.length >= 10_000) throw new Error("Moving this order would exceed the workspace limit of 10000 jobs.");
+    const {
+      sourceOrderId: _legacyId,
+      sourceOrderVersion: _legacyVersion,
+      sourceSnapshot: _legacySnapshot,
+      sourceAllocations: _allocations,
+      issue: _issue,
+      lockedSegments: _lockedSegments,
+      continuationPlan: _continuationPlan,
+      pauseIntervals: _pauseIntervals,
+      actualQuantityMt: _actualQuantityMt,
+      completionNote: _completionNote,
+      derivedFromJobId: _derivedFromJobId,
+      ...base
+    } = source;
+    destinationId = makeId("job");
+    const movedQuantity = scaledToQuantity(unit, movedTotal);
+    const sequence = Math.max(0, ...jobs.filter(job => job.date === source.date && job.lineId === toLineId).map(job => job.sequence)) + 1;
+    jobs.push({
+      ...base,
+      id: destinationId,
+      lineId: toLineId,
+      sequence,
+      orderNo: moved.sourceSnapshot.doNo,
+      bagCount: source.mode === "bags" ? movedQuantity : null,
+      quantityMt: source.mode === "bags" ? Number((movedQuantity * bagWeight / 1_000).toFixed(9)) : movedQuantity,
+      status: "pending",
+      actualStart: null,
+      actualEnd: null,
+      binNeedsReview: source.binNeedsReview || source.lineId !== toLineId,
+      sourceAllocations: [cloneSourceAllocation(moved)],
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    });
+  }
+
+  for (const lineId of new Set([source.lineId, toLineId])) jobs = resequence(jobs, lineId, source.date);
+  const destination = jobFrom(jobs, destinationId);
+  return finalizeMutation(state, jobs, event(
+    "job.order-transferred",
+    `Transferred order ${moved.sourceSnapshot.doNo} from ${source.lineId} to ${destination.lineId}.`,
+    destination.id,
+    nowIso,
+  ));
+}
+
+function requireTransferableOrderBatch(job: Job, role: "source" | "destination"): void {
+  if (!isTransferableOrderBatch(job)) {
+    throw new Error(`Only an unstarted, unlocked pending ${role} batch without actual output can transfer an order.`);
+  }
+}
+
+function cloneSourceAllocation(allocation: ReturnType<typeof getJobSourceAllocations>[number]): ReturnType<typeof getJobSourceAllocations>[number] {
+  return { ...allocation, sourceSnapshot: { ...allocation.sourceSnapshot } };
+}
+
+function allocationOrderNo(allocations: ReturnType<typeof getJobSourceAllocations>): string {
+  return allocations[0].sourceSnapshot.doNo + (allocations.length > 1 ? ` +${allocations.length - 1}` : "");
 }
 
 function normalizeCatalogInput(input: CatalogCreateInput): CatalogCreateInput {

@@ -52,6 +52,34 @@ export function getProductionBatchIdentity(job: Job): string {
   ].join("\u0000");
 }
 
+/** A pending batch whose quantity and source allocations may still be reshaped safely. */
+export function isTransferableOrderBatch(job: Job): boolean {
+  return job.status === "pending"
+    && job.actualStart === null
+    && job.actualEnd === null
+    && job.actualQuantityMt == null
+    && !job.lockedSegments?.length
+    && !job.pauseIntervals?.length;
+}
+
+/**
+ * Physical batch identity used when moving one order allocation between PMs.
+ * It deliberately excludes only the PM; date, packaging and inventory variant
+ * must remain identical. Extras-only cards are valid destinations.
+ */
+export function getOrderTransferBatchIdentity(job: Job): string {
+  return [
+    job.date,
+    job.productCode.trim().toLowerCase(),
+    job.mode,
+    job.inventoryItemId ?? "",
+    job.medication?.trim() ?? "",
+    job.fmrOmed?.trim() ?? "",
+    String(job.bagWeightKgSnapshot ?? ""),
+    job.productionPurpose ?? "",
+  ].join("\u0000");
+}
+
 /**
  * Contextual choices that may be offered beside a pending source-linked card.
  * Final aggregate validation remains in combinePendingJobs so stale selections are

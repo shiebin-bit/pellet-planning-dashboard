@@ -400,6 +400,11 @@ export class WorkspaceStore {
             nextState=executeCommand(current.state,command,{nowIso});
             break;
           }
+          case "job.transferOrder": {
+            await validateOrderTransferPersistence(client, current.state, command);
+            nextState=executeCommand(current.state,command,{nowIso});
+            break;
+          }
           case "data.setDeliveryStatus": {
             const result = await setDeliveryStatus(client, current.state, command.sourceOrderId, command.delivered, command.reason, nowIso);
             nextState = result.state;
@@ -706,6 +711,82 @@ function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   const source = value as Record<string, unknown>;
   return `{${Object.keys(source).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(source[key])}`).join(",")}}`;
+}
+
+async function validateOrderTransferPersistence(
+  client: pg.PoolClient,
+  state: AppState,
+  command: Extract<Command, { type: "job.transferOrder" }>,
+): Promise<void> {
+  const jobIds = command.targetJobId ? [command.jobId, command.targetJobId] : [command.jobId];
+  const storedJobs = await client.query<{ id: string; status: string }>(
+    "SELECT id,status FROM jobs WHERE workspace_id=1 AND id=ANY($1::text[]) FOR UPDATE",
+    [jobIds],
+  );
+  if (storedJobs.rowCount !== jobIds.length) throw new ApiError(409, "TRANSFER_BATCH_CHANGED", "The source or destination batch no longer exists. Refresh the plan.");
+  if (storedJobs.rows.some(row => row.status !== "pending")) {
+    throw new ApiError(409, "TRANSFER_BATCH_STARTED", "Only pending production batches can transfer an order.");
+  }
+  const posted = await client.query(
+    "SELECT 1 FROM inventory_ledger WHERE job_id=ANY($1::text[]) LIMIT 1",
+    [jobIds],
+  );
+  if (posted.rowCount) {
+    throw new ApiError(409, "POSTED_JOB_IMMUTABLE", "A batch with production movement history cannot transfer an order.");
+  }
+
+  const storedAllocations = await client.query<{
+    job_id: string; source_order_id: string; ordinal: number; planned_quantity_scaled: string;
+    source_order_version: number; source_snapshot: unknown;
+  }>(
+    `SELECT job_id,source_order_id,ordinal,planned_quantity_scaled::text,source_order_version,source_snapshot
+       FROM job_source_allocations WHERE job_id=ANY($1::text[]) ORDER BY job_id,ordinal`,
+    [jobIds],
+  );
+  const expectedAllocations = jobIds.flatMap(jobId => {
+    const job = state.jobs.find(candidate => candidate.id === jobId);
+    if (!job) return [];
+    return getJobSourceAllocations(job).map((allocation, ordinal) => ({
+      job_id: jobId,
+      source_order_id: allocation.sourceOrderId,
+      ordinal,
+      planned_quantity_scaled: String(Math.round(allocation.plannedQuantity * (allocation.sourceSnapshot.unit === "MT" ? 1_000 : 1))),
+      source_order_version: allocation.sourceOrderVersion,
+      source_snapshot: allocation.sourceSnapshot,
+    }));
+  }).sort((left, right) => left.job_id < right.job_id ? -1 : left.job_id > right.job_id ? 1 : left.ordinal - right.ordinal);
+  if (canonicalJson(storedAllocations.rows) !== canonicalJson(expectedAllocations)) {
+    throw new ApiError(409, "SOURCE_ALLOCATION_CHANGED", "The saved order allocations changed. Refresh the plan before transferring.");
+  }
+  if (!storedAllocations.rows.some(row => row.job_id === command.jobId && row.source_order_id === command.sourceOrderId)) {
+    throw new ApiError(409, "SOURCE_ALLOCATION_CHANGED", "The selected order is no longer allocated to the source batch.");
+  }
+
+  const source = await client.query<{
+    delivery_status: string; needs_review: boolean; has_pending_review: boolean;
+    planning_control: string | null; historical_status: string | null;
+  }>(
+    `SELECT o.delivery_status,o.needs_review,
+       EXISTS(SELECT 1 FROM source_order_discrepancies d WHERE d.source_order_id=o.id AND d.status='pending') has_pending_review,
+       io.planning_control,io.historical_status
+       FROM source_orders o LEFT JOIN inventory_orders io ON io.source_order_id=o.id
+      WHERE o.workspace_id=1 AND o.id=$1 FOR UPDATE OF o`,
+    [command.sourceOrderId],
+  );
+  if (!source.rowCount) throw new ApiError(409, "SOURCE_NOT_FOUND", "The selected source order no longer exists.");
+  const eligibility = source.rows[0];
+  if (eligibility.planning_control && eligibility.planning_control !== "active") {
+    throw new ApiError(409, "SOURCE_PLANNING_BLOCKED", "This order is on hold, cancelled, or requires review before it can move.");
+  }
+  if (eligibility.needs_review || eligibility.has_pending_review) {
+    throw new ApiError(409, "SOURCE_REVIEW_REQUIRED", "Resolve the source-order review before moving this order between batches.");
+  }
+  if (eligibility.delivery_status === "delivered") {
+    throw new ApiError(409, "SOURCE_DELIVERED", "A delivered order cannot move between production batches.");
+  }
+  if (eligibility.historical_status === "done" || eligibility.historical_status === "out") {
+    throw new ApiError(409, "SOURCE_PRODUCTION_COMPLETE", "An order marked production complete cannot move between batches.");
+  }
 }
 
 function safeRevision(value: string): number {

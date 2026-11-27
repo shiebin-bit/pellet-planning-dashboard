@@ -20,6 +20,7 @@ import './Planning.css';
 import { AutoPlanningButton } from '../components/InventoryDraftDialog';
 import { usePlanningCardPreview } from '../components/PlanningCardPreview';
 import { ProductionList } from '../components/ProductionList';
+import { BatchPlanningBoard } from '../components/BatchPlanningBoard';
 import { useListState } from '../lib/listNavigation';
 import { MoveImpactDialog } from '../components/MoveImpactDialog';
 import type { MoveImpactInput } from '../domain/moveImpact';
@@ -47,12 +48,12 @@ export function Planning() {
   const moreTrigger = useRef<HTMLElement>(null);
   const [range, setRange] = useState<PlanRange>('day');
   const [smallScreen,setSmallScreen]=useState(()=>window.matchMedia('(max-width:600px)').matches);
-  const [mobileView,setMobileView]=useListState<'list'|'timeline'>('planning.mobileView','list');
-  const [desktopView,setDesktopView]=useListState<'list'|'timeline'>('planning.desktopView','timeline');
+  const [mobileView,setMobileView]=useListState<'list'|'timeline'|'batches'>('planning.mobileView','list');
+  const [desktopView,setDesktopView]=useListState<'list'|'timeline'|'batches'>('planning.desktopView','timeline');
   const view=smallScreen?mobileView:desktopView;
   const listView=view==='list';
   const setView=smallScreen?setMobileView:setDesktopView;
-  const viewSwitch=<div className="hplan-range" role="group" aria-label="Planning view"><button type="button" aria-pressed={view==='timeline'} className={view==='timeline'?'active':''} onClick={()=>setView('timeline')}>Timeline</button><button type="button" aria-pressed={view==='list'} className={view==='list'?'active':''} onClick={()=>setView('list')}>List</button></div>;
+  const viewSwitch=<div className="hplan-range" role="group" aria-label="Planning view"><button type="button" aria-pressed={view==='batches'} className={view==='batches'?'active':''} onClick={()=>setView('batches')}>Batches</button><button type="button" aria-pressed={view==='timeline'} className={view==='timeline'?'active':''} onClick={()=>setView('timeline')}>Timeline</button><button type="button" aria-pressed={view==='list'} className={view==='list'?'active':''} onClick={()=>setView('list')}>List</button></div>;
   function closeMore(returnFocus = false) {
     if (moreRef.current) moreRef.current.open = false;
     if (returnFocus) moreTrigger.current?.focus();
@@ -128,7 +129,7 @@ export function Planning() {
     {movePreview && <MoveImpactDialog input={movePreview} onClose={() => setMovePreview(null)} onSaved={() => setMovePreview(null)}/>}
     {combineOpen && <CombinePlanningDialog onClose={() => setCombineOpen(false)}/>}
     <div className="page-heading hplan-heading">
-      <div><h1>Planning board</h1><p>{listView?'Production sequence and orders, grouped by line.':'Drag a not-started card to another line. Click for details.'}</p></div>
+      <div><h1>Planning board</h1><p>{view==='batches'?'Drag individual orders between production batches or PMs.':listView?'Production sequence and orders, grouped by line.':'Drag a not-started card to another line. Click for details.'}</p></div>
       <div className="hplan-actions">
         {!smallScreen&&viewSwitch}
         <AutoPlanningButton/>
@@ -146,7 +147,7 @@ export function Planning() {
     </div>
 
     {smallScreen&&<div className="planning-mobile-view">{viewSwitch}{planningRange}<p className={listView ? 'sr-only' : undefined}>{listView?'Tap a card for details and moves.':'Hold a not-started card, then drag to move it.'}</p></div>}
-    {listView?<ProductionList lines={board.lines} start={board.start} end={windowEnd} date={board.date} settings={state.settings} bagWeightKg={state.settings.bagWeightKg} selectedId={selectedId} disabled={mutationLocked||hasConflict} onOpen={openJob} onAdd={openInput}/>:<DndContext sensors={sensors} collisionDetection={collision} accessibility={{
+    {view==='batches'?<BatchPlanningBoard lines={board.lines} start={board.start} end={windowEnd} onOpen={openJob} onAdd={openInput} onMove={setMovePreview}/>:listView?<ProductionList lines={board.lines} start={board.start} end={windowEnd} date={board.date} settings={state.settings} bagWeightKg={state.settings.bagWeightKg} selectedId={selectedId} disabled={mutationLocked||hasConflict} onOpen={openJob} onAdd={openInput}/>:<DndContext sensors={sensors} collisionDetection={collision} accessibility={{
       screenReaderInstructions: { draggable: 'Press Enter to open production details. Press Space to pick up a card, arrow keys to move, Space to drop, or Escape to cancel. On a touch screen, hold the card briefly before dragging.' },
       announcements: {
         onDragStart: ({ active }) => `Picked up ${dragName(active)}.`,

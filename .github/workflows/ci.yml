@@ -78,4 +78,5 @@ jobs:
             output/playwright/baseline-split/
             output/playwright/nextday/
             output/playwright/carryover/
+            output/playwright/batch-orders/
           if-no-files-found: ignore

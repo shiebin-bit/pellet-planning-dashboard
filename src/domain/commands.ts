@@ -2,6 +2,7 @@ import type { PortableWorkspaceBackupV6, PortableWorkspaceBackupV7 } from './bas
 import {
   cancelJob,
   combinePendingJobs,
+  transferOrderAllocation,
   splitPendingJob,
   copyJobBatch,
   createCatalogProduct,
@@ -78,6 +79,7 @@ export type Command =
   | { type: "job.copyBatch"; sourceDate: string; targetDate: string; items: CopyBatchItem[] }
   | { type: "job.combinePending"; jobIds: string[]; bin: string; remarks: string }
   | { type: "job.splitPending"; jobId: string; groups: SplitPendingGroup[] }
+  | { type: "job.transferOrder"; jobId: string; sourceOrderId: string; toLineId: LineId; targetJobId?: string }
   | { type: "catalog.create"; input: CatalogCreateInput }
   | { type: "catalog.update"; productId: string; patch: CatalogUpdatePatch }
   | { type: "catalog.setActive"; productId: string; active: boolean }
@@ -149,6 +151,8 @@ export function executeCommand(
       return combinePendingJobs(state, command.jobIds, command.bin, command.remarks, context.nowIso ?? new Date().toISOString());
     case "job.splitPending":
       return splitPendingJob(state, command.jobId, command.groups, context.nowIso ?? new Date().toISOString());
+    case "job.transferOrder":
+      return transferOrderAllocation(state, command.jobId, command.sourceOrderId, command.toLineId, command.targetJobId, context.nowIso ?? new Date().toISOString());
     case "catalog.create":
       return createCatalogProduct(state, command.input, context.nowIso ?? new Date().toISOString());
     case "catalog.update":
@@ -196,6 +200,18 @@ export function parseCommand(value: unknown): Command {
       });
       if(groups.length<2)throw new Error('Choose at least two split cards.');
       return {type,jobId:id(source.jobId,'command.jobId'),groups};
+    }
+    case "job.transferOrder": {
+      exact(source, ["type", "jobId", "sourceOrderId", "toLineId", "targetJobId"], "command", true);
+      const result: Extract<Command, { type: "job.transferOrder" }> = {
+        type,
+        jobId: id(source.jobId, "command.jobId"),
+        sourceOrderId: reference(source.sourceOrderId, "command.sourceOrderId"),
+        toLineId: lineId(source.toLineId, "command.toLineId"),
+      };
+      if (has(source, "targetJobId")) result.targetJobId = id(source.targetJobId, "command.targetJobId");
+      if (result.targetJobId === result.jobId) throw new Error("command.targetJobId must differ from command.jobId.");
+      return result;
     }
     case "job.create":
       exact(source, ["type", "input"], "command");

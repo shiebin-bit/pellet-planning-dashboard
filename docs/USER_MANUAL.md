@@ -287,13 +287,26 @@ Before saving, check the calculated duration and any carry-over warning. Stock-l
 | **Split** | Open an eligible card → **Split card / quantities** | Divide orders or partial quantities between cards, dates and PMs; every order and extra-stock balance must have zero remaining |
 | **Copy** | **More → Copy planning** | Select source/target dates, filter by PM, select cards, adjust quantities and enter new order references |
 
+### Move individual orders in Batches view
+
+Select **Planning board → Batches**. Each PM has a column; each production box shows its product, total quantity, schedule and individual DO cards with customer, due date and allocated quantity.
+
+- Drag an order card into **New separate batch** under a PM to pull that allocation into its own production run.
+- Drag it into another compatible production box to combine that allocation with the destination's orders. Both batches must have the same planning date, full product identity, packaging, bag weight, Medication, FMR / OMED and production purpose. Matching short labels alone are insufficient; the PM may differ.
+- Use the arrow button beside an order to select the PM and destination batch without dragging. This also supports keyboard operation.
+- Use the handle in the batch header to move the entire run through the existing schedule review.
+
+An order move transfers its **whole allocation on that card**, which may be only part of its full order quantity. Use **Split card / quantities** for a partial allocation. Extra stock remains in the source box; if no orders or extra quantity remain, that box leaves the board and remains cancelled in History. No stock is produced or collected by moving orders.
+
+Only unstarted, unlocked batches without recorded output are eligible. Orders on HOLD, CANCEL or pending review are blocked. Transfers save atomically and recalculate quantities and schedules; review the new finish times, delivery dates and destination bin after changing PM. Different due dates may be combined manually, so check every displayed due date. Timeline and List remain available for reviewing the resulting plan.
+
 ### Combine and split rules
 
 A combined card retains an **Orders in this batch** breakdown with each DO, customer, due date and planned quantity. Production is posted once for the card, allocated in its order sequence; output beyond those allocations becomes compatible stock.
 
 Combining is optional. You can run a near-due 5220 batch, then 5811, then a later 5220 batch. Automatic grouping combines compatible orders with the same due date rather than every order sharing the same short label.
 
-Splitting preserves total quantities: move part of an order to another card without increasing its demand. The original card remains cancelled in History and new cards retain their source relationship. Split/combine does not itself receive stock. Started, output-recorded or locked work is not eligible for these operations. If compatible cards are on different PMs or dates, review and reposition them before combining; matching products alone do not bypass the same-date/same-PM requirement.
+Splitting preserves total quantities: move part of an order to another card without increasing its demand. The original card remains cancelled in History and new cards retain their source relationship. Split/combine does not itself receive stock. Started, output-recorded or locked work is not eligible for these operations. The **Combine cards** dialog requires the same date and PM; reposition whole cards first when needed. Individual order transfers in **Batches** can cross PMs on the same date, subject to the compatibility checks above.
 
 ### Copy rules
 
