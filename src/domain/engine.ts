@@ -283,7 +283,9 @@ export function moveJob(
   id: string,
   toLineId: LineId,
   beforeJobId?: string,
+  nowIso = new Date().toISOString(),
 ): AppState {
+  assertIsoDateTime(nowIso, "Move time");
   assertLineId(toLineId);
   const current = requireJob(state, id);
   requirePending(current, "move");
@@ -299,7 +301,7 @@ export function moveJob(
     throw new Error("The target job must be on the destination line and date.");
   }
 
-  const now = new Date().toISOString();
+  const now = new Date(nowIso).toISOString();
   const moved: Job = {
     ...current,
     lineId: toLineId,
@@ -320,6 +322,13 @@ export function moveJob(
     .filter((job) => !destinationIds.has(job.id))
     .concat(destination.map((job, index) => ({ ...job, sequence: index + 1 })));
   jobs = resequence(jobs, current.lineId, current.date);
+  jobs = compactCalendarManagedReleaseFloors(
+    jobs,
+    state.settings,
+    current.date,
+    new Set([current.lineId, toLineId]),
+    now,
+  );
 
   return finalizeMutation(
     state,
@@ -1256,7 +1265,9 @@ export function transferOrderAllocation(
     });
   }
 
-  for (const lineId of new Set([source.lineId, toLineId])) jobs = resequence(jobs, lineId, source.date);
+  const affectedLines = new Set([source.lineId, toLineId]);
+  for (const lineId of affectedLines) jobs = resequence(jobs, lineId, source.date);
+  jobs = compactCalendarManagedReleaseFloors(jobs, state.settings, source.date, affectedLines, nowIso);
   const destination = jobFrom(jobs, destinationId);
   return finalizeMutation(state, jobs, event(
     "job.order-transferred",
@@ -1278,6 +1289,34 @@ function cloneSourceAllocation(allocation: ReturnType<typeof getJobSourceAllocat
 
 function allocationOrderNo(allocations: ReturnType<typeof getJobSourceAllocations>): string {
   return allocations[0].sourceSnapshot.doNo + (allocations.length > 1 ? ` +${allocations.length - 1}` : "");
+}
+
+/**
+ * Inventory drafts persist their chosen placement in notBefore and mark it as
+ * calendar-managed. Once a move changes capacity, restore the true release
+ * floor so the scheduler can compact the affected lines. Manual floors and
+ * execution history remain fixed.
+ */
+function compactCalendarManagedReleaseFloors(
+  jobs: Job[],
+  settings: Settings,
+  date: string,
+  lineIds: ReadonlySet<LineId>,
+  nowIso: string,
+): Job[] {
+  const now = new Date(nowIso).toISOString();
+  const today = malaysiaDateAt(now);
+  if (date < today) return jobs;
+  return jobs.map(job => {
+    if (job.date !== date || !lineIds.has(job.lineId) || job.calendarManagedRelease !== true || !job.notBefore
+      || job.continuationPlan || !isTransferableOrderBatch(job)) return job;
+    const hours = getWorkingHoursForDate(settings, date, job.lineId);
+    if (hours.availableHours <= 0) return job;
+    const shiftStart = getShiftWindow(hours, date).start;
+    const releaseFloor = date === today ? Math.max(shiftStart, Date.parse(now)) : shiftStart;
+    const notBefore = new Date(releaseFloor).toISOString();
+    return job.notBefore === notBefore ? job : { ...job, notBefore, updatedAt: now };
+  });
 }
 
 function normalizeCatalogInput(input: CatalogCreateInput): CatalogCreateInput {

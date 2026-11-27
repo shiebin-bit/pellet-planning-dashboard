@@ -182,7 +182,7 @@ export function Planning() {
       },
     }} onDragStart={event => {orderTransfer.clearFeedback();setActiveId(String(event.active.data.current?.jobId ?? event.active.id));setActiveOrderId(event.active.data.current?.sourceOrderId??null);}} onDragCancel={() => {setActiveId(null);setActiveOrderId(null);}} onDragEnd={onDragEnd}>
       <TimelineOrders.Provider value={{active:activeId?{kind:activeOrderId?'order':'batch',jobId:activeId,...(activeOrderId?{sourceOrderId:activeOrderId}:{})}:null,disabled:mutationLocked||hasConflict,metadata,openMove:orderTransfer.openMove,showOrders:setOrderListId}}>
-      <section className="hplan-board hplan-nested" data-board-range={range} aria-label={`${hours}-hour production plan`}>
+      <section className={`hplan-board hplan-nested ${jobs.some(job=>getJobSourceAllocations(job).length)?'has-order-cards':''}`} data-board-range={range} aria-label={`${hours}-hour production plan`}>
         <div className="hplan-axis-label"><strong>MYT</strong><span>UTC+8</span></div>
         <div className="hplan-axis" aria-hidden="true">{ticks.map(hour => <div key={hour} className="hplan-axis-tick" style={{ left: `${hour / hours * 100}%` }}><span>{timeLabel(board.start + hour * 3_600_000)}</span>{hour >= 24 && hour % 24 === 0 && <small>+{hour / 24}d</small>}</div>)}<PlanningNow now={now} start={board.start} end={windowEnd} label/></div>
         {board.lines.map(line => <LineRow key={line.lineId} line={line} start={board.start} end={windowEnd} hours={hours} settings={state.settings} activeId={activeId} selectedId={selectedId} onOpen={openJob} onAdd={openInput} now={now}/>) }

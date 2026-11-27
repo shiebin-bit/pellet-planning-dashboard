@@ -119,7 +119,7 @@ export function executeCommand(
   switch (command.type) {
     case "job.create": return createJob(state, command.input);
     case "job.update": return updateJob(state, command.jobId, command.patch);
-    case "job.move": return moveJob(state, command.jobId, command.toLineId, command.beforeJobId);
+    case "job.move": return moveJob(state, command.jobId, command.toLineId, command.beforeJobId, context.nowIso ?? new Date().toISOString());
     case "job.start": return startJob(state, command.jobId, context.nowIso ?? new Date().toISOString());
     case "job.complete":
       return completeJob(

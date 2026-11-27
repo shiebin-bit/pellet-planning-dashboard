@@ -299,6 +299,8 @@ Select **Planning board → Timeline**. Each PM has a horizontal lane; each prod
 
 An order move transfers its **whole allocation on that card**, which may be only part of its full order quantity. Use **Split card / quantities** for a partial allocation. Extra stock remains in the source box; if no orders or extra quantity remain, that box leaves the board and remains cancelled in History. No stock is produced or collected by moving orders.
 
+For today's and future plans, moving an order or an automatically planned batch also closes unused gaps between eligible unstarted batches on the affected PMs. Today's remaining work starts no earlier than the current time; future work follows the working-day start. Downtime, recorded work, continuation capacity and explicit start constraints remain in effect. Past planning days are not automatically reset.
+
 Only unstarted, unlocked batches without recorded output are eligible. Orders on HOLD, CANCEL or pending review are blocked. Transfers save atomically and recalculate quantities and schedules; review the new finish times, delivery dates and destination bin after changing PM. Different due dates may be combined manually, so check every displayed due date. List remains available for a compact sequence view.
 
 ### Combine and split rules

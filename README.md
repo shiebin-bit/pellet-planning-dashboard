@@ -58,6 +58,7 @@ The image uses fictional demonstration records. This repository contains source 
 - Plan an individual order or compatible same-product orders together, with a separate DO/customer/due-date/quantity breakdown inside the card.
 - Optionally group same-product orders with the same due date during draft generation; later demand can remain in a separate batch.
 - Move unstarted work after reviewing the affected schedule, utilisation, bin assignment and delivery risk.
+- Moving an order or generated batch closes unused gaps on the affected PMs for today's and future plans. Working hours, downtime, recorded work and explicit start constraints still apply.
 - Combine compatible unstarted cards on the same date and PM, or split orders/partial quantities across new cards while preserving every allocation and extra-stock total.
 - In **Timeline**, drag an order into a compatible batch on any PM, or onto a PM label / empty line space to pull it out. Batch quantities, widths and schedules recalculate together; extra stock stays in the source batch. Narrow batches have a scrollable order strip and a **View orders** button. The arrow button offers the same move without dragging. Started, locked or output-recorded batches cannot transfer orders.
 - Copy eligible manual cards to another date with new order references. Linked Excel-order cards are excluded to avoid duplicate demand.
