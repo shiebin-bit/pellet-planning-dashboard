@@ -87,7 +87,6 @@ jobs:
 
   windows-desktop:
     runs-on: windows-latest
-    needs: verify
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
