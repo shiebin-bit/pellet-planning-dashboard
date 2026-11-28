@@ -6,7 +6,7 @@ const target = process.argv[2] === "dir" ? "dir" : "nsis";
 const preparePostgres = path.join(projectRoot, "scripts", "prepare-postgres.ps1").replace(/'/g, "''");
 await run("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", `Import-Module Microsoft.PowerShell.Utility; & '${preparePostgres}'`], "PostgreSQL runtime preparation");
 await run(process.execPath, [npmCli(), "run", "desktop:prepare"], "desktop preparation");
-await run(process.execPath, [path.join(projectRoot, "node_modules", "electron-builder", "cli.js"), "--win", target], "desktop packaging");
+await run(process.execPath, [path.join(projectRoot, "node_modules", "electron-builder", "cli.js"), "--win", target, "--publish", "never"], "desktop packaging");
 
 function run(command, args, label) {
   return new Promise((resolve, reject) => {
