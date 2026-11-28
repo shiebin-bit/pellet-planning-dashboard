@@ -13,7 +13,7 @@ flowchart LR
 
 Electron supervises a local PostgreSQL 16 cluster and the same Express API, then opens the existing dashboard in a sandboxed window. The built dashboard and `/api` share loopback port 8080; PostgreSQL uses loopback 5434. Read-only bundled resources live under the installation directory; mutable data, credentials, logs and backups live under `%LOCALAPPDATA%\FFM\MillPlan`. A standalone API/Vite setup remains available for development and future server deployment.
 
-HTTP(S) always uses the API, even if browser records exist. Its in-memory loading state and a newly initialized database both start with default settings and no jobs or activity; initial connection failure shows a reconnect screen. There is no fallback to a sample plan. The separate `OPEN-OFFLINE-DASHBOARD.cmd` `file:` build preserves offline localStorage operation.
+HTTP(S) always uses the API, even if browser records exist. Its in-memory loading state and a newly initialized database both start with default settings and no jobs or activity; initial connection failure shows a reconnect screen. There is no fallback to a sample plan. The legacy `file:` build preserves separate offline localStorage operation; it is not a desktop launcher.
 
 ## Code map
 
@@ -29,7 +29,7 @@ HTTP(S) always uses the API, even if browser records exist. Its in-memory loadin
 | `server/app.ts`, `index.ts` | HTTP boundary, static files, startup and shutdown |
 | `server/store.ts` | Transactions, revision checks, command receipts and recovery |
 | `server/migrate.ts`, `migrations/` | Numbered SQL migrations under an advisory lock |
-| `desktop/`, `scripts/` | Windows packaging, local process lifecycle, setup and database backup |
+| `desktop/`, `scripts/` | Windows packaging, local process lifecycle, runtime preparation and database backup |
 
 ## Data model
 

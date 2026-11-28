@@ -28,15 +28,16 @@ For standalone web/server deployment, use `.env.example` as the private `.env` t
 
 ## Start, stop and update
 
-Use the installed shortcut or tray menu for normal operation. In a source checkout, after `npm ci` and `npm run desktop:prepare`, the existing launchers open the desktop application:
+Use the installed shortcut or tray menu for normal operation: open **Millplan** to start, close its window to keep it in the tray, and choose **Quit** to stop the application and PostgreSQL. No separate launch/stop scripts are required.
+
+For desktop source development on a Windows build machine:
 
 ```powershell
-.\scripts\start.ps1
-.\scripts\start.ps1 -NoBrowser  # tray only
-.\scripts\stop.ps1
+npm ci
+npm run desktop:dev
 ```
 
-`OPEN-DASHBOARD.cmd` and `START-DASHBOARD.cmd` call the desktop launcher. `STOP-DASHBOARD.cmd` requests graceful shutdown. The separate `OPEN-OFFLINE-DASHBOARD.cmd` still opens a planning-only localStorage file; it does not share the PostgreSQL inventory ledger.
+The development command prepares PostgreSQL and application assets before opening Electron. The former CMD launchers and duplicate PowerShell start/stop/setup wrappers have been removed. Retained tools and their callers are listed in [Maintainer scripts](../scripts/README.md). The legacy `file:` build remains a separate planning-only localStorage workspace and does not share the PostgreSQL inventory ledger.
 
 Before updating, save a full database dump and a workspace JSON. Quit Millplan, run the replacement installer, then reopen it. Updates replace program resources, not the private data directory. Normal uninstall preserves company data and backups; reinstall reuses the retained compatible cluster. Do not manually delete the data directory as an update or password-repair step.
 

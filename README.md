@@ -138,7 +138,7 @@ Current-day drafts leave a short review window and display **Confirm before**. E
 
 ### Windows Desktop
 
-Run the **Millplan Setup** installer supplied with the release, then open **Millplan** from the desktop or Start menu. The application starts its own local PostgreSQL database and opens the planning workspace in a desktop window.
+Download **Millplan Setup** from [GitHub Releases](https://github.com/shiebin-bit/pellet-planning-dashboard/releases/latest), install it, then open **Millplan** from the desktop or Start menu. The application starts its own local PostgreSQL database and opens the planning workspace in a desktop window. Daily operation uses the shortcut and tray menu; no launch/stop scripts are needed.
 
 - Windows 10/11 x64; a normal user installation does not require administrator access.
 - No separate Docker, Node.js, PostgreSQL or browser setup is required on the destination PC.
@@ -159,6 +159,8 @@ npm run desktop:dist
 ```
 
 The build downloads a pinned PostgreSQL Windows runtime and verifies its SHA-256 before packaging it. The installer contains the runtime, so the destination computer does not download PostgreSQL on first launch. Build outputs are ignored by Git. Local builds are unsigned unless signing credentials are supplied by the maintainer.
+
+For desktop source development, use `npm ci` followed by `npm run desktop:dev`; this prepares the PostgreSQL runtime and application assets before opening Electron. See [Maintainer scripts](scripts/README.md) for the retained build and backup tools.
 
 ### Native Development
 
@@ -212,7 +214,7 @@ pellet-planning-dashboard/
 │   └── pages/          # Overview, Planning, Orders, Stock, History, Settings
 ├── server/
 │   └── migrations/     # Database schema migrations
-├── scripts/            # Setup, launch, database backup and demo-history tools
+├── scripts/            # Desktop build, runtime preparation, backup and demo-history tools
 ├── tests/              # API and browser integration tests
 ├── docs/               # User manual and technical documentation
 └── desktop/            # Windows lifecycle, local PostgreSQL and installer configuration
@@ -240,14 +242,14 @@ A configured Cloudflare Tunnel can route an HTTPS hostname to the local app. The
 | --- | --- |
 | **V7 workspace JSON** | Planning, catalog, settings, orders, inventory/collection history, reviews, progress, accepted batches and continuation plans; download/restore through Settings |
 | **Automatic snapshots** | The desktop API writes V7 JSON under the private data directory every 24 hours by default, retaining 14 managed successful copies; Settings displays status and failures |
-| **PostgreSQL dump** | Full database recovery, including metadata and command receipts; run `.\scripts\backup.ps1` |
+| **PostgreSQL dump** | Full database recovery, including metadata and command receipts; use the tray's **Back up database…** action; maintainers can also run `.\scripts\backup.ps1` |
 | **Browser-local draft** | Proposal stored in one browser/origin; outside database and workspace backups |
 
 Workspace restoration previews then **replaces** the active workspace, retaining the preceding recovery copy; it does not merge records. Versions 1–6 remain readable with warnings for omitted data. Old orders without accepted-batch metadata do not automatically enter the new-demand queue.
 
 Keep protected copies outside the host disk and verify restores in a separate database. The PostgreSQL data directory is persistent storage, not a backup. Recovery procedures are in [Operations](docs/OPERATIONS.md#backups).
 
-The optional **OPEN-OFFLINE-DASHBOARD.cmd** uses a separate planning-only browser workspace with localStorage and the device clock. It has no PostgreSQL stock ledger. Migration requires an explicit backup/restore; records are not shared automatically.
+The legacy `file:` build uses a separate planning-only browser workspace with localStorage and the device clock. It has no PostgreSQL stock ledger and is not the desktop application's daily entry point. Migration requires an explicit backup/restore; records are not shared automatically.
 
 ## Verification
 
